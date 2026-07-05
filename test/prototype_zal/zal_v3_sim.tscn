@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://test/prototype_zal/zal_v3_sim.gd" id="1"]
+
+[node name="ZalV3Sim" type="Node"]
+script = ExtResource("1")

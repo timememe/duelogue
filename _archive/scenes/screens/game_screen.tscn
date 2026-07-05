@@ -1,0 +1,313 @@
+[gd_scene load_steps=3 format=3 uid="uid://tuulablntemi"]
+
+[ext_resource type="Script" path="res://scenes/screens/game_screen.gd" id="1_script"]
+[ext_resource type="Script" path="res://core/ui/scales_bar.gd" id="2_scales_bar"]
+
+[node name="GameScreen" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.11, 0.12, 0.16, 1)
+
+[node name="MainLayout" type="HBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 8
+
+[node name="LeftColumn" type="VBoxContainer" parent="MainLayout"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 3.0
+theme_override_constants/separation = 8
+
+[node name="TopBar" type="HBoxContainer" parent="MainLayout/LeftColumn"]
+layout_mode = 2
+theme_override_constants/separation = 20
+alignment = 1
+
+[node name="TurnLabel" type="Label" parent="MainLayout/LeftColumn/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Ход 0"
+
+[node name="ScalesBar" type="Control" parent="MainLayout/LeftColumn/TopBar"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(180, 22)
+layout_mode = 2
+script = ExtResource("2_scales_bar")
+
+[node name="ScalesLabel" type="Label" parent="MainLayout/LeftColumn/TopBar"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(44, 0)
+layout_mode = 2
+text = "0"
+horizontal_alignment = 1
+
+[node name="DeckInfoLabel" type="Label" parent="MainLayout/LeftColumn/TopBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Колода: вы 0 / он 0"
+
+[node name="BattleArea" type="HBoxContainer" parent="MainLayout/LeftColumn"]
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 3.0
+theme_override_constants/separation = 40
+alignment = 1
+
+[node name="PlayerSide" type="VBoxContainer" parent="MainLayout/LeftColumn/BattleArea"]
+layout_mode = 2
+size_flags_horizontal = 3
+alignment = 1
+
+[node name="PlayerLabel" type="Label" parent="MainLayout/LeftColumn/BattleArea/PlayerSide"]
+visible = false
+layout_mode = 2
+text = "ВЫ"
+horizontal_alignment = 1
+
+[node name="PlayerBox" type="ColorRect" parent="MainLayout/LeftColumn/BattleArea/PlayerSide"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(120, 120)
+size_flags_horizontal = 4
+color = Color(0.2, 0.4, 1, 1)
+
+[node name="PlayerLogicLabel" type="Label" parent="MainLayout/LeftColumn/BattleArea/PlayerSide"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Логика: 4/4"
+horizontal_alignment = 1
+
+[node name="PlayerEmotionLabel" type="Label" parent="MainLayout/LeftColumn/BattleArea/PlayerSide"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Эмоции: 4/4"
+horizontal_alignment = 1
+
+[node name="PlayerShieldLabel" type="Label" parent="MainLayout/LeftColumn/BattleArea/PlayerSide"]
+unique_name_in_owner = true
+layout_mode = 2
+text = ""
+horizontal_alignment = 1
+
+[node name="PlayerPointsLabel" type="Label" parent="MainLayout/LeftColumn/BattleArea/PlayerSide"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Очки: ○○○"
+horizontal_alignment = 1
+
+[node name="PlayerTensionBar" type="ProgressBar" parent="MainLayout/LeftColumn/BattleArea/PlayerSide"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(130, 18)
+size_flags_horizontal = 4
+max_value = 3.0
+show_percentage = false
+
+[node name="CenterArea" type="VBoxContainer" parent="MainLayout/LeftColumn/BattleArea"]
+layout_mode = 2
+size_flags_horizontal = 3
+alignment = 1
+
+[node name="VSLabel" type="Label" parent="MainLayout/LeftColumn/BattleArea/CenterArea"]
+visible = false
+layout_mode = 2
+text = "СПОР"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="OpponentCardLabel" type="Label" parent="MainLayout/LeftColumn/BattleArea/CenterArea"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "..."
+horizontal_alignment = 1
+
+[node name="ComboTrackTitle" type="Label" parent="MainLayout/LeftColumn/BattleArea/CenterArea"]
+visible = false
+layout_mode = 2
+text = "ДОРОЖКА"
+horizontal_alignment = 1
+
+[node name="ComboTrack" type="HBoxContainer" parent="MainLayout/LeftColumn/BattleArea/CenterArea"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(390, 88)
+theme_override_constants/separation = 8
+alignment = 1
+
+[node name="ComboSlot0" type="PanelContainer" parent="MainLayout/LeftColumn/BattleArea/CenterArea/ComboTrack"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(122, 78)
+
+[node name="ComboSlot0Label" type="Label" parent="MainLayout/LeftColumn/BattleArea/CenterArea/ComboTrack/ComboSlot0"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "..."
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+clip_text = true
+
+[node name="ComboSlot1" type="PanelContainer" parent="MainLayout/LeftColumn/BattleArea/CenterArea/ComboTrack"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(122, 78)
+
+[node name="ComboSlot1Label" type="Label" parent="MainLayout/LeftColumn/BattleArea/CenterArea/ComboTrack/ComboSlot1"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "..."
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+clip_text = true
+
+[node name="ComboSlot2" type="PanelContainer" parent="MainLayout/LeftColumn/BattleArea/CenterArea/ComboTrack"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(122, 78)
+
+[node name="ComboSlot2Label" type="Label" parent="MainLayout/LeftColumn/BattleArea/CenterArea/ComboTrack/ComboSlot2"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+text = "..."
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+clip_text = true
+
+[node name="OpponentSide" type="VBoxContainer" parent="MainLayout/LeftColumn/BattleArea"]
+layout_mode = 2
+size_flags_horizontal = 3
+alignment = 1
+
+[node name="OpponentLabel" type="Label" parent="MainLayout/LeftColumn/BattleArea/OpponentSide"]
+visible = false
+layout_mode = 2
+text = "ОППОНЕНТ"
+horizontal_alignment = 1
+
+[node name="OpponentBox" type="ColorRect" parent="MainLayout/LeftColumn/BattleArea/OpponentSide"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(120, 120)
+size_flags_horizontal = 4
+color = Color(1, 0.3, 0.3, 1)
+
+[node name="OpponentLogicLabel" type="Label" parent="MainLayout/LeftColumn/BattleArea/OpponentSide"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Логика: 4/4"
+horizontal_alignment = 1
+
+[node name="OpponentEmotionLabel" type="Label" parent="MainLayout/LeftColumn/BattleArea/OpponentSide"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Эмоции: 4/4"
+horizontal_alignment = 1
+
+[node name="OpponentShieldLabel" type="Label" parent="MainLayout/LeftColumn/BattleArea/OpponentSide"]
+unique_name_in_owner = true
+layout_mode = 2
+text = ""
+horizontal_alignment = 1
+
+[node name="OpponentPointsLabel" type="Label" parent="MainLayout/LeftColumn/BattleArea/OpponentSide"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Очки: ○○○"
+horizontal_alignment = 1
+
+[node name="OpponentTensionBar" type="ProgressBar" parent="MainLayout/LeftColumn/BattleArea/OpponentSide"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(130, 18)
+size_flags_horizontal = 4
+max_value = 3.0
+show_percentage = false
+
+[node name="HandTitle" type="Label" parent="MainLayout/LeftColumn"]
+visible = false
+layout_mode = 2
+text = "РУКА"
+horizontal_alignment = 1
+
+[node name="CardArea" type="PanelContainer" parent="MainLayout/LeftColumn"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(0, 305)
+
+[node name="ScrollContainer" type="ScrollContainer" parent="MainLayout/LeftColumn/CardArea"]
+layout_mode = 2
+horizontal_scroll_mode = 2
+vertical_scroll_mode = 0
+
+[node name="CardContainer" type="HBoxContainer" parent="MainLayout/LeftColumn/CardArea/ScrollContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 10
+alignment = 1
+
+[node name="LogPanel" type="PanelContainer" parent="MainLayout"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 1.0
+custom_minimum_size = Vector2(280, 0)
+
+[node name="LogLabel" type="RichTextLabel" parent="MainLayout/LogPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+bbcode_enabled = true
+scroll_following = true
+
+[node name="ComboFlashOverlay" type="ColorRect" parent="."]
+unique_name_in_owner = true
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="ComboFlashLabel" type="Label" parent="ComboFlashOverlay"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 0.82, 0.18, 1)
+theme_override_font_sizes/font_size = 42
+text = "КОМБО"
+horizontal_alignment = 1
+vertical_alignment = 1

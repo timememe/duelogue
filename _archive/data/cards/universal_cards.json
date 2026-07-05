@@ -1,0 +1,240 @@
+[
+  {
+    "id": "atk_logic_m1",
+    "category": "Атака",
+    "effect": "logic",
+    "damage": 2,
+    "usesLeft": 2,
+    "combo_tags": ["pressure"],
+    "name": "Логический довод",
+    "desc": "Средний урон логике"
+  },
+  {
+    "id": "atk_logic_m2",
+    "category": "Атака",
+    "effect": "logic",
+    "damage": 2,
+    "usesLeft": 2,
+    "combo_tags": ["pressure"],
+    "name": "Аргумент",
+    "desc": "Средний урон логике"
+  },
+  {
+    "id": "atk_logic_m3",
+    "category": "Атака",
+    "effect": "logic",
+    "damage": 2,
+    "usesLeft": 2,
+    "combo_tags": ["pressure"],
+    "name": "Контр-факт",
+    "desc": "Средний урон логике"
+  },
+  {
+    "id": "atk_logic_s1",
+    "category": "Атака",
+    "effect": "logic",
+    "damage": 3,
+    "usesLeft": 1,
+    "combo_tags": ["finisher"],
+    "name": "Сильный довод",
+    "desc": "Сильный урон логике"
+  },
+  {
+    "id": "atk_logic_s2",
+    "category": "Атака",
+    "effect": "logic",
+    "damage": 3,
+    "usesLeft": 1,
+    "combo_tags": ["finisher"],
+    "name": "Жёсткий аргумент",
+    "desc": "Сильный урон логике"
+  },
+  {
+    "id": "atk_logic_xl1",
+    "category": "Атака",
+    "effect": "logic",
+    "damage": 5,
+    "usesLeft": 1,
+    "combo_tags": ["finisher"],
+    "name": "Сокрушительный довод",
+    "desc": "Очень сильный урон логике"
+  },
+  {
+    "id": "atk_emotion_m1",
+    "category": "Атака",
+    "effect": "emotion",
+    "damage": 2,
+    "usesLeft": 2,
+    "combo_tags": ["pressure"],
+    "name": "Эмоциональный укол",
+    "desc": "Средний урон эмоциям"
+  },
+  {
+    "id": "atk_emotion_m2",
+    "category": "Атака",
+    "effect": "emotion",
+    "damage": 2,
+    "usesLeft": 2,
+    "combo_tags": ["pressure"],
+    "name": "Колкость",
+    "desc": "Средний урон эмоциям"
+  },
+  {
+    "id": "atk_emotion_m3",
+    "category": "Атака",
+    "effect": "emotion",
+    "damage": 2,
+    "usesLeft": 2,
+    "combo_tags": ["pressure"],
+    "name": "Тонкий упрёк",
+    "desc": "Средний урон эмоциям"
+  },
+  {
+    "id": "atk_emotion_s1",
+    "category": "Атака",
+    "effect": "emotion",
+    "damage": 3,
+    "usesLeft": 1,
+    "combo_tags": ["finisher"],
+    "name": "Удар по чувствам",
+    "desc": "Сильный урон эмоциям"
+  },
+  {
+    "id": "atk_emotion_s2",
+    "category": "Атака",
+    "effect": "emotion",
+    "damage": 3,
+    "usesLeft": 1,
+    "combo_tags": ["finisher"],
+    "name": "Манипуляция",
+    "desc": "Сильный урон эмоциям"
+  },
+  {
+    "id": "atk_emotion_s3",
+    "category": "Атака",
+    "effect": "emotion",
+    "damage": 3,
+    "usesLeft": 1,
+    "combo_tags": ["finisher"],
+    "name": "Прицельный укол",
+    "desc": "Сильный урон эмоциям"
+  },
+  {
+    "id": "atk_emotion_s4",
+    "category": "Атака",
+    "effect": "emotion",
+    "damage": 3,
+    "usesLeft": 1,
+    "combo_tags": ["finisher"],
+    "name": "Едкий выпад",
+    "desc": "Сильный урон эмоциям"
+  },
+  {
+    "id": "atk_random_h1",
+    "category": "Атака",
+    "effect": "random",
+    "damage": 4,
+    "usesLeft": 1,
+    "combo_tags": ["finisher"],
+    "name": "Критический удар",
+    "desc": "Сильный урон случайно"
+  },
+  {
+    "id": "atk_random_h2",
+    "category": "Атака",
+    "effect": "random",
+    "damage": 4,
+    "usesLeft": 1,
+    "combo_tags": ["finisher"],
+    "name": "Неожиданный поворот",
+    "desc": "Сильный урон случайно"
+  },
+  {
+    "id": "def_heal_logic",
+    "category": "Защита",
+    "effect": "logic",
+    "heal": 3,
+    "usesLeft": 2,
+    "combo_tags": ["linker"],
+    "name": "Переосмысление",
+    "desc": "Восстанавливает логику"
+  },
+  {
+    "id": "def_heal_emotion",
+    "category": "Защита",
+    "effect": "emotion",
+    "heal": 3,
+    "usesLeft": 2,
+    "combo_tags": ["linker"],
+    "name": "Глубокий вдох",
+    "desc": "Восстанавливает эмоции"
+  },
+  {
+    "id": "def_shield",
+    "category": "Защита",
+    "effect": "shield",
+    "shield": 3,
+    "usesLeft": 1,
+    "combo_tags": ["starter"],
+    "name": "Стальная воля",
+    "desc": "Блокирует урон щитом"
+  },
+  {
+    "id": "evd_cancel",
+    "category": "Уклонение",
+    "effect": "cancel",
+    "usesLeft": 1,
+    "combo_tags": ["interrupt"],
+    "name": "Не в кассу",
+    "desc": "Отменяет последнюю карту врага"
+  },
+  {
+    "id": "evd_mirror",
+    "category": "Уклонение",
+    "effect": "mirror",
+    "modifier": 0.75,
+    "usesLeft": 1,
+    "combo_tags": ["interrupt"],
+    "name": "Зеркало",
+    "desc": "Копирует 75% атаки врага"
+  },
+  {
+    "id": "evd_reflect",
+    "category": "Уклонение",
+    "effect": "reflect",
+    "usesLeft": 1,
+    "combo_tags": ["interrupt"],
+    "name": "Контратака",
+    "desc": "Отражает урон обратно"
+  },
+  {
+    "id": "special_repeat",
+    "category": "Уклонение",
+    "effect": "cancel",
+    "usesLeft": 1,
+    "combo_tags": ["interrupt"],
+    "name": "Повторение",
+    "desc": "Отменяет повторно сыгранную карту"
+  },
+  {
+    "id": "special_burst",
+    "category": "Уклонение",
+    "effect": "burst",
+    "usesLeft": 1,
+    "combo_tags": ["interrupt"],
+    "name": "Burst",
+    "desc": "Отменяет последние 2 действия оппонента",
+    "text": "Стоп. Вернёмся на два шага назад."
+  },
+  {
+    "id": "special_rage",
+    "category": "Атака",
+    "effect": "emotion",
+    "damage": 5,
+    "usesLeft": 1,
+    "combo_tags": ["finisher", "rage"],
+    "name": "Rage",
+    "desc": "Сильный comeback-удар по эмоциям",
+    "text": "Теперь я скажу то, что держал внутри."
+  }
+]

@@ -1,0 +1,104 @@
+[
+  {
+    "id": "socratic_trap",
+    "name": "Сократов капкан",
+    "type": "reactive",
+    "desc": "Поймал логическую атаку после отмены.",
+    "bonus_damage": 2,
+    "bonus_effect_id": "discard_one",
+    "pattern": [
+      { "owner": "self", "category": "evasion", "effect": "cancel" },
+      { "owner": "opponent", "category": "attack", "effect": "logic" },
+      { "owner": "self", "category": "attack", "effect": "logic" }
+    ]
+  },
+  {
+    "id": "emotional_barrage",
+    "name": "Эмоциональный шквал",
+    "type": "solo",
+    "desc": "Две эмоциональные атаки через ответ оппонента. v0.1 адаптация под окно 3.",
+    "bonus_damage": 2,
+    "bonus_effect_id": "break_shield",
+    "pattern": [
+      { "owner": "self", "category": "attack", "effect": "emotion" },
+      { "owner": "any" },
+      { "owner": "self", "category": "attack", "effect": "emotion" }
+    ]
+  },
+  {
+    "id": "cold_reason",
+    "name": "Холодный разум",
+    "type": "echo",
+    "desc": "Логикой гасишь эмоциональный заход оппонента.",
+    "bonus_damage": 1,
+    "bonus_heal": 1,
+    "pattern": [
+      { "owner": "self", "category": "attack", "effect": "logic" },
+      { "owner": "opponent", "category": "attack", "effect": "emotion" },
+      { "owner": "self", "category": "attack", "effect": "logic" }
+    ]
+  },
+  {
+    "id": "mirror_finish",
+    "name": "Зеркальный финиш",
+    "type": "reactive",
+    "desc": "Щит, атака оппонента, затем зеркало.",
+    "bonus_effect_id": "mirror_finish",
+    "pattern": [
+      { "owner": "self", "category": "defense", "effect": "shield" },
+      { "owner": "opponent", "category": "attack" },
+      { "owner": "self", "category": "evasion", "effect": "mirror" }
+    ]
+  },
+  {
+    "id": "steel_wall",
+    "name": "Стальная стена",
+    "type": "solo",
+    "desc": "Щит закрепляется через восстановление логики.",
+    "bonus_heal": 1,
+    "bonus_effect_id": "fortify_shield",
+    "pattern": [
+      { "owner": "self", "category": "defense", "effect": "shield" },
+      { "owner": "any" },
+      { "owner": "self", "category": "defense", "effect": "logic" }
+    ]
+  },
+  {
+    "id": "serenade",
+    "name": "Серенада",
+    "type": "solo",
+    "desc": "Эмоциональное восстановление переходит в эмоциональную атаку.",
+    "bonus_damage": 1,
+    "bonus_heal": 2,
+    "pattern": [
+      { "owner": "self", "category": "defense", "effect": "emotion" },
+      { "owner": "opponent" },
+      { "owner": "self", "category": "attack", "effect": "emotion" }
+    ]
+  },
+  {
+    "id": "dogmatic_drill",
+    "name": "Догматический бур",
+    "type": "solo",
+    "desc": "Один и тот же логический довод повторяется через ход.",
+    "bonus_damage": 2,
+    "bonus_effect_id": "dogmatic_debuff",
+    "pattern": [
+      { "owner": "self", "category": "attack", "effect": "logic" },
+      { "owner": "any" },
+      { "owner": "self", "category": "attack", "effect": "logic", "same_card_as": 0 }
+    ]
+  },
+  {
+    "id": "thesis_switch",
+    "name": "Подмена тезиса",
+    "type": "bait",
+    "desc": "Слабая эмоциональная атака вытягивает отмену, следующий удар вскрывает подмену.",
+    "bonus_damage": 3,
+    "pattern": [
+      { "owner": "self", "category": "attack", "effect": "emotion", "max_damage": 2 },
+      { "owner": "opponent", "category": "evasion", "effect": "cancel" },
+      { "owner": "self", "category": "attack" }
+    ]
+  }
+]

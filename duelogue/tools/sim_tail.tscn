@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://duelogue/tools/sim_tail.gd" id="1"]
+
+[node name="SimTail" type="Node"]
+script = ExtResource("1")

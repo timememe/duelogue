@@ -1,0 +1,33 @@
+{
+  "id": "evangelion",
+  "display_name": "Евангелион",
+  "theme_id": "evangelion",
+  "cards": {
+    "player_attack_cards": [
+      "atk_logic_m1",
+      "atk_logic_s1",
+      "atk_emotion_m1",
+      "atk_emotion_s1",
+      "atk_random_h1"
+    ],
+    "enemy_attack_cards": [
+      "atk_logic_m3",
+      "atk_logic_s2",
+      "atk_emotion_m2",
+      "atk_emotion_s2",
+      "atk_logic_xl1"
+    ],
+    "defense_cards": [
+      "def_heal_logic",
+      "def_heal_emotion",
+      "def_shield"
+    ],
+    "evasion_cards": [
+      "evd_cancel",
+      "evd_mirror",
+      "evd_reflect"
+    ],
+    "rare_attack_cards": [],
+    "repeat_card": "special_repeat"
+  }
+}

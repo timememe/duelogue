@@ -1,0 +1,972 @@
+{
+  "dealmap": "fragment",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "duelogue_v1",
+      "title": "DUELOGUE v1: архитектура",
+      "note": "Текущая версия Godot-проекта: активная сцена ведет в нарративный прототип поверх ядра «Зал» v0.3.1.",
+      "color": "#6c8cff",
+      "children": {
+        "nodes": [
+          {
+            "id": "entry",
+            "title": "Точка входа",
+            "note": "project.godot запускает res://test/prototype_zal/zal_narr.tscn; сборка лежит рядом как DUELOGUE_v1.exe/.pck.",
+            "color": "#6c8cff",
+            "children": {
+              "nodes": [
+                {
+                  "id": "project",
+                  "title": "project.godot",
+                  "note": "Имя DUELOGUE_v1, Godot 4.6, main_scene = test/prototype_zal/zal_narr.tscn."
+                },
+                {
+                  "id": "scene",
+                  "title": "zal_narr.tscn",
+                  "note": "Control-сцена, на root повешен test/prototype_zal/zal_narr.gd."
+                },
+                {
+                  "id": "exports",
+                  "title": "Экспорт v1",
+                  "note": "В корне есть DUELOGUE_v1.exe, console.exe и pck; пресеты описаны в export_presets.cfg."
+                }
+              ],
+              "edges": [
+                {
+                  "from": "project",
+                  "to": "scene"
+                },
+                {
+                  "from": "scene",
+                  "to": "exports"
+                }
+              ],
+              "frames": [
+                {
+                  "title": "Запуск",
+                  "color": "#6c8cff",
+                  "nodes": [
+                    "project",
+                    "scene",
+                    "exports"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "playable_scene",
+            "title": "Играбельная сцена",
+            "note": "zal_narr.gd соединяет UI, ход партии, интерактивный клинч, smart-бота, наррацию и файловые логи.",
+            "color": "#3ecf8e",
+            "children": {
+              "nodes": [
+                {
+                  "id": "scene_role",
+                  "title": "Роль zal_narr.gd",
+                  "note": "Дубликат zal_v3.gd для обкатки нарратива; механику не меняет, а переиспользует модель как есть."
+                },
+                {
+                  "id": "ui",
+                  "title": "UI строится кодом",
+                  "note": "Сцена создает фон, рамки сторон, шкалу Зала, руку игрока, стенограмму, меню паузы и flash-исход."
+                },
+                {
+                  "id": "match_flow",
+                  "title": "Цикл матча",
+                  "note": "_new_match() сбрасывает модель, выбирает первого, стартует тему и дальше гонит _run_until_player()."
+                },
+                {
+                  "id": "input",
+                  "title": "Ввод игрока",
+                  "note": "Кнопки руки играют Тезис/Установку сразу, а Разбор/Кража переводят сцену в выбор чужой рамки."
+                },
+                {
+                  "id": "ai_loop",
+                  "title": "Ход оппонента",
+                  "note": "Оппонент использует OPP_STYLE = smart и выбирает действие через model.ai_pick()."
+                },
+                {
+                  "id": "clinch_ui",
+                  "title": "Интерактивный клинч",
+                  "note": "_run_clinch() ведет волю разбор-тезис-разбор; игрок отвечает кнопками руки или пасом."
+                },
+                {
+                  "id": "narration_calls",
+                  "title": "Вызовы нарратива",
+                  "note": "Сцена превращает события модели в open_line, make_statement, refute_line, press_line и verdict_text."
+                },
+                {
+                  "id": "file_logs",
+                  "title": "Логи партии",
+                  "note": "playtest_log.jsonl хранит экономику/исходы, narrative_transcript.md хранит реплики вместе с тегами действий."
+                },
+                {
+                  "id": "theme_menu",
+                  "title": "Меню тем",
+                  "note": "Оверлей паузы дает продолжить, начать новую партию и сменить тему без изменения движка."
+                }
+              ],
+              "edges": [
+                {
+                  "from": "scene_role",
+                  "to": "ui"
+                },
+                {
+                  "from": "scene_role",
+                  "to": "match_flow"
+                },
+                {
+                  "from": "match_flow",
+                  "to": "input"
+                },
+                {
+                  "from": "match_flow",
+                  "to": "ai_loop"
+                },
+                {
+                  "from": "input",
+                  "to": "clinch_ui"
+                },
+                {
+                  "from": "ai_loop",
+                  "to": "clinch_ui"
+                },
+                {
+                  "from": "clinch_ui",
+                  "to": "narration_calls"
+                },
+                {
+                  "from": "narration_calls",
+                  "to": "file_logs"
+                },
+                {
+                  "from": "theme_menu",
+                  "to": "narration_calls"
+                }
+              ],
+              "frames": [
+                {
+                  "title": "Контроллер сцены",
+                  "color": "#3ecf8e",
+                  "nodes": [
+                    "scene_role",
+                    "ui",
+                    "match_flow",
+                    "input",
+                    "ai_loop",
+                    "clinch_ui",
+                    "theme_menu"
+                  ]
+                },
+                {
+                  "title": "Вывод и следы",
+                  "color": "#f5c451",
+                  "nodes": [
+                    "narration_calls",
+                    "file_logs"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "core_model",
+            "title": "Чистая модель «Зал»",
+            "note": "zal_v3_model.gd не зависит от UI: хранит состояние сторон, правила карт, клинч, победу, ИИ и симуляции.",
+            "color": "#f5c451",
+            "children": {
+              "nodes": [
+                {
+                  "id": "state",
+                  "title": "Состояние сторон",
+                  "note": "sides содержит lines, hand, draw и passed; current, turn_count, winner и end_reason описывают ход партии."
+                },
+                {
+                  "id": "cards",
+                  "title": "Три типа карт",
+                  "note": "T = Тезис, R = Разбор/Кража, U = Установка; имена карт задают манеру, но не содержание спора."
+                },
+                {
+                  "id": "frames",
+                  "title": "Рамки и тезисы",
+                  "note": "Рамка стоит, пока на ней есть тезисы; активна последняя рамка, закрытые рамки не принимают новые тезисы."
+                },
+                {
+                  "id": "turn_start",
+                  "title": "begin_turn()",
+                  "note": "Проверяет нокаут, авто-страховку Установкой, пас при пустой руке и конец по решению."
+                },
+                {
+                  "id": "play_action",
+                  "title": "play_action()",
+                  "note": "Применяет Тезис, Установку или Разбор, затем добирает руку и увеличивает turn_count."
+                },
+                {
+                  "id": "clinch",
+                  "title": "Клинч",
+                  "note": "clinch_finalize() решает, чьи карты сработали: защитник удержал рамку или атакующий продавил снятие."
+                },
+                {
+                  "id": "steal_capture",
+                  "title": "Кража и захват",
+                  "note": "Кража переносит снятый тезис атакующему; при capture_mode может забрать павшую рамку как трофей."
+                },
+                {
+                  "id": "scoring",
+                  "title": "Ширина и Зал",
+                  "note": "score() считает стоящие рамки; zal() считает крен по рамкам и их силе как тай-брейк."
+                },
+                {
+                  "id": "ai",
+                  "title": "Стили ИИ",
+                  "note": "ai_pick() поддерживает tall, wide, aggro, balanced и smart; smart играет захват, защиту и teardown."
+                },
+                {
+                  "id": "simulate_api",
+                  "title": "simulate()",
+                  "note": "Полный матч AI-vs-AI возвращает победителя, причину, длину, счет, смены лидера и точку решения."
+                },
+                {
+                  "id": "calibration",
+                  "title": "Откалиброванные ручки",
+                  "note": "Текущий сценовый набор: U3 T8 R9, рука 5, база 1, коми 0, 2 Кражи, клинч+заморозка, захват-трофей."
+                }
+              ],
+              "edges": [
+                {
+                  "from": "state",
+                  "to": "frames"
+                },
+                {
+                  "from": "cards",
+                  "to": "play_action"
+                },
+                {
+                  "from": "turn_start",
+                  "to": "play_action"
+                },
+                {
+                  "from": "play_action",
+                  "to": "clinch"
+                },
+                {
+                  "from": "clinch",
+                  "to": "steal_capture"
+                },
+                {
+                  "from": "frames",
+                  "to": "scoring"
+                },
+                {
+                  "from": "steal_capture",
+                  "to": "scoring"
+                },
+                {
+                  "from": "ai",
+                  "to": "play_action"
+                },
+                {
+                  "from": "simulate_api",
+                  "to": "ai"
+                },
+                {
+                  "from": "calibration",
+                  "to": "simulate_api"
+                }
+              ],
+              "frames": [
+                {
+                  "title": "Правила",
+                  "color": "#f5c451",
+                  "nodes": [
+                    "state",
+                    "cards",
+                    "frames",
+                    "turn_start",
+                    "play_action",
+                    "clinch",
+                    "steal_capture",
+                    "scoring"
+                  ]
+                },
+                {
+                  "title": "Баланс и ИИ",
+                  "color": "#c084fc",
+                  "nodes": [
+                    "ai",
+                    "simulate_api",
+                    "calibration"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "narrative",
+            "title": "Нарративный слой",
+            "note": "narrative_engine.gd берет мехсобытия и тему-ось, а выдает стенограмму спора без изменения модели.",
+            "color": "#c084fc",
+            "children": {
+              "nodes": [
+                {
+                  "id": "principle",
+                  "title": "Форма не содержание",
+                  "note": "Карта задает прием/манеру, а содержание приходит из рамки и спорной оси темы."
+                },
+                {
+                  "id": "theme_contract",
+                  "title": "Контракт темы",
+                  "note": "data() возвращает id, topic, stances, axes, shared_motifs и voices; движок работает с любой такой темой."
+                },
+                {
+                  "id": "axes",
+                  "title": "Модель осей",
+                  "note": "Ось хранит два противоположных взгляда contra/pro и мотивы; тезис выбирает свежую ось рамки."
+                },
+                {
+                  "id": "devices",
+                  "title": "Приемы карт",
+                  "note": "Имена карт модели мапятся в приемы: Пример, Авторитет, Контрпример, Передерг, Разворот и другие."
+                },
+                {
+                  "id": "statements",
+                  "title": "Statement-стек",
+                  "note": "На рамке хранится стек сказанных доводов; Разбор бьет верхний Statement, Кража разворачивает его ось."
+                },
+                {
+                  "id": "speech_api",
+                  "title": "Речевой API",
+                  "note": "open_line, make_statement, refute_line, press_line, resolve_text и verdict_text покрывают игровые события."
+                },
+                {
+                  "id": "fill_safe",
+                  "title": "Fill-safe шаблоны",
+                  "note": "Движок не склоняет вставки: фразы вставляются целиком, мотивы только в грамматически безопасные места."
+                },
+                {
+                  "id": "determinism",
+                  "title": "Детерминизм",
+                  "note": "start(theme, seed, stance) фиксирует тему, стойки, счетчики и RNG; smoke-тесты могут воспроизводить речь."
+                },
+                {
+                  "id": "future_llm",
+                  "title": "Будущий LLM-слой",
+                  "note": "LLM запланирован как офлайн-автор тем, не как рантайм-замена правил или грамматики."
+                }
+              ],
+              "edges": [
+                {
+                  "from": "principle",
+                  "to": "theme_contract"
+                },
+                {
+                  "from": "theme_contract",
+                  "to": "axes"
+                },
+                {
+                  "from": "devices",
+                  "to": "speech_api"
+                },
+                {
+                  "from": "axes",
+                  "to": "statements"
+                },
+                {
+                  "from": "statements",
+                  "to": "speech_api"
+                },
+                {
+                  "from": "fill_safe",
+                  "to": "speech_api"
+                },
+                {
+                  "from": "determinism",
+                  "to": "speech_api"
+                },
+                {
+                  "from": "future_llm",
+                  "to": "theme_contract"
+                }
+              ],
+              "frames": [
+                {
+                  "title": "Контракт речи",
+                  "color": "#c084fc",
+                  "nodes": [
+                    "principle",
+                    "theme_contract",
+                    "axes",
+                    "devices",
+                    "statements",
+                    "speech_api",
+                    "fill_safe",
+                    "determinism"
+                  ]
+                },
+                {
+                  "title": "Парковка",
+                  "color": "#8b90a0",
+                  "nodes": [
+                    "future_llm"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "themes",
+            "title": "Темы-колоды",
+            "note": "Три сменяемые темы доказывают модульность: один движок, разные topic/stances/axes.",
+            "color": "#2dd4bf",
+            "children": {
+              "nodes": [
+                {
+                  "id": "pineapple",
+                  "title": "Ананас на пицце",
+                  "note": "Тема по умолчанию: contra против ананаса, pro за ананас; 6 осей про баланс, традицию, авторитет и т.д."
+                },
+                {
+                  "id": "shawarma",
+                  "title": "Шаурма: лаваш",
+                  "note": "contra за обычный лаваш, pro за сырный; проверяет, что смена темы не требует правок движка."
+                },
+                {
+                  "id": "evangelion",
+                  "title": "Аска или Рей",
+                  "note": "Фанатская тема: contra за Рей, pro за Аску; та же схема осей и fill-safe полей."
+                },
+                {
+                  "id": "runtime_menu",
+                  "title": "Выбор в рантайме",
+                  "note": "zal_narr.gd хранит THEMES и перестраивает меню паузы с отметкой активной темы."
+                },
+                {
+                  "id": "authoring_rules",
+                  "title": "Правила авторинга",
+                  "note": "headlines/takes должны быть целыми фразами без точки; motif — именительный носитель для безопасной вставки."
+                }
+              ],
+              "edges": [
+                {
+                  "from": "authoring_rules",
+                  "to": "pineapple"
+                },
+                {
+                  "from": "authoring_rules",
+                  "to": "shawarma"
+                },
+                {
+                  "from": "authoring_rules",
+                  "to": "evangelion"
+                },
+                {
+                  "from": "pineapple",
+                  "to": "runtime_menu"
+                },
+                {
+                  "from": "shawarma",
+                  "to": "runtime_menu"
+                },
+                {
+                  "from": "evangelion",
+                  "to": "runtime_menu"
+                }
+              ],
+              "frames": [
+                {
+                  "title": "Данные тем",
+                  "color": "#2dd4bf",
+                  "nodes": [
+                    "pineapple",
+                    "shawarma",
+                    "evangelion"
+                  ]
+                },
+                {
+                  "title": "Интеграция",
+                  "color": "#3ecf8e",
+                  "nodes": [
+                    "runtime_menu",
+                    "authoring_rules"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "validation",
+            "title": "Симуляции и проверки",
+            "note": "Баланс и нарратив проверяются отдельными harness-сценами и headless smoke-скриптом.",
+            "color": "#ff6b6b",
+            "children": {
+              "nodes": [
+                {
+                  "id": "zal_sim",
+                  "title": "zal_v3_sim.gd",
+                  "note": "Свип capture_mode x smart bot; печатает зеркала, поле стилей и матрицы winrate."
+                },
+                {
+                  "id": "model_sim",
+                  "title": "simulate() модели",
+                  "note": "Используется симулятором для AI-vs-AI матчей с метриками исхода, темпа и смен лидера."
+                },
+                {
+                  "id": "narr_smoke",
+                  "title": "narrative_smoke.gd",
+                  "note": "Headless прогон 3 тем по 5 матчей; пишет narrative_transcript_smoke.md и stdout."
+                },
+                {
+                  "id": "manual_playtest",
+                  "title": "Ручной плейтест",
+                  "note": "playtest_notes.md фиксирует прозрачность исходов и ось мастерства как экономику руки."
+                },
+                {
+                  "id": "legacy_tests",
+                  "title": "Старые test_*",
+                  "note": "test_match.gd и test_simulation.gd относятся к архивному движку с GameState/CardDatabase."
+                },
+                {
+                  "id": "metrics",
+                  "title": "Метрики",
+                  "note": "Смотрятся first turn win, KO/decision/draw, длина, смены лидера, decision_frac и матрица стилей."
+                }
+              ],
+              "edges": [
+                {
+                  "from": "model_sim",
+                  "to": "zal_sim"
+                },
+                {
+                  "from": "zal_sim",
+                  "to": "metrics"
+                },
+                {
+                  "from": "narr_smoke",
+                  "to": "metrics"
+                },
+                {
+                  "from": "manual_playtest",
+                  "to": "metrics"
+                },
+                {
+                  "from": "legacy_tests",
+                  "to": "metrics"
+                }
+              ],
+              "frames": [
+                {
+                  "title": "Текущий контур",
+                  "color": "#ff6b6b",
+                  "nodes": [
+                    "zal_sim",
+                    "model_sim",
+                    "narr_smoke",
+                    "manual_playtest",
+                    "metrics"
+                  ]
+                },
+                {
+                  "title": "Архивный контур",
+                  "color": "#8b90a0",
+                  "nodes": [
+                    "legacy_tests"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "outputs",
+            "title": "Артефакты рантайма",
+            "note": "Игра оставляет машинный JSONL-лог и человекочитаемую стенограмму, которые уже накоплены в test/prototype_zal.",
+            "color": "#8b90a0",
+            "children": {
+              "nodes": [
+                {
+                  "id": "jsonl",
+                  "title": "playtest_log.jsonl",
+                  "note": "Каждая строка — событие матча с turn, frames, zal, рукой/колодой и исходом."
+                },
+                {
+                  "id": "transcript",
+                  "title": "narrative_transcript.md",
+                  "note": "Интерливнутый лог живых партий: тег механического действия + реплика или ремарка."
+                },
+                {
+                  "id": "smoke_tx",
+                  "title": "narrative_transcript_smoke.md",
+                  "note": "Большая стенограмма headless smoke-прогонов по всем темам."
+                },
+                {
+                  "id": "built_files",
+                  "title": "Сборочные файлы",
+                  "note": "DUELOGUE_v1.exe/.pck/.console.exe находятся в корне рядом с Godot-проектом."
+                }
+              ],
+              "edges": [
+                {
+                  "from": "jsonl",
+                  "to": "transcript"
+                },
+                {
+                  "from": "smoke_tx",
+                  "to": "transcript"
+                },
+                {
+                  "from": "built_files",
+                  "to": "jsonl"
+                }
+              ],
+              "frames": [
+                {
+                  "title": "Следы партий",
+                  "color": "#8b90a0",
+                  "nodes": [
+                    "jsonl",
+                    "transcript",
+                    "smoke_tx"
+                  ]
+                },
+                {
+                  "title": "Дистрибутив",
+                  "color": "#6c8cff",
+                  "nodes": [
+                    "built_files"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "docs",
+            "title": "Контекст и спеки",
+            "note": "context хранит каноническое GDD, историю итераций, спецификацию нарратива и ресерч риторики/карточных игр.",
+            "color": "#6c8cff",
+            "children": {
+              "nodes": [
+                {
+                  "id": "gdd",
+                  "title": "zal_gdd.md",
+                  "note": "Каноническая основа v0.3.1: видение, принципы, доска, клинч, победа, экономика и пути роста."
+                },
+                {
+                  "id": "core_spec",
+                  "title": "zal_core_v0.3.md",
+                  "note": "Лог до кода и после симуляций: проблемы ширины, ничьих, кражи, клинча и принятый рулсет."
+                },
+                {
+                  "id": "narr_spec",
+                  "title": "narrative_engine.md",
+                  "note": "Спека нарративного слоя v0.2: оси, речевые акты, fill-safe контракт и связь с реализацией."
+                },
+                {
+                  "id": "playtest_doc",
+                  "title": "playtest_notes.md",
+                  "note": "Ручной плейтест v0.3.1: прозрачные исходы, экономика руки, темы для наблюдения."
+                },
+                {
+                  "id": "rhetoric",
+                  "title": "context/rhetoric",
+                  "note": "Материалы по приемам, fallacies, схемам аргументации, Сократу и Шопенгауэру питают нарратив."
+                },
+                {
+                  "id": "genre_refs",
+                  "title": "cardgames + fighting",
+                  "note": "Референсы Slay the Spire, Inscryption и файтингов помогают думать о темпе, комбо и контр-игре."
+                }
+              ],
+              "edges": [
+                {
+                  "from": "core_spec",
+                  "to": "gdd"
+                },
+                {
+                  "from": "gdd",
+                  "to": "narr_spec"
+                },
+                {
+                  "from": "rhetoric",
+                  "to": "narr_spec"
+                },
+                {
+                  "from": "genre_refs",
+                  "to": "core_spec"
+                },
+                {
+                  "from": "playtest_doc",
+                  "to": "gdd"
+                }
+              ],
+              "frames": [
+                {
+                  "title": "Канон",
+                  "color": "#6c8cff",
+                  "nodes": [
+                    "gdd",
+                    "core_spec",
+                    "narr_spec",
+                    "playtest_doc"
+                  ]
+                },
+                {
+                  "title": "Ресерч",
+                  "color": "#2dd4bf",
+                  "nodes": [
+                    "rhetoric",
+                    "genre_refs"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "archive",
+            "title": "Архив старого движка",
+            "note": "_archive содержит прежний карточный движок с GameState, CardDatabase, ресурсами, combos и GameScreen; сейчас не main scene.",
+            "color": "#8b90a0",
+            "children": {
+              "nodes": [
+                {
+                  "id": "old_core",
+                  "title": "GameState + rules",
+                  "note": "_archive/core хранит GameState, TurnResolver, RulesEngine, ScalesManager, EventChecker и ComboResolver."
+                },
+                {
+                  "id": "old_resources",
+                  "title": "Resource-модель",
+                  "note": "CardData, CardInstance, DeckData, CharacterStats и ComboRecipe описывали старую структуру карт/колод."
+                },
+                {
+                  "id": "old_data",
+                  "title": "JSON-данные",
+                  "note": "_archive/data содержит universal_cards, decks, themes и combos для прежнего прототипа."
+                },
+                {
+                  "id": "old_autoloads",
+                  "title": "Autoloads",
+                  "note": "CardDatabase грузит карты/темы/колоды, GameManager держит выбранную колоду и сигналы экранов."
+                },
+                {
+                  "id": "old_ui",
+                  "title": "GameScreen",
+                  "note": "_archive/scenes/screens/game_screen.gd строит старый UI боя с рукой, шкалами, логом и combo flash."
+                },
+                {
+                  "id": "old_status",
+                  "title": "Статус архива",
+                  "note": "project.godot не ссылается на архив; новые прототипы живут в test/prototype_zal."
+                }
+              ],
+              "edges": [
+                {
+                  "from": "old_data",
+                  "to": "old_autoloads"
+                },
+                {
+                  "from": "old_resources",
+                  "to": "old_core"
+                },
+                {
+                  "from": "old_autoloads",
+                  "to": "old_core"
+                },
+                {
+                  "from": "old_core",
+                  "to": "old_ui"
+                },
+                {
+                  "from": "old_status",
+                  "to": "old_ui"
+                }
+              ],
+              "frames": [
+                {
+                  "title": "Legacy engine",
+                  "color": "#8b90a0",
+                  "nodes": [
+                    "old_core",
+                    "old_resources",
+                    "old_data",
+                    "old_autoloads",
+                    "old_ui",
+                    "old_status"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "open_threads",
+            "title": "Открытые нити",
+            "note": "Следующие решения лучше принимать после ручных партий и просмотра логов, а не по коду вслепую.",
+            "color": "#ff6b6b",
+            "children": {
+              "nodes": [
+                {
+                  "id": "manual_distance",
+                  "title": "Набрать ручной плейтест",
+                  "note": "Проверить фановость клинча, читаемость стопок и ощущение экономии руки на дистанции."
+                },
+                {
+                  "id": "pure_tall",
+                  "title": "Pure-tall под вопросом",
+                  "note": "Симуляции помечают чистый tall слабым; нужно понять, нормально ли это для живого игрока."
+                },
+                {
+                  "id": "hall_reactions",
+                  "title": "Реакции зала",
+                  "note": "Парковка нарратива: смешки/аплодисменты по сдвигам zal как отдельный канал атмосферы."
+                },
+                {
+                  "id": "persona_voice",
+                  "title": "Голос персонажей",
+                  "note": "Поле voices уже есть в темах, но пока не влияет на фразы; можно добавить поверх приемов."
+                },
+                {
+                  "id": "theme_authoring",
+                  "title": "Авторинг тем",
+                  "note": "LLM может генерировать корректные темы по контракту, если держать fill-safe ограничения."
+                },
+                {
+                  "id": "archive_decision",
+                  "title": "Судьба архива",
+                  "note": "Нужно решить, остается ли старый GameState как музей/референс или что-то переносится в новое ядро."
+                }
+              ],
+              "edges": [
+                {
+                  "from": "manual_distance",
+                  "to": "pure_tall"
+                },
+                {
+                  "from": "manual_distance",
+                  "to": "hall_reactions"
+                },
+                {
+                  "from": "theme_authoring",
+                  "to": "persona_voice"
+                },
+                {
+                  "from": "archive_decision",
+                  "to": "manual_distance"
+                }
+              ],
+              "frames": [
+                {
+                  "title": "Дизайн после плейтеста",
+                  "color": "#ff6b6b",
+                  "nodes": [
+                    "manual_distance",
+                    "pure_tall",
+                    "hall_reactions"
+                  ]
+                },
+                {
+                  "title": "Контент и поддержка",
+                  "color": "#c084fc",
+                  "nodes": [
+                    "persona_voice",
+                    "theme_authoring",
+                    "archive_decision"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "entry",
+            "to": "playable_scene"
+          },
+          {
+            "from": "core_model",
+            "to": "playable_scene"
+          },
+          {
+            "from": "narrative",
+            "to": "playable_scene"
+          },
+          {
+            "from": "themes",
+            "to": "narrative"
+          },
+          {
+            "from": "playable_scene",
+            "to": "outputs"
+          },
+          {
+            "from": "core_model",
+            "to": "validation"
+          },
+          {
+            "from": "narrative",
+            "to": "validation"
+          },
+          {
+            "from": "docs",
+            "to": "core_model"
+          },
+          {
+            "from": "docs",
+            "to": "narrative"
+          },
+          {
+            "from": "archive",
+            "to": "docs"
+          },
+          {
+            "from": "validation",
+            "to": "open_threads"
+          },
+          {
+            "from": "outputs",
+            "to": "open_threads"
+          }
+        ],
+        "frames": [
+          {
+            "title": "Текущий рантайм",
+            "color": "#3ecf8e",
+            "nodes": [
+              "entry",
+              "playable_scene",
+              "core_model",
+              "narrative",
+              "themes",
+              "outputs"
+            ]
+          },
+          {
+            "title": "Проверка и дизайн",
+            "color": "#ff6b6b",
+            "nodes": [
+              "validation",
+              "docs",
+              "open_threads"
+            ]
+          },
+          {
+            "title": "Наследие",
+            "color": "#8b90a0",
+            "nodes": [
+              "archive"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [],
+  "frames": [
+    {
+      "title": "Импортируемая карта",
+      "color": "#6c8cff",
+      "nodes": [
+        "duelogue_v1"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Build/export artifacts
+/build/
+*.exe
+*.pck
+*.console.exe
+
+# Local Claude Code settings
+.claude/settings.local.json
