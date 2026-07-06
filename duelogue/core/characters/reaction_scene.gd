@@ -10,9 +10,8 @@ extends Control
 
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 
-const HOLD_IMPACT := 0.4
-const FADE_IN := 0.15
-const FADE_OUT := 0.2
+## Фазы (FADE_IN/FADE_OUT/IMPACT_HOLD) — в ReadingPace: единые часы с пейсингом контроллера
+## (scene_time/impact_time), чтобы автоход никогда не обрывал идущую сцену.
 const BUBBLE_MARGIN := 32.0  ## отступ бабла от края экрана — бабл держится СО СТОРОНЫ,
                               ## противоположной портрету, чтобы не лечь на лицо/жест
 
@@ -86,8 +85,8 @@ func show_utterance(side: String, text: String, portrait_tex: Texture2D) -> void
 		_active_tween.kill()
 	_active_tween = create_tween()
 	_active_tween.set_parallel(true)
-	_active_tween.tween_property(self, "modulate:a", 1.0, FADE_IN)
-	_active_tween.tween_property(_bubble, "scale", Vector2.ONE, FADE_IN * 1.6) \
+	_active_tween.tween_property(self, "modulate:a", 1.0, ReadingPace.FADE_IN)
+	_active_tween.tween_property(_bubble, "scale", Vector2.ONE, ReadingPace.FADE_IN * 1.6) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	await _active_tween.finished
 	if my_gen != _gen:
@@ -106,7 +105,8 @@ func show_utterance(side: String, text: String, portrait_tex: Texture2D) -> void
 
 
 ## Яркий исход (клинч landed): фон-шейдер вместо картинки, без бабла, короче и резче.
-func show_impact(side: String, portrait_tex: Texture2D) -> void:
+## intensity 0..1 — пик спидлайнов (тяжесть исхода: снят довод / рухнула рамка).
+func show_impact(side: String, portrait_tex: Texture2D, intensity: float = 1.0) -> void:
 	_gen += 1
 	var my_gen := _gen
 	_bg_image.visible = false
@@ -121,8 +121,8 @@ func show_impact(side: String, portrait_tex: Texture2D) -> void:
 	if _active_tween:
 		_active_tween.kill()
 	_active_tween = create_tween()
-	_active_tween.tween_method(_set_progress, 0.0, 1.0, HOLD_IMPACT * 0.5)
-	_active_tween.tween_method(_set_progress, 1.0, 0.0, HOLD_IMPACT * 0.5)
+	_active_tween.tween_method(_set_progress, 0.0, clampf(intensity, 0.0, 1.0), ReadingPace.IMPACT_HOLD * 0.5)
+	_active_tween.tween_method(_set_progress, clampf(intensity, 0.0, 1.0), 0.0, ReadingPace.IMPACT_HOLD * 0.5)
 	await _active_tween.finished
 	if my_gen != _gen:
 		return
@@ -137,7 +137,7 @@ func _fade_out(my_gen: int) -> void:
 	if _active_tween:
 		_active_tween.kill()
 	_active_tween = create_tween()
-	_active_tween.tween_property(self, "modulate:a", 0.0, FADE_OUT)
+	_active_tween.tween_property(self, "modulate:a", 0.0, ReadingPace.FADE_OUT)
 	await _active_tween.finished
 	if my_gen != _gen:
 		return

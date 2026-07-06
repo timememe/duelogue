@@ -579,7 +579,7 @@ func _build_menu_contents() -> void:
 	# Панель растёт по высоте вместе со списком колод + блоком настроек снизу.
 	var themes_bottom := 298.0 + float(themes.size()) * 38.0
 	var settings_top := themes_bottom + 16.0
-	var panel_h := settings_top + 96.0 - 130.0
+	var panel_h := settings_top + 132.0 - 130.0
 
 	var dim := ColorRect.new()
 	dim.color = Color(0.06, 0.07, 0.09, 0.82)
@@ -619,3 +619,15 @@ func _build_menu_contents() -> void:
 		speed_label.text = "Скорость печати текста: %d симв/с" % int(v)
 	)
 	_menu_overlay.add_child(slider)
+	# Тумблер катсцен-реплик (ReadingPace.CUTSCENES — единые часы: выключил — сцены не
+	# играются, реплики остаются в логе/стенограмме, темп партии сжимается до OFF_BEAT).
+	var cuts := CheckButton.new()
+	cuts.text = "Катсцены реплик (крупный план)"
+	cuts.button_pressed = ReadingPace.CUTSCENES
+	cuts.position = Vector2(376, settings_top + 74.0)
+	cuts.size = Vector2(400, 28)
+	cuts.add_theme_font_size_override("font_size", 12)
+	cuts.toggled.connect(func(v: bool) -> void:
+		ReadingPace.CUTSCENES = v
+	)
+	_menu_overlay.add_child(cuts)

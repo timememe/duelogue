@@ -69,9 +69,12 @@ var _pending_steals := false
 var hint_text := ""      ## подсказка для view (читается на board_changed)
 var _gate_told := {}     ## какие уровни зал-гейта уже объяснены голосом зала (1 раз за матч)
 var _judge_told := {}    ## последний озвученный «счёт судьи» по сторонам (наррация тиков TKO)
-## Время «на прочитать» последнюю реплику (ReadingPace) — пейсинг ждёт минимум это перед
-## следующим автоходом, чтобы мини-сцена реакции не обрывалась раньше срока (_wait_pace).
-var _last_say_delay := 0.0
+## Момент (сек, Time.get_ticks_msec), когда текущая катсцена реплики/исхода ДОИГРАЕТ
+## (ReadingPace.scene_time — единые часы с reaction_scene). _say и _wait_pace держат этот
+## рубеж: следующая реплика, автоход или финал никогда не обрывают идущую сцену.
+var _say_until := 0.0
+## Стартовый суммарный добор обеих сторон — для фазы дебатов (израсходованная доля = таймер).
+var _draw0 := 1
 
 
 func _ready() -> void:
@@ -119,6 +122,7 @@ func start_match() -> void:
 	ai.set_style(SIDE_OPP, OPP_STYLE)
 	match_id = int(Time.get_unix_time_from_system())
 	nar.start(_theme_data, match_id, {"you": "contra", "opp": "pro"})
+	_draw0 = maxi(1, _draw_left())
 	EventBus.match_started.emit({
 		"theme": nar.theme.id,
 		"first": "you" if first == SIDE_YOU else "opp",
@@ -134,8 +138,13 @@ func start_match() -> void:
 	_narrate("ТЕМА ДЕБАТОВ: «%s».  Слово первым: %s." % [nar.topic(), ("вы" if first == SIDE_YOU else "оппонент")])
 	var yb := _claim_of(SIDE_YOU, model.sides[SIDE_YOU].lines[0])
 	var ob := _claim_of(SIDE_OPP, model.sides[SIDE_OPP].lines[0])
-	_say(SIDE_YOU, nar.open_line(SIDE_YOU, yb), "start you база")
-	_say(SIDE_OPP, nar.open_line(SIDE_OPP, ob), "start opp база")
+	var my_epoch := _epoch
+	await _say(SIDE_YOU, nar.open_line(SIDE_YOU, yb), "start you база", TYPE_USTANOVKA, false, nar.last_mood())
+	if my_epoch != _epoch:
+		return
+	await _say(SIDE_OPP, nar.open_line(SIDE_OPP, ob), "start opp база", TYPE_USTANOVKA, false, nar.last_mood())
+	if my_epoch != _epoch:
+		return
 	_run_until_player()
 
 
@@ -152,20 +161,24 @@ func _run_until_player() -> void:
 		if my_epoch != _epoch:
 			return
 		if model.game_over:
-			_show_end(); _changed(); return
+			await _show_end(); _changed(); return
 		var st: String = model.begin_turn(model.current)
 		_narrate_judge_count()
 		if st == "ko" or st == "crowd" or st == "end" or st == "over":
-			_show_end(); _changed(); return
+			await _show_end(); _changed(); return
 		if st == "redeploy":
 			var line: Dictionary = model.sides[model.current].lines[-1]
 			var claim := _claim_of(model.current, line)
-			_say(model.current, nar.redeploy_line(model.current, claim), "t%d %s redeploy (страховка)" % [model.turn_count, model.current], TYPE_USTANOVKA)
+			await _say(model.current, nar.redeploy_line(model.current, claim), "t%d %s redeploy (страховка)" % [model.turn_count, model.current], TYPE_USTANOVKA, false, nar.last_mood())
+			if my_epoch != _epoch:
+				return
 			var rev := {"ev": "redeploy", "side": model.current}
 			rev.merge(_econ()); _emit(rev)
 			model.advance(); _changed(); continue
 		if st == "pass":
-			_say(model.current, nar.pass_line(model.current), "t%d %s pass" % [model.turn_count, model.current])
+			await _say(model.current, nar.pass_line(model.current), "t%d %s pass" % [model.turn_count, model.current], "", false, nar.last_mood())
+			if my_epoch != _epoch:
+				return
 			var pev := {"ev": "pass", "side": model.current}
 			pev.merge(_econ()); _emit(pev)
 			model.advance(); _changed(); continue
@@ -195,7 +208,9 @@ func _run_until_player() -> void:
 				return
 		else:
 			var info: Dictionary = model.play_action(SIDE_OPP, act.type)
-			_log_action(info)
+			await _log_action(info)
+			if my_epoch != _epoch:
+				return
 		model.advance()
 
 
@@ -218,8 +233,12 @@ func play_hand(index: int) -> void:
 		return
 	match card.type:
 		TYPE_TEZIS, TYPE_USTANOVKA:
+			var my_epoch := _epoch
+			_mode = "locked"  # ввод закрыт, пока реплика хода в очереди презентации
 			var info: Dictionary = model.play_action(SIDE_YOU, card.type)
-			_log_action(info)
+			await _log_action(info)
+			if my_epoch != _epoch:
+				return
 			model.advance()
 			_run_until_player()
 		TYPE_RAZBOR:
@@ -280,9 +299,11 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	var is_callback: bool = ctx.is_callback
 	var atk_word := "кража" if init_steals else "разбор"
 	var cb := "←старая" if is_callback else ""
-	_say(attacker, nar.refute_line(attacker, target_claim, _top_stmt(line), initc, is_callback),
+	await _say(attacker, nar.refute_line(attacker, target_claim, _top_stmt(line), initc, is_callback),
 		"t%d %s clinch→%s[%d] %s%s" % [model.turn_count, attacker, defender, idx, atk_word, cb],
-		TYPE_RAZBOR, init_steals)
+		TYPE_RAZBOR, init_steals, nar.last_mood())
+	if my_epoch != _epoch:
+		return
 	EventBus.clinch_started.emit(attacker, defender, idx)
 	_changed()
 	if attacker == SIDE_OPP:
@@ -334,19 +355,27 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 				var dc: Dictionary = res.card
 				var stmt: Dictionary = nar.make_statement(defender, dc, _used_axes(line), "hold")
 				_push_stmt(line, stmt)
-				_say(defender, stmt.text, "    hold %s [%s]" % [defender, stmt.axis], TYPE_TEZIS)
+				await _say(defender, stmt.text, "    hold %s [%s]" % [defender, stmt.axis], TYPE_TEZIS, false, nar.last_mood())
+				if my_epoch != _epoch:
+					return
 				_changed()
 			"press":
 				var ac: Dictionary = res.card
-				_say(attacker, nar.press_line(attacker, _top_stmt(line), ac),
+				await _say(attacker, nar.press_line(attacker, _top_stmt(line), ac),
 					"    press %s %s" % [attacker, ("кража" if ac.get("steals", false) else "разбор")],
-					TYPE_RAZBOR, bool(ac.get("steals", false)))
+					TYPE_RAZBOR, bool(ac.get("steals", false)), nar.last_mood())
+				if my_epoch != _epoch:
+					return
 				_changed()
 			"resolved":
 				resolved = res
 				break
 
-	# Клинч закрыт.
+	# Клинч закрыт. Последняя реплика ралли доигрывает ДО вердикта зала и вспышки исхода —
+	# нокаут/захват больше не съедают финальное высказывание.
+	await _wait_pace(0.0)
+	if my_epoch != _epoch:
+		return
 	var info: Dictionary = resolved.get("info", {"side": attacker, "type": TYPE_RAZBOR})
 	var t_added := int(resolved.get("t_added", 0))
 	var r_count := int(resolved.get("r_count", 1))
@@ -377,6 +406,7 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	if landed:
 		# Рамка пробита — «яркий исход» для мини-сцены реакции (спидлайны на защитнике).
 		EventBus.impact.emit(defender, "removed" if info.get("removed", false) else "landed")
+		_say_until = _now() + ReadingPace.impact_time()  # вспышку тоже не обрываем
 	_changed()
 
 
@@ -398,6 +428,11 @@ func _ask_clinch(mode: String) -> Dictionary:
 
 func _show_end() -> void:
 	_mode = "locked"
+	# Финал ждёт хвост презентации: последняя реплика/вспышка доигрывает, потом вердикт.
+	var my_epoch := _epoch
+	await _wait_pace(0.0)
+	if my_epoch != _epoch:
+		return
 	var reason := String(model.end_reason)
 	var winner_s := "you" if model.winner == SIDE_YOU else ("opp" if model.winner == SIDE_OPP else "draw")
 	var ev := {"ev": "end", "winner": winner_s, "reason": reason}
@@ -417,23 +452,41 @@ func _who(side: String) -> String:
 	return "Вы" if side == SIDE_YOU else "Оппонент"
 
 
+func _now() -> float:
+	return float(Time.get_ticks_msec()) / 1000.0
+
+
+## Сколько ещё доигрывает текущая катсцена (0 — сцена закончилась).
+func _pace_left() -> float:
+	return maxf(0.0, _say_until - _now())
+
+
 ## Реплика стороны: в шину (для UI/персонажей) + в файловую стенограмму. card_type/steals —
-## какой картой сказано (для выбора портрета-реакции по карте в character_core); "" — нет
-## карты (пас/наррация), персонаж покажет нейтральный портрет.
-func _say(side: String, text: String, tag: String = "", card_type: String = "", steals: bool = false) -> void:
+## какой картой сказано; mood — стейт-реакция говорящего (nar.last_mood(), контракт §16) —
+## по нему character_core выбирает портрет/позу; "" — фолбэк по типу карты.
+## ПОСЛЕДОВАТЕЛЬНАЯ: (1) доска обновляется ПЕРВОЙ (ход виден до крупного плана — сцена
+## стартует после BOARD_BEAT в character_core), (2) хвост предыдущей сцены ДОЖИДАЕМСЯ —
+## реплики никогда не убивают друг друга. Вызывать строго с await.
+func _say(side: String, text: String, tag: String = "", card_type: String = "", steals: bool = false, mood: String = "") -> void:
+	var my_epoch := _epoch
+	_changed()  # ход лёг на доску — игрок видит его ДО катсцены
+	var left := _pace_left()
+	if left > 0.0:
+		await get_tree().create_timer(left).timeout
+		if my_epoch != _epoch:
+			return
 	EventBus.utterance.emit(side, text, {
 		"tag": tag, "stance": nar.stance_label(side),
-		"card_type": card_type, "steals": steals,
+		"card_type": card_type, "steals": steals, "mood": mood,
 	})
 	_tx(tag, "%s (%s): %s" % [_who(side), nar.stance_label(side), text])
-	_last_say_delay = ReadingPace.read_time(text)
+	_say_until = _now() + ReadingPace.scene_time(text)
 
 
-## Пейсинг перед следующим автоходом: не короче base_delay, но и не короче времени дочитать
-## только что сказанное (_last_say_delay) — иначе новая реплика/ход обрывает прошлую сцену
-## реакции раньше, чем игрок успел её увидеть/прочитать.
+## Пейсинг перед следующим автоматическим действием: не короче base_delay И не раньше,
+## чем доиграет текущая катсцена (единые часы ReadingPace — сцены не обрываются).
 func _wait_pace(base_delay: float) -> void:
-	await get_tree().create_timer(maxf(base_delay, _last_say_delay)).timeout
+	await get_tree().create_timer(maxf(base_delay, _pace_left())).timeout
 
 
 ## Авторская наррация (голос зала / ремарки).
@@ -443,8 +496,18 @@ func _narrate(text: String, tag: String = "") -> void:
 
 
 func _changed() -> void:
+	# Накал для нарратива (§14.5/14.7): крен зала + фаза (израсходованный добор = таймер).
+	if model != null and nar != null and not nar.theme.is_empty():
+		nar.update_heat(model.zal(), 1.0 - float(_draw_left()) / float(_draw0))
 	_maybe_narrate_gate()
 	EventBus.board_changed.emit()
+
+
+func _draw_left() -> int:
+	var n := 0
+	for side in [SIDE_YOU, SIDE_OPP]:
+		n += (model.sides[side].draw as Array).size()
+	return n
 
 
 ## «Счёт судьи» зал-нокаута: крен у черты дожил до начала хода лидера — тик счёта (1/3, 2/3…).
@@ -494,6 +557,7 @@ func _maybe_narrate_gate() -> void:
 
 
 ## Ход без клинча (Тезис на свою рамку / Установка). Зовётся для обеих сторон.
+## Async: реплика хода идёт через последовательный _say — вызывать с await.
 func _log_action(info: Dictionary) -> void:
 	if info.is_empty():
 		return
@@ -508,11 +572,11 @@ func _log_action(info: Dictionary) -> void:
 			_claim_of(side, line)  # рамке нужна headline-позиция (топик)
 			var stmt: Dictionary = nar.make_statement(side, card, _used_axes(line), "assert")
 			_push_stmt(line, stmt)
-			_say(side, stmt.text, "t%d %s тезис[%s/%s]" % [model.turn_count, side, stmt.device, stmt.axis], TYPE_TEZIS)
+			await _say(side, stmt.text, "t%d %s тезис[%s/%s]" % [model.turn_count, side, stmt.device, stmt.axis], TYPE_TEZIS, false, nar.last_mood())
 		TYPE_USTANOVKA:
 			var line: Dictionary = model.sides[side].lines[-1]
 			var claim := _claim_of(side, line)
-			_say(side, nar.open_line(side, claim, "open"), "t%d %s установка→рамка" % [model.turn_count, side], TYPE_USTANOVKA)
+			await _say(side, nar.open_line(side, claim, "open"), "t%d %s установка→рамка" % [model.turn_count, side], TYPE_USTANOVKA, false, nar.last_mood())
 		TYPE_RAZBOR:
 			pass  # атаки идут через клинч
 

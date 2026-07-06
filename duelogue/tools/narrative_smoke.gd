@@ -41,6 +41,7 @@ func _play_match(seed: int, theme: Dictionary) -> void:
 	match_id = seed
 	model.reset(first, 3, 8, 9, 5, 1, 0, 2, 0, true, true)
 	nar.start(theme, seed, {"you": "contra", "opp": "pro"})
+	var draw0 := maxi(1, _draw_left())
 	_tx_header(first)
 	_narrate("ТЕМА: «%s». Первым: %s." % [nar.topic(), ("вы" if first == ZalV3.SIDE_YOU else "оппонент")])
 	_say(ZalV3.SIDE_YOU, nar.open_line(ZalV3.SIDE_YOU, _claim_of(ZalV3.SIDE_YOU, model.sides[ZalV3.SIDE_YOU].lines[0])), "start you база")
@@ -49,6 +50,7 @@ func _play_match(seed: int, theme: Dictionary) -> void:
 	var guard := 0
 	while not model.game_over and guard < 300:
 		guard += 1
+		nar.update_heat(model.zal(), 1.0 - float(_draw_left()) / float(draw0))
 		var side: String = model.current
 		var st: String = model.begin_turn(side)
 		if st == "ko" or st == "end" or st == "over":
@@ -151,6 +153,13 @@ func _show_end() -> void:
 
 
 # --- helpers (зеркало zal_narr.gd) ---
+
+func _draw_left() -> int:
+	var n := 0
+	for side in [ZalV3.SIDE_YOU, ZalV3.SIDE_OPP]:
+		n += (model.sides[side].draw as Array).size()
+	return n
+
 
 func _who(side: String) -> String:
 	return "Вы" if side == ZalV3.SIDE_YOU else "Оппонент"
