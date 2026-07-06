@@ -1,9 +1,8 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://duelogue/core/characters/reaction_scene.gd" id="1"]
-[ext_resource type="Texture2D" path="res://duelogue/assets/bg_test.png" id="2"]
 [ext_resource type="Shader" path="res://duelogue/assets/shaders/speed_lines.gdshader" id="3"]
-[ext_resource type="Texture2D" path="res://duelogue/assets/char_idle.png" id="4"]
+[ext_resource type="Texture2D" path="res://duelogue/assets/states_test/idle.png" id="4"]
 
 [sub_resource type="ShaderMaterial" id="1"]
 shader = ExtResource("3")
@@ -31,7 +30,6 @@ anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 2
-texture = ExtResource("2")
 expand_mode = 1
 stretch_mode = 6
 

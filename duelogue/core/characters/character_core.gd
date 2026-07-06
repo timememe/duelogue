@@ -18,7 +18,7 @@ const TYPE_USTANOVKA := RulesCore.TYPE_USTANOVKA
 
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 const CHAR_SCENE := preload("res://duelogue/core/characters/character.tscn")
-const IDLE_TEX := preload("res://duelogue/assets/char_idle.png")
+const IDLE_TEX := preload("res://duelogue/assets/states_test/idle.png")
 const REACT_TEZIS := preload("res://duelogue/assets/char_react_tez.png")
 const REACT_RAZBOR := preload("res://duelogue/assets/char_react_raz.png")
 const REACT_KRAJA := preload("res://duelogue/assets/char_react_kra.png")
@@ -26,8 +26,8 @@ const REACT_USTANOVKA := preload("res://duelogue/assets/char_react_ust.png")
 
 ## Тестовая пачка эмоций (assets/states_test, генерация 2026-07-05) — примапплена на стейты
 ## ниже. При финализации скина переехать в assets/characters/<skin>/ с именами стейтов.
-const ST_IDLE := preload("res://duelogue/assets/states_test/normal.png")
-const ST_DECLARE := preload("res://duelogue/assets/states_test/idle.png")
+const ST_IDLE := preload("res://duelogue/assets/states_test/idle.png")
+const ST_DECLARE := preload("res://duelogue/assets/states_test/normal.png")
 const ST_ATTACK := preload("res://duelogue/assets/states_test/pointing.png")
 const ST_BURST := preload("res://duelogue/assets/states_test/objection.png")
 const ST_HOLD := preload("res://duelogue/assets/states_test/angry.png")
@@ -40,7 +40,7 @@ const ST_PANIC := preload("res://duelogue/assets/states_test/disheartened.png")
 ## КОНТРАКТ СКИНА: поза на каждый стейт словаря §16. 9/10 закрыты тестовой пачкой;
 ## недостающий стейт падает в фолбэк по типу карты, так что система рабочая при любом арте.
 const STATE_TEX := {
-	"declare": ST_DECLARE,       # заявляю (фигура в полный рост «у трибуны»; TODO арт: гранд-заява сочнее)
+	"declare": ST_DECLARE,       # заявляю (normal: спокойная уверенность «у трибуны»)
 	"hold": ST_HOLD,             # держит удар, закипая (angry: стиснутые зубы, красный контровой)
 	"attack": ST_ATTACK,        # атакую (pointing: суровое обвинение)
 	"gotcha": ST_GOTCHA,        # подловил (laughing: открытый хохот-издёвка «Ха! Попался!»)
@@ -49,7 +49,7 @@ const STATE_TEX := {
 	"swagger": ST_SWAGGER,      # кураж фаворита (grinning: вальяжная ухмылка)
 	"panic": ST_PANIC,          # сник/мнётся (disheartened; TODO арт: суетливая паника сочнее)
 	"stagger": ST_STAGGER,      # пошатнулся (shocked: отшат, пот) — со спидлайнами
-	"idle": ST_IDLE,            # нейтраль (normal: спокойная уверенность)
+	"idle": ST_IDLE,            # нейтраль/пауза (idle: фигура в полный рост «у трибуны»)
 }
 
 var _stage              ## ядро сцены (через bind) — даёт слой actors и точки-слоты
