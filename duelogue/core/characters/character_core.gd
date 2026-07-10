@@ -107,7 +107,8 @@ func _on_utterance(side: String, text: String, meta: Dictionary) -> void:
 	var tex: Texture2D = STATE_TEX.get(mood) if STATE_TEX.has(mood) \
 		else _portrait_for(String(meta.get("card_type", "")), bool(meta.get("steals", false)))
 	await get_tree().create_timer(ReadingPace.BOARD_BEAT).timeout
-	_reaction.show_utterance(side, text, tex)
+	# Муд едет и в сцену: тот же стейт ведёт портрет И профиль живого фона (MOOD_FX).
+	_reaction.show_utterance(side, text, tex, mood)
 
 
 ## Яркий исход по стороне side — стейт «пошатнулся» (событийный, ставит контроллер).

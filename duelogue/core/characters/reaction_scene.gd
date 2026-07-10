@@ -1,8 +1,8 @@
 extends Control
 
 ## DUELOGUE — МИНИ-СЦЕНА РЕАКЦИИ (Ace Attorney-стиль). Полноэкранная подмена композиции на
-## момент высказывания карты или яркого исхода: свой фон (картинка ИЛИ шейдер-спидлайны),
-## крупный портрет персонажа, бабл с текстом (для реплики). Владелец вызовов — character_core
+## момент высказывания карты или яркого исхода: свой фон (живой муд-шейдер для реплики ИЛИ
+## шейдер-спидлайны для импакта), крупный портрет персонажа, бабл с текстом (для реплики). Владелец вызовов — character_core
 ## («ядро персонажа вызывает анимации и отображение высказывания карты»). Узел живёт статически
 ## в debate_screen.tscn последним ребёнком (рендер поверх игрового UI, но НИЖЕ модального меню
 ## паузы — то добавляется кодом позже = выше). Одна активная реакция за раз: новый вызов
@@ -15,15 +15,40 @@ const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 const BUBBLE_MARGIN := 32.0  ## отступ бабла от края экрана — бабл держится СО СТОРОНЫ,
                               ## противоположной портрету, чтобы не лечь на лицо/жест
 
-## Фон крупного плана — не картинка, а градиент по стороне (§UI: зелёный "вы"/оранжевый
-## "опп", те же тона что и BarYouLabel/BarOppLabel в debate_screen.tscn). Генерятся один раз
-## в _ready, дальше BgImage.texture просто переключается по side.
+## Фон крупного плана — аниме-спидлайны (mood_bg.gdshader): длинные штрихи-«веретёна» летят
+## по направлению эмоции, их края/хвосты РАССЫПАЮТСЯ ДИЗЕРОМ (зерно живёт в самих линиях,
+## фон-градиент гладкий). Градиент — цвета стороны (§UI: зелёный "вы"/оранжевый "опп", тона
+## BarYouLabel/BarOppLabel в debate_screen.tscn) с подмесом эмоции. Портрету — свой дизер
+## ТОЛЬКО ПО ТЕНЯМ (dither.gdshader на ноде Portrait, dark_ceiling; тюнится в инспекторе).
 const BG_YOU_TOP := Color(0.086, 0.2, 0.15, 1)
 const BG_YOU_BOTTOM := Color(0.02, 0.05, 0.045, 1)
 const BG_OPP_TOP := Color(0.22, 0.13, 0.06, 1)
 const BG_OPP_BOTTOM := Color(0.05, 0.03, 0.02, 1)
 
-@onready var _bg_image: TextureRect = $BgImage
+## Муд → профиль спидлайн-фона (словарь стейтов §16 — тот же, что STATE_TEX character_core;
+## муд без строки здесь падает в нейтральный idle-профиль, система рабочая всегда).
+## intensity — МОЩНОСТЬ (плотность зерна линий + подмес tint в градиент + дыхание луча;
+## регистр уже закодирован в муде: burst-панч = максимум); dir — направление В СИСТЕМЕ «you»
+## (вперёд = +x, к оппоненту; для "opp" x зеркалится): атака рвётся вперёд, паника осыпается
+## вниз, кураж лениво всплывает, юление пятится; speed — темп полёта; density — рядов
+## поперёк; fill — длина мазка; line_a ↔ line_b — перелив цвета вдоль линий (line_a также
+## подсвечивает луч); tint — подмес в градиент. КОМФОРТ-ДИАПАЗОНЫ (калибровка fx_lab,
+## 2026-07-09, держимся их): speed ≥ 1, fill 0.42..1, density 25..42; ячейка вдоль (0.5)
+## и толщина (0.3..0.8, своя у каждого ряда) — канон, живут дефолтами шейдера.
+const MOOD_FX := {
+	"declare": {"tint": Color(1.0, 0.93, 0.78), "intensity": 0.35, "dir": Vector2(1.0, 0.0), "speed": 1.2, "density": 25.0, "fill": 0.5, "line_a": Color(1.0, 0.96, 0.86), "line_b": Color(0.7, 0.78, 0.8)},
+	"hold":    {"tint": Color(1.0, 0.28, 0.16), "intensity": 0.55, "dir": Vector2(-1.0, 0.15), "speed": 2.2, "density": 30.0, "fill": 0.55, "line_a": Color(1.0, 0.45, 0.3), "line_b": Color(0.85, 0.2, 0.12)},
+	"attack":  {"tint": Color(1.0, 0.42, 0.12), "intensity": 0.75, "dir": Vector2(1.0, 0.0), "speed": 4.0, "density": 36.0, "fill": 0.7, "line_a": Color(1.0, 0.6, 0.25), "line_b": Color(1.0, 0.3, 0.1)},
+	"gotcha":  {"tint": Color(1.0, 0.84, 0.25), "intensity": 0.7, "dir": Vector2(1.0, 0.5), "speed": 3.0, "density": 32.0, "fill": 0.6, "line_a": Color(1.0, 0.9, 0.45), "line_b": Color(1.0, 0.7, 0.15)},
+	"burst":   {"tint": Color(1.0, 0.15, 0.1), "intensity": 1.0, "dir": Vector2(1.0, 0.0), "speed": 6.5, "density": 42.0, "fill": 0.9, "line_a": Color(1.0, 0.95, 0.9), "line_b": Color(1.0, 0.25, 0.15)},
+	"evade":   {"tint": Color(0.62, 0.66, 0.45), "intensity": 0.45, "dir": Vector2(-0.8, -0.35), "speed": 1.6, "density": 27.0, "fill": 0.45, "line_a": Color(0.75, 0.78, 0.6), "line_b": Color(0.55, 0.6, 0.42)},
+	"swagger": {"tint": Color(0.95, 0.68, 0.3), "intensity": 0.5, "dir": Vector2(0.25, -1.0), "speed": 1.0, "density": 25.0, "fill": 0.55, "line_a": Color(1.0, 0.85, 0.5), "line_b": Color(0.95, 0.65, 0.28)},
+	"panic":   {"tint": Color(0.5, 0.6, 0.8), "intensity": 0.65, "dir": Vector2(0.0, 1.0), "speed": 4.5, "density": 40.0, "fill": 0.5, "line_a": Color(0.7, 0.8, 1.0), "line_b": Color(0.4, 0.5, 0.75)},
+	"idle":    {"tint": Color(1.0, 1.0, 1.0), "intensity": 0.15, "dir": Vector2(1.0, 0.0), "speed": 1.0, "density": 25.0, "fill": 0.42, "line_a": Color(0.9, 0.9, 0.9), "line_b": Color(0.7, 0.7, 0.7)},
+}
+
+@onready var _bg_mood: ColorRect = $BgMood
+@onready var _mood_mat: ShaderMaterial = _bg_mood.material as ShaderMaterial
 @onready var _bg_shader: ColorRect = $BgShader
 @onready var _shader_mat: ShaderMaterial = _bg_shader.material as ShaderMaterial
 @onready var _portrait: TextureRect = $Portrait
@@ -36,32 +61,42 @@ const BG_OPP_BOTTOM := Color(0.05, 0.03, 0.02, 1)
 
 var _gen := 0            ## генерация; новый show_* инвалидирует ожидающие await прошлого
 var _active_tween: Tween  ## текущий tween (убиваем перед стартом нового — без борьбы за свойства)
-var _bg_you: GradientTexture2D
-var _bg_opp: GradientTexture2D
 
 
 func _ready() -> void:
 	visible = false
 	modulate.a = 0.0
 	_bubble.pivot_offset = _bubble.size / 2.0
+	_bg_mood.visible = false
 	_bg_shader.visible = false
-	_bg_you = _make_bg_gradient(BG_YOU_TOP, BG_YOU_BOTTOM)
-	_bg_opp = _make_bg_gradient(BG_OPP_TOP, BG_OPP_BOTTOM)
 
 
-## Вертикальный градиент 8×8 (растягивается TextureRect'ом на весь экран — размер текстуры
-## не важен, важны только цвета в двух точках).
-func _make_bg_gradient(top: Color, bottom: Color) -> GradientTexture2D:
-	var g := Gradient.new()
-	g.colors = PackedColorArray([top, bottom])
-	var t := GradientTexture2D.new()
-	t.gradient = g
-	t.fill = GradientTexture2D.FILL_LINEAR
-	t.fill_from = Vector2(0.5, 0.0)
-	t.fill_to = Vector2(0.5, 1.0)
-	t.width = 8
-	t.height = 8
-	return t
+## Юниформы спидлайн-фона из профиля MOOD_FX. Градиент замешивается здесь, на CPU:
+## середина — верхний тон стороны + эмоция (cap 55% на пике мощности), края — нижний тон
+## с подмесом мягче; оттенок владельца хода читается всегда. Луч по центру красится смесью
+## середины и светлого цвета линий (сила/ширина/зерно луча — дефолты шейдера, тюнятся на
+## материале BgMood). Направление профиля задано «лицом вперёд» (+x = к оппоненту) —
+## для стороны "opp" зеркалится по x.
+func _apply_mood_bg(side: String, mood: String) -> void:
+	var fx: Dictionary = MOOD_FX.get(mood, MOOD_FX["idle"])
+	var top := BG_YOU_TOP if side == "you" else BG_OPP_TOP
+	var bottom := BG_YOU_BOTTOM if side == "you" else BG_OPP_BOTTOM
+	var tint: Color = fx.tint
+	var k: float = fx.intensity
+	var dir: Vector2 = fx.dir
+	if side == "opp":
+		dir.x = -dir.x
+	var center := top.lerp(tint, 0.55 * k)
+	_mood_mat.set_shader_parameter("center_color", center)
+	_mood_mat.set_shader_parameter("edge_color", bottom.lerp(tint, 0.3 * k))
+	_mood_mat.set_shader_parameter("beam_color", center.lerp(fx.line_a, 0.5))
+	_mood_mat.set_shader_parameter("direction", dir)
+	_mood_mat.set_shader_parameter("line_intensity", k)
+	_mood_mat.set_shader_parameter("speed", fx.speed)
+	_mood_mat.set_shader_parameter("line_density", fx.density)
+	_mood_mat.set_shader_parameter("line_fill", fx.fill)
+	_mood_mat.set_shader_parameter("line_color_a", fx.line_a)
+	_mood_mat.set_shader_parameter("line_color_b", fx.line_b)
 
 
 ## Крупный план: портрет прижат к своей рамке-якорю (left-anchor для "you", right-anchor для
@@ -91,14 +126,15 @@ func _layout_bubble(side: String) -> void:
 		_bubble.position.x = BUBBLE_MARGIN
 
 
-## Спокойная реакция: сторона side говорит text (реплика карты), портрет portrait_tex.
+## Реакция-реплика: сторона side говорит text (реплика карты), портрет portrait_tex,
+## mood — стейт говорящего (§16) — красит живой фон профилем эмоции (MOOD_FX).
 ## Длительность сцены НЕ фиксирована — определяется скоростью печати текста в бабле плюс
 ## паузой на дочитывание (см. ReadingPace — общая формула с пейсингом battle_controller).
-func show_utterance(side: String, text: String, portrait_tex: Texture2D) -> void:
+func show_utterance(side: String, text: String, portrait_tex: Texture2D, mood: String = "") -> void:
 	_gen += 1
 	var my_gen := _gen
-	_bg_image.texture = _bg_you if side == "you" else _bg_opp
-	_bg_image.visible = true
+	_apply_mood_bg(side, mood)
+	_bg_mood.visible = true
 	_bg_shader.visible = false
 	_layout_portrait(side, portrait_tex)
 	_portrait.texture = portrait_tex
@@ -137,7 +173,7 @@ func show_utterance(side: String, text: String, portrait_tex: Texture2D) -> void
 func show_impact(side: String, portrait_tex: Texture2D, intensity: float = 1.0) -> void:
 	_gen += 1
 	var my_gen := _gen
-	_bg_image.visible = false
+	_bg_mood.visible = false
 	_bg_shader.visible = true
 	_shader_mat.set_shader_parameter("progress", 0.0)
 	_layout_portrait(side, portrait_tex)
