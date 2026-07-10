@@ -8,6 +8,7 @@ extends Control
 
 const ZalV3 := preload("res://duelogue/core/rules/rules_core.gd")  ## ядро правил — константы SIDE_*/TYPE_*/ZAL_MAX
 const BattleController := preload("res://duelogue/app/battle_controller.gd")
+const CardScene := preload("res://duelogue/ui/card/card.tscn")  ## шаблон карты руки (слои правятся в card.tscn)
 const CharacterCore := preload("res://duelogue/core/characters/character_core.gd")  ## ядро персонажей (актёры на сцену)
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")  ## настройка скорости печати (меню)
 
@@ -433,16 +434,6 @@ func _rebuild_hand() -> void:
 	var mode := String(controller.input_mode())
 	for i in hand.size():
 		var card: Dictionary = hand[i]
-		var col := COL_TEZIS
-		var word := "ТЕЗИС"
-		match card.type:
-			ZalV3.TYPE_RAZBOR:
-				if card.get("steals", false):
-					col = COL_USTAN; word = "КРАЖА"
-				else:
-					col = COL_RAZBOR; word = "РАЗБОР"
-			ZalV3.TYPE_USTANOVKA:
-				col = COL_USTAN; word = "УСТАНОВКА"
 		var enabled := false
 		match mode:
 			"clinch_defend":
@@ -451,49 +442,29 @@ func _rebuild_hand() -> void:
 				enabled = card.type == ZalV3.TYPE_RAZBOR
 			"move":
 				enabled = true
-		# Приём карты — её нарративная идентичность; превью — что карта примерно скажет.
-		var dev: String = nar.device_label(card)
-		var preview: String = nar.preview_text(ZalV3.SIDE_YOU, card)
-		var col_c := Color.html("#" + col)
-		var btn := Button.new()
-		btn.custom_minimum_size = Vector2(HAND_W, HAND_H)
-		btn.clip_text = true
-		btn.tooltip_text = "%s · приём: %s\n«%s»" % [String(card.get("name", "")), dev, preview]
-		var border := col_c
-		btn.add_theme_stylebox_override("normal", _card_style(Color.html("#1d2129"), border, 2))
-		btn.add_theme_stylebox_override("hover", _card_style(Color.html("#262c38"), border, 2))
-		btn.add_theme_stylebox_override("pressed", _card_style(Color.html("#15181f"), border, 2))
-		btn.add_theme_stylebox_override("disabled", _card_style(Color.html("#181b21"), border.darkened(0.35), 1))
-		btn.disabled = not enabled
+		# Лицо карты: у ванильной — приём нарратива + превью-реплика («что примерно скажет»,
+		# при розыгрыше катается заново); у ИМЕННОЙ (zal_run §2) — имя и правило-твист.
+		# Сам дизайн карты (слои/шрифты/размер) — шаблон ui/card/card.tscn, правится в редакторе.
+		var is_named: bool = card.has("named")
+		var title: String = String(card.get("name", "")) if is_named else nar.device_label(card)
+		var body: String = String(card.get("text", "")) if is_named else "«%s»" % nar.preview_text(ZalV3.SIDE_YOU, card)
+		var btn: Button = CardScene.instantiate()
+		_hand_row.add_child(btn)  # в дерево ДО setup: слои шаблона резолвятся в _ready
+		btn.setup(card, title, body, enabled)
+		if is_named:
+			btn.tooltip_text = "%s — именной приём\n%s" % [title, String(card.get("text", ""))]
+		else:
+			btn.tooltip_text = "%s · приём: %s\n%s" % [String(card.get("name", "")), title, body]
 		btn.pressed.connect(_on_hand_pressed.bind(i))
-		# Заголовок: ТИП · приём (цвет карты), приглушается у неиграбельной карты.
-		var head := Label.new()
-		head.text = "%s · %s" % [word, dev]
-		head.anchor_right = 1.0
-		head.offset_left = 8; head.offset_top = 6; head.offset_right = -8; head.offset_bottom = 26
-		head.clip_text = true
-		head.add_theme_font_size_override("font_size", 12)
-		head.add_theme_color_override("font_color", col_c if enabled else col_c.darkened(0.35))
-		head.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		btn.add_child(head)
-		# Тело: реплика-превью (что карта примерно произнесёт). При розыгрыше катается заново.
-		var body := Label.new()
-		body.text = "«%s»" % preview
-		body.anchor_right = 1.0; body.anchor_bottom = 1.0
-		body.offset_left = 8; body.offset_top = 28; body.offset_right = -8; body.offset_bottom = -8
-		body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		body.clip_contents = true
-		body.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-		body.add_theme_font_size_override("font_size", 10)
-		var bodycol := Color.html("#cdd4df")
-		body.add_theme_color_override("font_color", bodycol if enabled else bodycol.darkened(0.45))
-		body.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		btn.add_child(body)
-		_hand_row.add_child(btn)
 	# Центрируем руку по X между иконками колод добора/сброса (в местных координатах HandArea).
 	# Y НЕ трогаем — она держится тем, что задано в сцене (двигаешь всю зону HandArea в редакторе).
+	# Ширина карты читается из ШАБЛОНА (меняешь размер в card.tscn — центровка следует сама).
 	var n := hand.size()
-	var w := float(n) * HAND_W + maxf(0.0, float(n - 1)) * 12.0
+	var cw := HAND_W
+	if n > 0:
+		cw = (_hand_row.get_child(_hand_row.get_child_count() - 1) as Control).custom_minimum_size.x
+	var sep := float(_hand_row.get_theme_constant("separation"))
+	var w := float(n) * cw + maxf(0.0, float(n - 1)) * sep
 	var area_w := (_hand_row.get_parent() as Control).size.x
 	_hand_row.position.x = maxf(104.0, (area_w - w) / 2.0)
 
@@ -579,7 +550,7 @@ func _build_menu_contents() -> void:
 	# Панель растёт по высоте вместе со списком колод + блоком настроек снизу.
 	var themes_bottom := 298.0 + float(themes.size()) * 38.0
 	var settings_top := themes_bottom + 16.0
-	var panel_h := settings_top + 132.0 - 130.0
+	var panel_h := settings_top + 170.0 - 130.0
 
 	var dim := ColorRect.new()
 	dim.color = Color(0.06, 0.07, 0.09, 0.82)
@@ -617,6 +588,9 @@ func _build_menu_contents() -> void:
 	slider.value_changed.connect(func(v: float) -> void:
 		ReadingPace.CHARS_PER_SEC = v
 		speed_label.text = "Скорость печати текста: %d симв/с" % int(v)
+		var prof := get_node_or_null("/root/Profile")
+		if prof != null:
+			prof.set_setting("chars_per_sec", v)
 	)
 	_menu_overlay.add_child(slider)
 	# Тумблер катсцен-реплик (ReadingPace.CUTSCENES — единые часы: выключил — сцены не
@@ -629,5 +603,10 @@ func _build_menu_contents() -> void:
 	cuts.add_theme_font_size_override("font_size", 12)
 	cuts.toggled.connect(func(v: bool) -> void:
 		ReadingPace.CUTSCENES = v
+		var prof := get_node_or_null("/root/Profile")
+		if prof != null:
+			prof.set_setting("cutscenes", v)
 	)
 	_menu_overlay.add_child(cuts)
+	_menu_btn("В главное меню", 376, settings_top + 108.0, 400, 32, func() -> void:
+		get_tree().change_scene_to_file("res://duelogue/ui/main_menu.tscn"))

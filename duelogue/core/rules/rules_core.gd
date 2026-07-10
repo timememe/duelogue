@@ -73,6 +73,11 @@ var capture_theses := 0
 var zal_ko := 0
 var zal_hold := 1
 var crowd_streak := {}
+## Смещение стрелки зала (+ в пользу you): стартовый крен run-слоя (§3.1 zal_run) и цена
+## грязных именных приёмов (Ad hominem, §4). 0 = ваниль; двигается снаружи/твистами.
+var zal_bias := 0
+## Розыгрыши именных приёмов за партию по сторонам (диагностика сима/плейтеста).
+var named_played := {}
 
 
 func reset(
@@ -96,6 +101,8 @@ func reset(
 	zal_ko = p_zal_ko
 	zal_hold = maxi(1, p_zal_hold)
 	crowd_streak = {SIDE_YOU: 0, SIDE_OPP: 0}
+	zal_bias = 0
+	named_played = {SIDE_YOU: 0, SIDE_OPP: 0}
 	captures = 0
 	capture_theses = 0
 	clinch = {}
@@ -237,12 +244,12 @@ func shine(side: String) -> int:
 	return total
 
 
-## Зал — производная стрелка: крен по числу установок И их силе (тезисам).
-## Вклад рамки = 1 (за установку) + тезисы (за блеск). Плюс — в сторону игрока.
+## Зал — производная стрелка: крен по числу установок И их силе (тезисам) + смещение
+## zal_bias (стартовый крен забега / цена грязных приёмов). Плюс — в сторону игрока.
 func zal() -> int:
 	var you_w := score(SIDE_YOU) + shine(SIDE_YOU)
 	var opp_w := score(SIDE_OPP) + shine(SIDE_OPP)
-	return clampi(you_w - opp_w, -ZAL_MAX, ZAL_MAX)
+	return clampi(you_w - opp_w + zal_bias, -ZAL_MAX, ZAL_MAX)
 
 
 func legal_types(side: String) -> Array:
@@ -272,6 +279,10 @@ func begin_turn(side: String) -> String:
 	if game_over:
 		return "over"
 	var s: Dictionary = sides[side]
+	# Именной «Перенос бремени»: защита рамки от захвата живёт до начала хода ВЛАДЕЛЬЦА.
+	for ln in s.lines:
+		if ln.get("braced", false):
+			ln.braced = false
 	# Нокаут / страховка Установкой.
 	if s.lines.is_empty():
 		if _hand_has(side, TYPE_USTANOVKA):
@@ -353,7 +364,8 @@ func _resolve_single_razbor(attacker: String, defender: String, target: int, inf
 		info["bounced"] = true
 	info["target_name"] = line.name
 	# Захват (базовый порог 1 = рамка на последнем тезисе; зал-гейт поднимает до 2/3).
-	if will_steal and int(line.theses) <= capture_threshold(attacker):
+	# braced — именной «Перенос бремени»: рамка временно не захватывается (тезис снять можно).
+	if will_steal and int(line.theses) <= capture_threshold(attacker) and not line.get("braced", false):
 		_capture_frame(attacker, defender, target, info)
 		return
 	line.theses = int(line.theses) - 1
@@ -369,6 +381,138 @@ func _resolve_single_razbor(attacker: String, defender: String, target: int, inf
 	else:
 		if int(line.get("stolen", 0)) > int(line.theses):
 			line.stolen = int(line.theses)
+
+
+# --- Именные приёмы (zal_run §2): розыгрыш по ИНДЕКСУ руки, диспатч по id твиста ---
+## Не-клинчевые твисты; сократик идёт через begin_clinch(hand_index). Реестр карт —
+## core/cards/named_cards.gd; здесь только исполнение. target — индекс рамки оппонента
+## (атаки). Возвращает info хода ({} — розыгрыш нелегален, карта НЕ потрачена).
+
+func play_named(side: String, hand_index: int, target: int = -1) -> Dictionary:
+	var s: Dictionary = sides[side]
+	if hand_index < 0 or hand_index >= s.hand.size():
+		return {}
+	var card: Dictionary = s.hand[hand_index]
+	var id := String(card.get("named", ""))
+	if id == "":
+		return {}
+	# Легальность ДО снятия карты (зеркалит legal_types: атакам нужны рамки оппонента,
+	# тезису — своя активная рамка).
+	if card.type == TYPE_RAZBOR and sides[other(side)].lines.is_empty():
+		return {}
+	if card.type == TYPE_TEZIS and s.lines.is_empty():
+		return {}
+	s.hand.remove_at(hand_index)
+	named_played[side] = int(named_played.get(side, 0)) + 1
+	var info := {"side": side, "type": String(card.type), "name": String(card.name),
+		"named": id, "removed": false}
+	match id:
+		"gish_gallop":
+			_discard(side, card)
+			_named_gish(side, target, info)
+		"ad_hominem":
+			_discard(side, card)
+			_named_ad_hominem(side, target, info)
+		"strawman":
+			_discard(side, card)
+			_named_strawman(side, target, info)
+		"burden_shift":
+			var line: Dictionary = s.lines[-1]
+			line.theses = int(line.theses) + 1
+			line.braced = true   # не захватывается до начала хода владельца (begin_turn снимет)
+			info["braced"] = true
+		"axiom":
+			if not s.lines.is_empty():
+				s.lines[-1].closed = true
+			s.lines.append({"theses": 2, "closed": false, "name": String(card.name),
+				"stolen": 0, "no_defend": true})
+		_:
+			pass
+	_refill(s)
+	turn_count += 1
+	return info
+
+
+## Гиш-галоп: по 1 тезису с ДВУХ разных рамок (цель + самая толстая из прочих), без кражи,
+## без клинча. Бьём с большего индекса к меньшему — падение рамки не сдвигает вторую цель.
+func _named_gish(attacker: String, target: int, info: Dictionary) -> void:
+	var opp := other(attacker)
+	var lines: Array = sides[opp].lines
+	if target < 0 or target >= lines.size():
+		target = lines.size() - 1
+	var second := -1
+	var best := -1
+	for i in lines.size():
+		if i == target:
+			continue
+		if int(lines[i].theses) > best:
+			best = int(lines[i].theses)
+			second = i
+	var hits: Array = [target] if second < 0 else [target, second]
+	hits.sort()
+	hits.reverse()
+	info["gish_hits"] = hits.size()
+	for i in hits:
+		var sub := {}
+		_named_chip(opp, i, sub)
+		if sub.get("removed", false):
+			info["removed"] = true
+		if info.get("target_name", "") == "":
+			info["target_name"] = sub.get("target_name", "")
+
+
+## Ad hominem: снимает 2 тезиса с рамки (пала после первого — второй удар пропал),
+## цена — крен зала −1 против играющего (грязный приём, §4).
+func _named_ad_hominem(attacker: String, target: int, info: Dictionary) -> void:
+	var opp := other(attacker)
+	var lines: Array = sides[opp].lines
+	if target < 0 or target >= lines.size():
+		target = lines.size() - 1
+	_named_chip(opp, target, info)
+	if not info.get("removed", false):
+		_named_chip(opp, target, info)
+	zal_bias += -1 if attacker == SIDE_YOU else 1
+	info["dirty"] = true
+
+
+## Соломенное чучело: Кража с порогом захвата +1 («длинная рука»), добыча приходит с −1
+## тезисом (мин. 1). Вне досягаемости — обычная кража тезиса (ванильный резолв).
+func _named_strawman(attacker: String, target: int, info: Dictionary) -> void:
+	var opp := other(attacker)
+	var lines: Array = sides[opp].lines
+	if target < 0 or target >= lines.size():
+		target = lines.size() - 1
+	var line: Dictionary = lines[target]
+	if capture_mode > 0 and not is_fortified(line) and not line.get("braced", false) \
+			and int(line.theses) <= capture_threshold(attacker) + 1:
+		info["target_name"] = line.name
+		_capture_frame(attacker, opp, target, info)
+		var cap: Dictionary = sides[attacker].lines[-1]
+		if int(cap.theses) > 1:
+			cap.theses = int(cap.theses) - 1
+			cap.stolen = mini(int(cap.get("stolen", 0)), int(cap.theses))
+			_discard(opp, Deck.make_card(TYPE_TEZIS, 0))
+		info["strawman"] = true
+	else:
+		_resolve_single_razbor(attacker, opp, target, info, true)
+
+
+## Один именной удар-«чип»: −1 тезис рамки владельца, сбитое — в его сброс, павшая рамка
+## снимается. Без кражи и без захвата (это механики Кражи, не потока).
+func _named_chip(owner: String, idx: int, info: Dictionary) -> void:
+	var lines: Array = sides[owner].lines
+	if idx < 0 or idx >= lines.size():
+		return
+	var line: Dictionary = lines[idx]
+	line.theses = int(line.theses) - 1
+	_discard(owner, Deck.make_card(TYPE_TEZIS, 0))
+	info["target_name"] = line.name
+	if int(line.theses) <= 0:
+		_discard(owner, {"type": TYPE_USTANOVKA, "name": String(line.get("name", ""))})
+		lines.remove_at(idx)
+		info["removed"] = true
+	elif int(line.get("stolen", 0)) > int(line.theses):
+		line.stolen = int(line.theses)
 
 
 ## Применяет исход клинча: финальный непогашенный разбор (если есть) снимает тезис и,
@@ -389,7 +533,7 @@ func clinch_finalize(attacker: String, defender: String, line_index: int, t_adde
 		# Была Кража и остаток рамки в досягаемости порога захвата (базово 0 = пала;
 		# зал-гейт дотягивается до выживших с 1–2 тезисами) → рамка переходит целиком
 		# (вместо россыпи краденых тезисов); снятые в клинче тезисы — в сброс владельца.
-		if to_steal > 0 and int(line.theses) <= capture_threshold(attacker) - 1:
+		if to_steal > 0 and int(line.theses) <= capture_threshold(attacker) - 1 and not line.get("braced", false):
 			for k in to_remove:
 				_discard(defender, Deck.make_card(TYPE_TEZIS, k))
 			_capture_frame(attacker, defender, line_index, info)
@@ -423,18 +567,29 @@ var clinch := {}
 
 
 ## Начать клинч: attacker бьёт рамку defender[idx]. Снимает первый удар, ставит стейт.
+## hand_index >= 0 — клинч ИМЕННО этой картой руки (именные приёмы, напр. Сократический
+## вопрос); иначе карта берётся слепо по prefer_steal (ваниль — как раньше).
 ## Возвращает {card, is_callback} для стартовой реплики (наррацию делает драйвер). {} если цель invalid.
-func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bool) -> Dictionary:
+func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bool, hand_index: int = -1) -> Dictionary:
 	var lines: Array = sides[defender].lines
 	if idx < 0 or idx >= lines.size():
 		return {}
-	var initc: Dictionary = remove_attack(attacker, prefer_steal)
+	var initc: Dictionary
+	var ah: Array = sides[attacker].hand
+	if hand_index >= 0 and hand_index < ah.size() and ah[hand_index].type == TYPE_RAZBOR:
+		initc = ah[hand_index]
+		ah.remove_at(hand_index)
+	else:
+		initc = remove_attack(attacker, prefer_steal)
 	var init_steals: bool = initc.get("steals", false)
+	if initc.has("named"):
+		named_played[attacker] = int(named_played.get(attacker, 0)) + 1
 	_discard(attacker, initc)
 	clinch = {
 		"attacker": attacker, "defender": defender, "idx": idx,
 		"t_added": 0, "r_count": 1, "atk_steals": (1 if init_steals else 0),
 		"init_steals": init_steals, "phase": "await_defend",
+		"named": String(initc.get("named", "")),
 	}
 	return {"card": initc, "is_callback": bool(lines[idx].closed)}
 
@@ -451,10 +606,15 @@ func clinch_pending_side() -> String:
 
 
 ## Может ли сторона, чья воля, сделать ход (есть нужная карта в руке).
+## Рамку именной «Аксиомы» (no_defend) оборонять в клинче нельзя — защита всегда пас.
 func clinch_can_act(side: String) -> bool:
 	if clinch.is_empty():
 		return false
 	if clinch.phase == "await_defend":
+		var dl: Array = sides[clinch.defender].lines
+		var i := int(clinch.idx)
+		if i >= 0 and i < dl.size() and dl[i].get("no_defend", false):
+			return false
 		return _hand_has(clinch.defender, TYPE_TEZIS)
 	return _hand_has(clinch.attacker, TYPE_RAZBOR)
 
@@ -496,14 +656,35 @@ func _finish_clinch() -> Dictionary:
 	var t_added: int = clinch.t_added
 	var r_count: int = clinch.r_count
 	var atk_steals: int = clinch.atk_steals
+	var named: String = String(clinch.get("named", ""))
 	var info := {"side": attacker, "type": TYPE_RAZBOR}
 	clinch = {}   # очистить ДО finalize, чтобы рендер не считал рамку контестом
 	clinch_finalize(attacker, defender, idx, t_added, r_count, info, atk_steals)
+	# Именной «Сократический вопрос»: защитник отвечал тезисами → первый защитный тезис
+	# уходит атакующему (ловушка). Рамка снята в finalize — ловушка сгорела вместе с ней.
+	if named == "socratic" and t_added > 0:
+		_socratic_trap(attacker, defender, idx, info)
 	return {
 		"event": "resolved", "info": info, "landed": r_count > t_added,
 		"attacker": attacker, "defender": defender, "idx": idx,
 		"t_added": t_added, "r_count": r_count,
 	}
+
+
+func _socratic_trap(attacker: String, defender: String, idx: int, info: Dictionary) -> void:
+	var dl: Array = sides[defender].lines
+	if idx < 0 or idx >= dl.size():
+		return
+	var line: Dictionary = dl[idx]
+	line.theses = int(line.theses) - 1
+	_give_stolen(attacker, info)
+	info["socratic"] = true
+	if int(line.theses) <= 0:
+		_discard(defender, {"type": TYPE_USTANOVKA, "name": String(line.get("name", ""))})
+		dl.remove_at(idx)
+		info["removed"] = true
+	elif int(line.get("stolen", 0)) > int(line.theses):
+		line.stolen = int(line.theses)
 
 
 # Публичные обёртки для драйвера воли (сцена/ai сами ведут «разбор↔тезис»).
@@ -514,14 +695,17 @@ func remove_card_of(side: String, type: String) -> Dictionary:
 	return _remove_card(side, type)
 
 ## Снять карту атаки нужного вида: prefer_steal=true → Кражу, иначе обычный Разбор.
-## Если нужного вида нет — любую карту атаки.
+## Если нужного вида нет — любую карту атаки. Именные атаки берегутся (второй проход):
+## их место — осознанный розыгрыш по индексу (play_named / begin_clinch hand_index).
 func remove_attack(side: String, prefer_steal: bool) -> Dictionary:
 	var hand: Array = sides[side].hand
-	for i in hand.size():
-		if hand[i].type == TYPE_RAZBOR and bool(hand[i].get("steals", false)) == prefer_steal:
-			var c: Dictionary = hand[i]
-			hand.remove_at(i)
-			return c
+	for pass_named in [false, true]:
+		for i in hand.size():
+			if hand[i].type == TYPE_RAZBOR and bool(hand[i].get("steals", false)) == prefer_steal \
+					and hand[i].has("named") == pass_named:
+				var c: Dictionary = hand[i]
+				hand.remove_at(i)
+				return c
 	return _remove_card(side, TYPE_RAZBOR)
 
 func refill_side(side: String) -> void:
@@ -544,11 +728,14 @@ func _hand_has(side: String, type: String) -> bool:
 
 func _remove_card(side: String, type: String) -> Dictionary:
 	var hand: Array = sides[side].hand
-	for i in hand.size():
-		if hand[i].type == type:
-			var c: Dictionary = hand[i]
-			hand.remove_at(i)
-			return c
+	# Слепой добор типа тратит сперва ванильные карты — именные берегутся для розыгрыша
+	# по индексу (второй проход отдаёт именную, если других не осталось).
+	for pass_named in [false, true]:
+		for i in hand.size():
+			if hand[i].type == type and hand[i].has("named") == pass_named:
+				var c: Dictionary = hand[i]
+				hand.remove_at(i)
+				return c
 	return {}
 
 

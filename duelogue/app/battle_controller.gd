@@ -10,6 +10,8 @@ extends Node
 
 const RulesCore := preload("res://duelogue/core/rules/rules_core.gd")
 const Ai := preload("res://duelogue/core/ai/ai.gd")
+const NamedCards := preload("res://duelogue/core/cards/named_cards.gd")
+const DeckLib := preload("res://duelogue/core/cards/deck.gd")
 const NarEngine := preload("res://duelogue/core/narrative/narrative_engine.gd")
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 const PineappleTheme := preload("res://duelogue/core/narrative/themes/theme_pineapple.gd")
@@ -50,7 +52,9 @@ const CAPTURE_LOOT := 1
 ## мета цела; шкала бара сжата до ±ZAL_KO (край бара = черта TKO). На плейтесте.
 const ZAL_KO := 10
 const ZAL_HOLD := 3
-const OPP_STYLE := "smart"
+const OPP_STYLE := "smart"  ## fallback, если профиль недоступен; иначе — Profile.settings
+## Именные приёмы оппонента (у игрока — из Profile.deck.named, редактор колоды).
+const NAMED_OPP := []
 const AI_DELAY := 0.55
 const CLINCH_STEP_DELAY := 0.45
 const LOG_PATH := "res://duelogue/tools/playtest_log.jsonl"
@@ -66,6 +70,8 @@ var _epoch := 0          ## поколение матча; протухшие aw
 var _theme_data: Dictionary
 var _mode := "locked"    ## ввод: locked | move | target | clinch_defend | clinch_attack
 var _pending_steals := false
+var _pending_named := -1  ## индекс ИМЕННОЙ карты руки, ждущей выбора цели (-1 — нет)
+var _opp_style := OPP_STYLE  ## стиль оппонента текущего матча (из Profile.settings)
 var hint_text := ""      ## подсказка для view (читается на board_changed)
 var _gate_told := {}     ## какие уровни зал-гейта уже объяснены голосом зала (1 раз за матч)
 var _judge_told := {}    ## последний озвученный «счёт судьи» по сторонам (наррация тиков TKO)
@@ -82,6 +88,21 @@ func _ready() -> void:
 	nar = NarEngine.new()
 	ai = Ai.new()
 	_theme_data = ACTIVE_THEME.data()
+
+
+## Обойма игрока из профиля (autoload Profile; редактор колоды). Fallback — канон констант.
+func _player_deck() -> Dictionary:
+	var prof := get_node_or_null("/root/Profile")
+	if prof != null and prof.deck is Dictionary and not (prof.deck as Dictionary).is_empty():
+		return prof.deck
+	return {"u": DECK_U, "t": DECK_T, "r": DECK_R, "steals": STEAL_CARDS, "named": []}
+
+
+func _profile_opp_style() -> String:
+	var prof := get_node_or_null("/root/Profile")
+	if prof != null:
+		return String(prof.settings.get("opp_style", OPP_STYLE))
+	return OPP_STYLE
 
 
 # --- состояние для view (read-only) ---
@@ -117,9 +138,16 @@ func start_match() -> void:
 	_clinch_decided.emit({"act": "pass"})
 	var first := SIDE_YOU if randf() < 0.5 else SIDE_OPP
 	model.reset(first, DECK_U, DECK_T, DECK_R, HAND, BASE_THESES, KOMI, STEAL_CARDS, FORTIFY, CLINCH, CLINCH_FREEZE, CAPTURE, GATE_X, GATE_Y, 0, CAPTURE_LOOT, ZAL_KO, ZAL_HOLD)
+	# Сторона игрока пересобирается из ПРОФИЛЯ (редактор колоды): счётчики + именные
+	# заменой. Оппонент остаётся каноном констант (асимметрия — сознательный полигон).
+	var d := _player_deck()
+	model.sides[SIDE_YOU] = DeckLib.build_side(int(d.u), int(d.t), int(d.r), BASE_THESES, int(d.steals), HAND)
+	NamedCards.inject(model.sides[SIDE_YOU], d.get("named", []))
+	NamedCards.inject(model.sides[SIDE_OPP], NAMED_OPP)
 	_gate_told = {}
 	_judge_told = {}
-	ai.set_style(SIDE_OPP, OPP_STYLE)
+	_opp_style = _profile_opp_style()
+	ai.set_style(SIDE_OPP, _opp_style)
 	match_id = int(Time.get_unix_time_from_system())
 	nar.start(_theme_data, match_id, {"you": "contra", "opp": "pro"})
 	_draw0 = maxi(1, _draw_left())
@@ -131,7 +159,7 @@ func start_match() -> void:
 	_emit({
 		"ev": "start", "ts": match_id,
 		"first": "you" if first == SIDE_YOU else "opp",
-		"ruleset": {"base": BASE_THESES, "steal_cards": STEAL_CARDS, "deck": "U%d T%d R%d" % [DECK_U, DECK_T, DECK_R], "freeze": CLINCH_FREEZE, "gate": "%d/%d" % [GATE_X, GATE_Y], "loot": CAPTURE_LOOT, "zal_ko": "%d/%d" % [ZAL_KO, ZAL_HOLD]},
+		"ruleset": {"base": BASE_THESES, "steal_cards": int(d.steals), "deck": "U%d T%d R%d" % [int(d.u), int(d.t), int(d.r)], "named": ", ".join(d.get("named", [])), "opp_style": _opp_style, "freeze": CLINCH_FREEZE, "gate": "%d/%d" % [GATE_X, GATE_Y], "loot": CAPTURE_LOOT, "zal_ko": "%d/%d" % [ZAL_KO, ZAL_HOLD]},
 		"theme": nar.theme.id,
 	})
 	_tx_header(first)
@@ -196,14 +224,27 @@ func _run_until_player() -> void:
 			return
 		if model.game_over:
 			continue
-		var act: Dictionary = ai.pick(model, SIDE_OPP, OPP_STYLE)
+		var act: Dictionary = ai.pick(model, SIDE_OPP, _opp_style)
 		if act.is_empty():
 			model.sides[SIDE_OPP].passed = true
 			model.advance(); continue
-		if act.type == TYPE_RAZBOR:
+		var named_i := int(act.get("named_index", -1))
+		if named_i >= 0 and not bool(act.get("named_clinch", false)):
+			# Именной приём оппонента без клинча — выстрел через play_named.
+			var ncard: Dictionary = model.sides[SIDE_OPP].hand[named_i].duplicate()
+			var ninfo: Dictionary = model.play_named(SIDE_OPP, named_i, int(act.get("target", -1)))
+			if ninfo.is_empty():
+				var info0: Dictionary = model.play_action(SIDE_OPP, act.type, int(act.get("target", -1)))
+				await _log_action(info0)
+			else:
+				await _log_named(SIDE_OPP, ncard, ninfo)
+			if my_epoch != _epoch:
+				return
+		elif act.type == TYPE_RAZBOR:
 			var tgt := int(act.get("target", -1))
 			# Smart-бот холдит Кражи: жжёт только под досягаемый захват (ai.atk_prefer_steal).
-			await _run_clinch(SIDE_OPP, SIDE_YOU, tgt, ai.atk_prefer_steal(model, SIDE_OPP, SIDE_YOU, tgt))
+			# named_i — клинч именной картой (сократик).
+			await _run_clinch(SIDE_OPP, SIDE_YOU, tgt, ai.atk_prefer_steal(model, SIDE_OPP, SIDE_YOU, tgt), named_i)
 			if my_epoch != _epoch:
 				return
 		else:
@@ -230,6 +271,19 @@ func play_hand(index: int) -> void:
 			_clinch_decided.emit({"act": "play", "steals": bool(card.get("steals", false))})
 		return
 	if _mode != "move":
+		return
+	# Именной приём: свой маршрут (точный индекс карты; часть приёмов бьёт без клинча).
+	if card.has("named"):
+		if bool(card.get("targeted", false)):
+			if model.sides[SIDE_OPP].lines.is_empty():
+				return
+			_pending_named = index
+			_pending_steals = bool(card.get("steals", false))
+			_mode = "target"
+			hint_text = "«%s»: кликни рамку оппонента — цель приёма" % String(card.name)
+			_changed()
+		else:
+			_play_named_move(index, -1)
 		return
 	match card.type:
 		TYPE_TEZIS, TYPE_USTANOVKA:
@@ -263,6 +317,21 @@ func choose_target(index: int) -> void:
 	var my_epoch := _epoch
 	_mode = "locked"
 	hint_text = ""
+	# Цель для именного приёма: клинчевый (сократик) идёт в ралли ИМЕННО этой картой,
+	# остальные — выстрелом через play_named.
+	if _pending_named >= 0:
+		var ni := _pending_named
+		_pending_named = -1
+		var hand: Array = model.sides[SIDE_YOU].hand
+		if ni < hand.size() and bool(hand[ni].get("clinch", false)):
+			await _run_clinch(SIDE_YOU, SIDE_OPP, index, _pending_steals, ni)
+			if my_epoch != _epoch:
+				return
+			model.advance()
+			_run_until_player()
+		else:
+			_play_named_move(ni, index)
+		return
 	await _run_clinch(SIDE_YOU, SIDE_OPP, index, _pending_steals)
 	if my_epoch != _epoch:
 		return
@@ -274,6 +343,7 @@ func cancel_targeting() -> void:
 	if _mode != "target":
 		return
 	_mode = "move"
+	_pending_named = -1
 	hint_text = ""
 	_changed()
 
@@ -284,12 +354,13 @@ func clinch_pass() -> void:
 
 
 ## Интерактивная воля клинча через стейт-API ядра. attacker инициирует разбором по defender[idx].
-func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: bool) -> void:
+## named_index >= 0 — клинч открывается именно этой картой руки (именной приём, напр. сократик).
+func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: bool, named_index: int = -1) -> void:
 	_mode = "locked"
 	var my_epoch := _epoch
 	if idx < 0 or idx >= model.sides[defender].lines.size():
 		return
-	var ctx: Dictionary = model.begin_clinch(attacker, defender, idx, prefer_steal)
+	var ctx: Dictionary = model.begin_clinch(attacker, defender, idx, prefer_steal, named_index)
 	if ctx.is_empty():
 		return
 	var initc: Dictionary = ctx.card
@@ -579,6 +650,56 @@ func _log_action(info: Dictionary) -> void:
 			await _say(side, nar.open_line(side, claim, "open"), "t%d %s установка→рамка" % [model.turn_count, side], TYPE_USTANOVKA, false, nar.last_mood())
 		TYPE_RAZBOR:
 			pass  # атаки идут через клинч
+
+
+## Розыгрыш ИМЕННОГО приёма игроком (не-клинчевые твисты; сократик идёт через _run_clinch).
+func _play_named_move(hand_index: int, target: int) -> void:
+	var my_epoch := _epoch
+	_mode = "locked"
+	hint_text = ""
+	var hand: Array = model.sides[SIDE_YOU].hand
+	if hand_index < 0 or hand_index >= hand.size():
+		_mode = "move"
+		return
+	var card: Dictionary = hand[hand_index].duplicate()
+	var info: Dictionary = model.play_named(SIDE_YOU, hand_index, target)
+	if info.is_empty():
+		_mode = "move"
+		_changed()
+		return
+	await _log_named(SIDE_YOU, card, info)
+	if my_epoch != _epoch:
+		return
+	model.advance()
+	_run_until_player()
+
+
+## Наррация и лог именного хода. Реплики приёмов пока служебные (голос ремарки, не темы) —
+## тематические реплики твистов появятся отдельной итерацией нарратива.
+func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
+	var ev := {"ev": "named", "side": side, "id": String(info.get("named", "")),
+		"name": String(card.get("name", "")), "removed": info.get("removed", false),
+		"captured": info.get("captured", false)}
+	ev.merge(_econ())
+	_emit(ev)
+	var fx := ""
+	match String(info.get("named", "")):
+		"gish_gallop":
+			fx = "лавина доводов накрывает сразу две рамки — отвечать некогда"
+		"ad_hominem":
+			fx = "удар ниже пояса: рамка трещит, но зал морщится (крен −1 на вас)"
+		"strawman":
+			fx = ("чучело сработало — рамка выхвачена целиком (добыча похудела на тезис)"
+				if info.get("captured", false) else "подмена тезиса — и он уже в чужих руках")
+		"burden_shift":
+			fx = "бремя доказательства переброшено — эту рамку теперь не выхватить"
+		"axiom":
+			fx = "постулат поставлен: два тезиса разом, но обсуждению не подлежит"
+		_:
+			fx = "приём разыгран"
+	await _say(side, "«%s» — %s." % [String(card.get("name", "")), fx],
+		"t%d %s ИМЕННОЙ %s" % [model.turn_count, side, String(info.get("named", ""))],
+		String(card.get("type", "")), bool(card.get("steals", false)), "")
 
 
 func _count_razbor(side: String) -> int:

@@ -22,8 +22,42 @@ func set_style(side: String, style: String) -> void:
 
 # ----------------------------------------------------------------- выбор хода --
 
-## Выбор хода ИИ по стилю. Возвращает {type, target?}.
+## Выбор хода ИИ по стилю. Возвращает {type, target?, named_index?, named_clinch?}.
+## named_index >= 0 — розыгрыш ИМЕННОЙ карты руки (r.play_named либо клинч этой картой).
 func pick(r: RefCounted, side: String, style: String) -> Dictionary:
+	return _apply_named(r, side, _pick_base(r, side, style))
+
+
+## Политика именных V1: стиль решил играть тип X и в руке есть именной приём базы X →
+## играть его (замена 1:1 предполагает, что приём не слабее ванили; сим это и меряет).
+## Тоньше (беречь под момент, считать доп. цели гиша) — следующая итерация.
+func _apply_named(r: RefCounted, side: String, act: Dictionary) -> Dictionary:
+	if act.is_empty():
+		return act
+	var hand: Array = r.sides[side].hand
+	for i in hand.size():
+		var c: Dictionary = hand[i]
+		if String(c.get("named", "")) == "" or String(c.type) != String(act.type):
+			continue
+		# smart согласует ПРИРОДУ приёма-атаки с моментом (глупые стили жгут как есть):
+		# кража-приём (чучело) — только под досягаемый захват (его порог = обычный + 1),
+		# не-кража — не в момент кражи (не жжём окно захвата гишем/сократиком).
+		if String(act.type) == TYPE_RAZBOR and String(style_of.get(side, "")) == "smart":
+			var tgt := int(act.get("target", -1))
+			var dl: Array = r.sides[r.other(side)].lines
+			if bool(c.get("steals", false)):
+				var reach := int(r.capture_threshold(side)) + 1
+				if tgt < 0 or tgt >= dl.size() or int(dl[tgt].theses) > reach:
+					continue
+			elif atk_prefer_steal(r, side, r.other(side), tgt):
+				continue
+		act["named_index"] = i
+		act["named_clinch"] = bool(c.get("clinch", false))
+		return act
+	return act
+
+
+func _pick_base(r: RefCounted, side: String, style: String) -> Dictionary:
 	if style == "smart":
 		return _pick_smart(r, side)
 	var legal: Array = r.legal_types(side)
@@ -194,9 +228,16 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 				break
 			r.advance()
 			continue
-		if act.type == TYPE_RAZBOR and r.clinch_enabled:
+		var named_i := int(act.get("named_index", -1))
+		if named_i >= 0 and not bool(act.get("named_clinch", false)):
+			# Именной приём без клинча — единая точка ядра play_named.
+			var inf: Dictionary = r.play_named(r.current, named_i, int(act.get("target", -1)))
+			if inf.is_empty():  # нелегален (гонка условий) — ванильный фолбэк
+				r.play_action(r.current, act.type, act.get("target", -1))
+		elif act.type == TYPE_RAZBOR and r.clinch_enabled:
 			# Клинч с волей обеих сторон (мехвариант play_action был только в симе).
-			_auto_resolve(r, r.current, r.other(r.current), int(act.get("target", -1)))
+			# named_i >= 0 — клинч именно этой картой (Сократический вопрос).
+			_auto_resolve(r, r.current, r.other(r.current), int(act.get("target", -1)), named_i)
 			r.turn_count += 1
 		else:
 			r.play_action(r.current, act.type, act.get("target", -1))
@@ -222,8 +263,9 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 
 ## Авто-воля клинча для сима: скармливает решения клинч-автомату ядра, пока он не закроется.
 ## Тот же путь, что у интерактивного драйвера — один источник правды (rules_core.clinch_*).
-func _auto_resolve(r: RefCounted, attacker: String, defender: String, idx: int) -> void:
-	var ctx: Dictionary = r.begin_clinch(attacker, defender, idx, atk_prefer_steal(r, attacker, defender, idx))
+## named_index >= 0 — клинч открывается именно этой картой руки (именной приём).
+func _auto_resolve(r: RefCounted, attacker: String, defender: String, idx: int, named_index: int = -1) -> void:
+	var ctx: Dictionary = r.begin_clinch(attacker, defender, idx, atk_prefer_steal(r, attacker, defender, idx), named_index)
 	if ctx.is_empty():
 		return
 	var line: Dictionary = r.sides[defender].lines[idx]

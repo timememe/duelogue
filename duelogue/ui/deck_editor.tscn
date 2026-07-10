@@ -1,0 +1,171 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://duelogue/ui/deck_editor.gd" id="1"]
+
+[node name="DeckEditor" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="Bg" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.07, 0.078, 0.1, 1)
+
+[node name="Header" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 46.0
+grow_horizontal = 2
+mouse_filter = 2
+
+[node name="Title" type="Label" parent="Header"]
+layout_mode = 1
+offset_left = 24.0
+offset_top = 10.0
+offset_right = 500.0
+offset_bottom = 38.0
+theme_override_colors/font_color = Color(1, 0.8235, 0.2902, 1)
+theme_override_font_sizes/font_size = 20
+text = "РЕДАКТОР КОЛОДЫ"
+
+[node name="BackBtn" type="Button" parent="Header"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 1002.0
+offset_top = 9.0
+offset_right = 1132.0
+offset_bottom = 37.0
+theme_override_font_sizes/font_size = 13
+text = "← В меню"
+
+[node name="SlotsTitle" type="Label" parent="."]
+layout_mode = 1
+offset_left = 40.0
+offset_top = 64.0
+offset_right = 520.0
+offset_bottom = 88.0
+theme_override_colors/font_color = Color(0.8118, 0.8392, 0.8784, 1)
+theme_override_font_sizes/font_size = 15
+text = "СОСТАВ ОБОЙМЫ — слоты по типам"
+
+[node name="SlotsBox" type="VBoxContainer" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 40.0
+offset_top = 100.0
+offset_right = 520.0
+offset_bottom = 320.0
+theme_override_constants/separation = 12
+
+[node name="CorridorHint" type="Label" parent="."]
+layout_mode = 1
+offset_left = 40.0
+offset_top = 330.0
+offset_right = 520.0
+offset_bottom = 400.0
+theme_override_colors/font_color = Color(0.5412, 0.5765, 0.6392, 1)
+theme_override_font_sizes/font_size = 12
+text = "Коридоры — из симов §11.4: за краями обойма заведомо
+перекошена (напр. Тезисы 12 → доминанта 72%). Жёлтый
+счётчик = вне коридора; играть можно — цена известна."
+autowrap_mode = 3
+
+[node name="NamedTitle" type="Label" parent="."]
+layout_mode = 1
+offset_left = 560.0
+offset_top = 64.0
+offset_right = 1110.0
+offset_bottom = 88.0
+theme_override_colors/font_color = Color(0.8118, 0.8392, 0.8784, 1)
+theme_override_font_sizes/font_size = 15
+text = "ИМЕННЫЕ ПРИЁМЫ — по 1 копии, замещают карту своей базы"
+
+[node name="NamedScroll" type="ScrollContainer" parent="."]
+layout_mode = 1
+offset_left = 560.0
+offset_top = 100.0
+offset_right = 1110.0
+offset_bottom = 540.0
+
+[node name="NamedBox" type="VBoxContainer" parent="NamedScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 12
+
+[node name="TotalLabel" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 40.0
+offset_top = 424.0
+offset_right = 520.0
+offset_bottom = 450.0
+theme_override_font_sizes/font_size = 15
+
+[node name="WarnLabel" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 40.0
+offset_top = 452.0
+offset_right = 520.0
+offset_bottom = 500.0
+theme_override_colors/font_color = Color(0.85, 0.35, 0.3, 1)
+theme_override_font_sizes/font_size = 12
+autowrap_mode = 3
+
+[node name="SaveBtn" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 40.0
+offset_top = 508.0
+offset_right = 260.0
+offset_bottom = 546.0
+theme_override_font_sizes/font_size = 15
+text = "Сохранить обойму"
+
+[node name="PresetClassicBtn" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 272.0
+offset_top = 508.0
+offset_right = 392.0
+offset_bottom = 546.0
+theme_override_font_sizes/font_size = 13
+text = "Классика"
+
+[node name="PresetNamedBtn" type="Button" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 404.0
+offset_top = 508.0
+offset_right = 596.0
+offset_bottom = 546.0
+theme_override_font_sizes/font_size = 13
+text = "Классика + именные"
+
+[node name="FooterHint" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 40.0
+offset_top = -34.0
+offset_right = -40.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.5412, 0.5765, 0.6392, 1)
+theme_override_font_sizes/font_size = 12
+text = "Обойма применяется к СЛЕДУЮЩЕЙ катке (сторона игрока; оппонент играет каноном). Сохраняется между сессиями."

@@ -11,13 +11,14 @@ config_version=5
 [application]
 
 config/name="DUELOGUE_v1"
-run/main_scene="res://duelogue/ui/debate_screen.tscn"
+run/main_scene="res://duelogue/ui/main_menu.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://icon.svg"
 
 [autoload]
 
 EventBus="*res://duelogue/app/event_bus.gd"
+Profile="*res://duelogue/app/profile.gd"
 
 [display]
 
