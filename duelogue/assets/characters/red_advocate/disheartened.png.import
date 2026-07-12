@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cpkb0r0dm02r5"
-path="res://.godot/imported/char_idle.png-94c570dd1df495fee72b45799bb90625.ctex"
+uid="uid://dxdjtjagccxki"
+path="res://.godot/imported/disheartened.png-717ca5c872a506c4d809448264be96cf.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://duelogue/assets/char_idle.png"
-dest_files=["res://.godot/imported/char_idle.png-94c570dd1df495fee72b45799bb90625.ctex"]
+source_file="res://duelogue/assets/characters/red_advocate/disheartened.png"
+dest_files=["res://.godot/imported/disheartened.png-717ca5c872a506c4d809448264be96cf.ctex"]
 
 [params]
 

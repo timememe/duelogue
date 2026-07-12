@@ -17,7 +17,6 @@ const TYPE_RAZBOR := RulesCore.TYPE_RAZBOR
 const TYPE_USTANOVKA := RulesCore.TYPE_USTANOVKA
 
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
-const CHAR_SCENE := preload("res://duelogue/core/characters/character.tscn")
 const IDLE_TEX := preload("res://duelogue/assets/states_test/idle.png")
 const REACT_TEZIS := preload("res://duelogue/assets/char_react_tez.png")
 const REACT_RAZBOR := preload("res://duelogue/assets/char_react_raz.png")
@@ -37,9 +36,20 @@ const ST_STAGGER := preload("res://duelogue/assets/states_test/shocked.png")
 const ST_EVADE := preload("res://duelogue/assets/states_test/sweating.png")
 const ST_PANIC := preload("res://duelogue/assets/states_test/disheartened.png")
 
+const OPP_IDLE := preload("res://duelogue/assets/characters/red_advocate/idle.png")
+const OPP_DECLARE := preload("res://duelogue/assets/characters/red_advocate/normal.png")
+const OPP_ATTACK := preload("res://duelogue/assets/characters/red_advocate/pointing.png")
+const OPP_BURST := preload("res://duelogue/assets/characters/red_advocate/objection.png")
+const OPP_HOLD := preload("res://duelogue/assets/characters/red_advocate/angry.png")
+const OPP_SWAGGER := preload("res://duelogue/assets/characters/red_advocate/grinning.png")
+const OPP_GOTCHA := preload("res://duelogue/assets/characters/red_advocate/laughing.png")
+const OPP_STAGGER := preload("res://duelogue/assets/characters/red_advocate/shocked.png")
+const OPP_EVADE := preload("res://duelogue/assets/characters/red_advocate/sweating.png")
+const OPP_PANIC := preload("res://duelogue/assets/characters/red_advocate/disheartened.png")
+
 ## КОНТРАКТ СКИНА: поза на каждый стейт словаря §16. 9/10 закрыты тестовой пачкой;
 ## недостающий стейт падает в фолбэк по типу карты, так что система рабочая при любом арте.
-const STATE_TEX := {
+const YOU_STATE_TEX := {
 	"declare": ST_DECLARE,       # заявляю (normal: спокойная уверенность «у трибуны»)
 	"hold": ST_HOLD,             # держит удар, закипая (angry: стиснутые зубы, красный контровой)
 	"attack": ST_ATTACK,        # атакую (pointing: суровое обвинение)
@@ -52,7 +62,22 @@ const STATE_TEX := {
 	"idle": ST_IDLE,            # нейтраль/пауза (idle: фигура в полный рост «у трибуны»)
 }
 
-var _stage              ## ядро сцены (через bind) — даёт слой actors и точки-слоты
+const OPP_STATE_TEX := {
+	"declare": OPP_DECLARE,
+	"hold": OPP_HOLD,
+	"attack": OPP_ATTACK,
+	"gotcha": OPP_GOTCHA,
+	"burst": OPP_BURST,
+	"evade": OPP_EVADE,
+	"swagger": OPP_SWAGGER,
+	"panic": OPP_PANIC,
+	"stagger": OPP_STAGGER,
+	"idle": OPP_IDLE,
+}
+
+const PORTRAIT_FLIP_H := {"you": false, "opp": false}
+
+var _stage              ## ядро сцены (через bind) — даёт постоянные stage-спрайты сторон
 ## Мини-сцена реакции (через bind) — статический узел debate_screen.tscn. Нетипизировано
 ## намеренно: зовём кастомные show_utterance/show_impact из скрипта сцены, которых нет в
 ## базовом Control — статическая типизация Control тут выдаст ошибку компиляции на вызове.
@@ -60,7 +85,7 @@ var _reaction
 var _sprites := {}      ## side → Sprite2D (актёр на общем плане)
 
 
-## Привязать к ядру сцены и мини-сцене реакции ДО входа в дерево (спавн актёров — в _ready).
+## Привязать к ядру сцены и мини-сцене реакции ДО входа в дерево.
 func bind(stage, reaction) -> void:
 	_stage = stage
 	_reaction = reaction
@@ -68,31 +93,43 @@ func bind(stage, reaction) -> void:
 
 func _ready() -> void:
 	if _stage != null:
-		_sprites["you"] = _spawn("you", false)
-		_sprites["opp"] = _spawn("opp", true)  # оппонент развёрнут лицом к центру
+		_sprites["you"] = _stage.actor_sprite("you")
+		_sprites["opp"] = _stage.actor_sprite("opp")
 	EventBus.utterance.connect(_on_utterance)
 	EventBus.impact.connect(_on_impact)
 	EventBus.turn_changed.connect(_on_turn_changed)
 
 
-## Инстанс актёра на сцену: на слот стороны, в слой actors ядра сцены.
-func _spawn(side: String, flip: bool) -> Node2D:
-	var s: Sprite2D = CHAR_SCENE.instantiate()
-	s.position = _stage.slot(side)
-	s.flip_h = flip
-	_stage.actor_layer().add_child(s)
-	return s
+## Точка загрузки общего плана: будущие скины назначают свою текстуру нужной стороне,
+## не меняя авторские положение, масштаб или порядок слоёв в stage.tscn.
+func set_stage_sprite_texture(side: String, texture: Texture2D) -> void:
+	if not _sprites.has(side) or texture == null:
+		return
+	(_sprites[side] as Sprite2D).texture = texture
 
 
 ## Портрет реакции по типу карты (+флаг steals — Кража это Разбор с card.steals=true,
 ## см. narrative_engine.gd — тот же принцип: тип карты = манера, различает приёмы по флагу).
 ## "" (нет карты — пас/наррация) → нейтральный idle-портрет.
-func _portrait_for(card_type: String, steals: bool) -> Texture2D:
+func _portrait_for(side: String, card_type: String, steals: bool) -> Texture2D:
+	if side == "opp":
+		return OPP_IDLE
 	match card_type:
 		TYPE_RAZBOR: return REACT_KRAJA if steals else REACT_RAZBOR
 		TYPE_TEZIS: return REACT_TEZIS
 		TYPE_USTANOVKA: return REACT_USTANOVKA
 	return IDLE_TEX
+
+
+func _state_tex_for(side: String, mood: String, card_type: String, steals: bool) -> Texture2D:
+	var states: Dictionary = OPP_STATE_TEX if side == "opp" else YOU_STATE_TEX
+	if states.has(mood):
+		return states[mood] as Texture2D
+	return _portrait_for(side, card_type, steals)
+
+
+func _portrait_flip_h_for(side: String) -> bool:
+	return bool(PORTRAIT_FLIP_H.get(side, false))
 
 
 ## Катсцена реплики. Тумблер ReadingPace.CUTSCENES: выключен — крупный план не играется,
@@ -104,11 +141,10 @@ func _on_utterance(side: String, text: String, meta: Dictionary) -> void:
 	if _reaction == null or not ReadingPace.CUTSCENES:
 		return
 	var mood := String(meta.get("mood", ""))
-	var tex: Texture2D = STATE_TEX.get(mood) if STATE_TEX.has(mood) \
-		else _portrait_for(String(meta.get("card_type", "")), bool(meta.get("steals", false)))
+	var tex := _state_tex_for(side, mood, String(meta.get("card_type", "")), bool(meta.get("steals", false)))
 	await get_tree().create_timer(ReadingPace.BOARD_BEAT).timeout
 	# Муд едет и в сцену: тот же стейт ведёт портрет И профиль живого фона (MOOD_FX).
-	_reaction.show_utterance(side, text, tex, mood)
+	_reaction.show_utterance(side, text, tex, mood, _portrait_flip_h_for(side))
 
 
 ## Яркий исход по стороне side — стейт «пошатнулся» (событийный, ставит контроллер).
@@ -116,7 +152,8 @@ func _on_utterance(side: String, text: String, meta: Dictionary) -> void:
 func _on_impact(side: String, kind: String) -> void:
 	if _reaction == null or not ReadingPace.CUTSCENES:
 		return
-	_reaction.show_impact(side, STATE_TEX["stagger"], 1.0 if kind == "removed" else 0.65)
+	var tex := _state_tex_for(side, "stagger", "", false)
+	_reaction.show_impact(side, tex, 1.0 if kind == "removed" else 0.65, _portrait_flip_h_for(side))
 
 
 func _on_turn_changed(_side: String) -> void:

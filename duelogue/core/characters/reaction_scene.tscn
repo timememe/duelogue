@@ -1,10 +1,12 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://duelogue/core/characters/reaction_scene.gd" id="1"]
 [ext_resource type="Shader" path="res://duelogue/assets/shaders/speed_lines.gdshader" id="3"]
 [ext_resource type="Texture2D" path="res://duelogue/assets/states_test/idle.png" id="4"]
 [ext_resource type="Shader" path="res://duelogue/assets/shaders/mood_bg.gdshader" id="5"]
 [ext_resource type="Shader" path="res://duelogue/assets/shaders/dither.gdshader" id="6"]
+[ext_resource type="Texture2D" path="res://duelogue/assets/bg_closeup_right_v1.png" id="7"]
+[ext_resource type="Texture2D" path="res://duelogue/assets/bg_closeup_left_v1.png" id="8"]
 
 [sub_resource type="ShaderMaterial" id="1"]
 shader = ExtResource("3")
@@ -46,6 +48,30 @@ anchor_bottom = 1.0
 mouse_filter = 2
 material = SubResource("2")
 color = Color(1, 1, 1, 1)
+
+[node name="BgOppDefault" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture = ExtResource("7")
+expand_mode = 3
+stretch_mode = 6
+
+[node name="BgYouDefault" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture = ExtResource("8")
+expand_mode = 3
+stretch_mode = 6
 
 [node name="BgShader" type="ColorRect" parent="."]
 layout_mode = 1

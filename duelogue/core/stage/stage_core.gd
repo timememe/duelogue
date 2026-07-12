@@ -1,12 +1,13 @@
 extends Control
 
 ## DUELOGUE — ЯДРО СЦЕНЫ. Скрипт сцены stage.tscn (декорации арены ПОЗАДИ всего UI).
-## Визуал авторится НОДАМИ в редакторе (фон Bg, кафедры PropsFront/Pulpit*, слоты Slot*),
+## Визуал авторится НОДАМИ в редакторе (фон Bg, Actors/Actor*, кафедры PropsFront/Pulpit*),
 ## скрипт лишь ссылается на них — поэтому всё можно двигать/настраивать мышкой в Godot.
-## Слои сцены (сзади→вперёд): Bg → Actors (спрайты персонажей кладёт character_core) →
+## Слои сцены (сзади→вперёд): Bg → Actors (постоянные Sprite2D персонажей) →
 ## PropsFront (кафедры спереди). Режиссура (камера/свет) — забота этого ядра; пока статично.
 
-@onready var actors: Node2D = %Actors  ## слой актёров между фоном и кафедрами
+@onready var _actor_you: Sprite2D = %ActorYou
+@onready var _actor_opp: Sprite2D = %ActorOpp
 
 
 func _ready() -> void:
@@ -16,15 +17,10 @@ func _ready() -> void:
 
 # --- API для ядра персонажей ---
 
-## Слой, в который кладутся спрайты актёров (рисуются ЗА кафедрами).
-func actor_layer() -> Node2D:
-	return actors
-
-## Точка кафедры стороны (центр спрайта актёра) — маркер, который двигаешь в редакторе.
-func slot(side: String) -> Vector2:
-	if side == "you":
-		return %SlotYou.position
-	return %SlotOpp.position
+## Постоянные актёры сцены: положение, масштаб и превью-текстуры правятся в редакторе,
+## а CharacterCore в рантайме меняет данные конкретной стороны.
+func actor_sprite(side: String) -> Sprite2D:
+	return _actor_you if side == "you" else _actor_opp
 
 
 # --- заготовки реакций (пока no-op; сцена статична) ---

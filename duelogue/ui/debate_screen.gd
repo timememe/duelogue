@@ -531,7 +531,7 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 
 	# Карта-установка показывает claim (позицию-топик), если он назначен.
 	var claim_txt: String = String(line.get("claim", line.name))
-	var uc := _mkcard("РАМКА\n«%s»" % _short(claim_txt), COL_USTAN, closed, contested)
+	var uc := _mkcard("У", COL_USTAN, closed, contested)
 	uc.set_meta("board_card", true)
 	uc.set_meta("board_role", "frame")
 	uc.position = Vector2(board_card_position_x(0.0, width, trailing_pad, reverse), y0)
@@ -557,7 +557,7 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 
 	for j in shown:
 		var is_st := j >= (theses - stolen)
-		var tc := _mkcard("ПЕРЕ-\nХВАТ" if is_st else "тезис", (COL_GOLD if is_st else COL_TEZIS), closed, false)
+		var tc := _mkcard("П" if is_st else "Т", (COL_GOLD if is_st else COL_TEZIS), closed, false)
 		tc.set_meta("board_card", true)
 		tc.set_meta("board_role", "thesis")
 		# Первый тезис стоит ПОСЛЕ рамки; отрицательный gap уплотняет только следующие
@@ -577,7 +577,7 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 
 	if contested and razbors > 0:
 		for k in razbors:
-			var rc := _mkcard("раз-\nбор", COL_RAZBOR, false, false)
+			var rc := _mkcard("Р", COL_RAZBOR, false, false)
 			rc.set_meta("board_card", true)
 			rc.set_meta("board_role", "overlay")
 			var overlay_ltr_x := width - CARD_W + CLINCH_STACK_OFFSET + \
@@ -600,7 +600,7 @@ func _start_wobble(root: Control) -> void:
 	, CONNECT_ONE_SHOT)
 
 
-func _mkcard(text: String, colhex: String, dim: bool, contested: bool) -> Button:
+func _mkcard(symbol: String, colhex: String, dim: bool, contested: bool) -> Button:
 	var b := Button.new()
 	b.size = Vector2(CARD_W, CARD_H)
 	b.custom_minimum_size = Vector2(CARD_W, CARD_H)
@@ -609,22 +609,24 @@ func _mkcard(text: String, colhex: String, dim: bool, contested: bool) -> Button
 	# 42 px, а реальная «РАМКА «длинный claim»» занимает 80–100 px и тезисы уезжают под неё.
 	b.clip_text = true
 	b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	b.add_theme_font_size_override("font_size", 10)
-	b.text = text
-	var border := Color.html("#" + colhex)
-	var bg := Color.html("#1c2029")
+	b.add_theme_font_size_override("font_size", 27)
+	b.text = symbol
+	b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var base := Color.html("#" + colhex)
+	var border := base.lightened(0.18)
+	var bg := base
 	if dim:
-		border = border.darkened(0.5)
-		bg = Color.html("#141820")
+		border = border.darkened(0.35)
+		bg = bg.darkened(0.48)
 	if contested:
-		border = Color.html("#" + COL_RAZBOR)
-	b.add_theme_stylebox_override("normal", _card_style(bg, border, 2))
-	b.add_theme_stylebox_override("hover", _card_style(bg.lightened(0.1), border, 2))
-	b.add_theme_stylebox_override("pressed", _card_style(bg, border, 2))
-	b.add_theme_stylebox_override("disabled", _card_style(bg, border, 2))
-	var fcol := Color.html("#" + colhex)
+		border = Color.html("#" + COL_RAZBOR).lightened(0.18)
+	b.add_theme_stylebox_override("normal", _card_style(bg, border, 3))
+	b.add_theme_stylebox_override("hover", _card_style(bg.lightened(0.12), border.lightened(0.08), 3))
+	b.add_theme_stylebox_override("pressed", _card_style(bg.darkened(0.12), border, 3))
+	b.add_theme_stylebox_override("disabled", _card_style(bg, border, 3))
+	var fcol := Color("141820") if base.get_luminance() > 0.55 else Color("fff8ea")
 	if dim:
-		fcol = fcol.darkened(0.4)
+		fcol = Color("d7dce6")
 	b.add_theme_color_override("font_color", fcol)
 	b.add_theme_color_override("font_disabled_color", fcol)
 	b.disabled = true

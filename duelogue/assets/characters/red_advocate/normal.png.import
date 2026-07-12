@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://du137dey3t6l0"
-path="res://.godot/imported/idle.png-a336c224789e918d7a71b89f9c15d0fe.ctex"
+uid="uid://cq57pifravfjw"
+path="res://.godot/imported/normal.png-c5c62b942c04ece1769946c1c1aa1d49.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://duelogue/assets/states_test/idle.png"
-dest_files=["res://.godot/imported/idle.png-a336c224789e918d7a71b89f9c15d0fe.ctex"]
+source_file="res://duelogue/assets/characters/red_advocate/normal.png"
+dest_files=["res://.godot/imported/normal.png-c5c62b942c04ece1769946c1c1aa1d49.ctex"]
 
 [params]
 
@@ -23,7 +23,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=true
+mipmaps/generate=false
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""

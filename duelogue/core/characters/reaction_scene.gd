@@ -29,6 +29,7 @@ const BG_YOU_TOP := Color(0.086, 0.2, 0.15, 1)
 const BG_YOU_BOTTOM := Color(0.02, 0.05, 0.045, 1)
 const BG_OPP_TOP := Color(0.22, 0.13, 0.06, 1)
 const BG_OPP_BOTTOM := Color(0.05, 0.03, 0.02, 1)
+const STATIC_STATEMENT_MOODS := ["", "declare", "idle"]
 
 ## Муд → профиль спидлайн-фона (словарь стейтов §16 — тот же, что STATE_TEX character_core;
 ## муд без строки здесь падает в нейтральный idle-профиль, система рабочая всегда).
@@ -54,10 +55,12 @@ const MOOD_FX := {
 
 @onready var _bg_mood: ColorRect = $BgMood
 @onready var _mood_mat: ShaderMaterial = _bg_mood.material as ShaderMaterial
+@onready var _bg_opp_default: TextureRect = $BgOppDefault
+@onready var _bg_you_default: TextureRect = $BgYouDefault
 @onready var _bg_shader: ColorRect = $BgShader
 @onready var _shader_mat: ShaderMaterial = _bg_shader.material as ShaderMaterial
 @onready var _portrait: TextureRect = $Portrait
-## Рамки-якоря по стороне (двигаются/масштабируются в редакторе, как SlotYou/SlotOpp в
+## Рамки-якоря по стороне (двигаются/масштабируются в редакторе, как ActorYou/ActorOpp в
 ## stage.tscn) — задают угол + высоту, под которую портрет ложится крупным планом снизу.
 @onready var _frame_you: Control = %PortraitFrameYou
 @onready var _frame_opp: Control = %PortraitFrameOpp
@@ -74,6 +77,8 @@ func _ready() -> void:
 	modulate.a = 0.0
 	_bubble.pivot_offset = _bubble.size / 2.0
 	_bg_mood.visible = false
+	_bg_opp_default.visible = false
+	_bg_you_default.visible = false
 	_bg_shader.visible = false
 
 
@@ -118,6 +123,10 @@ func _apply_mood_bg(side: String, mood: String) -> void:
 	_mood_mat.set_shader_parameter("line_color_b", fx.line_b)
 
 
+func _uses_static_statement_background(mood: String) -> bool:
+	return mood in STATIC_STATEMENT_MOODS
+
+
 ## Крупный план: портрет прижат к своей рамке-якорю (left-anchor для "you", right-anchor для
 ## "opp") и растянут по её высоте с сохранением пропорций текста — так композиция реактов
 ## (поясной кадр, жест до края) ложится крупно и «от низа рамки», не искажаясь.
@@ -149,16 +158,20 @@ func _layout_bubble(side: String) -> void:
 ## mood — стейт говорящего (§16) — красит живой фон профилем эмоции (MOOD_FX).
 ## Длительность сцены НЕ фиксирована — определяется скоростью печати текста в бабле плюс
 ## паузой на дочитывание (см. ReadingPace — общая формула с пейсингом battle_controller).
-func show_utterance(side: String, text: String, portrait_tex: Texture2D, mood: String = "") -> void:
+func show_utterance(side: String, text: String, portrait_tex: Texture2D, mood: String = "", portrait_flip_h: bool = false) -> void:
 	_gen += 1
 	var my_gen := _gen
 	_begin_modal_scene()
-	_apply_mood_bg(side, mood)
-	_bg_mood.visible = true
+	var use_static_statement_background := _uses_static_statement_background(mood)
+	_bg_opp_default.visible = use_static_statement_background and side == "opp"
+	_bg_you_default.visible = use_static_statement_background and side == "you"
+	_bg_mood.visible = not use_static_statement_background
+	if not use_static_statement_background:
+		_apply_mood_bg(side, mood)
 	_bg_shader.visible = false
 	_layout_portrait(side, portrait_tex)
 	_portrait.texture = portrait_tex
-	_portrait.flip_h = side == "opp"
+	_portrait.flip_h = portrait_flip_h
 	_layout_bubble(side)
 	_bubble.visible = true
 	_bubble_label.text = text
@@ -189,16 +202,18 @@ func show_utterance(side: String, text: String, portrait_tex: Texture2D, mood: S
 
 ## Яркий исход (клинч landed): фон-шейдер вместо картинки, без бабла, короче и резче.
 ## intensity 0..1 — пик спидлайнов (тяжесть исхода: снят довод / рухнула рамка).
-func show_impact(side: String, portrait_tex: Texture2D, intensity: float = 1.0) -> void:
+func show_impact(side: String, portrait_tex: Texture2D, intensity: float = 1.0, portrait_flip_h: bool = false) -> void:
 	_gen += 1
 	var my_gen := _gen
 	_begin_modal_scene()
+	_bg_opp_default.visible = false
+	_bg_you_default.visible = false
 	_bg_mood.visible = false
 	_bg_shader.visible = true
 	_shader_mat.set_shader_parameter("progress", 0.0)
 	_layout_portrait(side, portrait_tex)
 	_portrait.texture = portrait_tex
-	_portrait.flip_h = side == "opp"
+	_portrait.flip_h = portrait_flip_h
 	_bubble.visible = false
 	modulate.a = 1.0
 	if _active_tween:
