@@ -23,14 +23,26 @@ const COL_GOLD := "ffd24a"
 const CARD_W := 42.0
 const CARD_H := 56.0
 const CARD_G := 4.0
+## Первый тезис не должен заезжать под золотую рамку. Сжимаются только интервалы МЕЖДУ
+## зелёными тезисами; этот стык всегда остаётся обычным положительным отступом.
+const FRAME_TO_THESIS_GAP := CARD_G
 const HAND_W := 160.0
 const HAND_H := 132.0
+## Служебный хвост группы справа: место под +N/лёгкое вращение рамки. Он является частью
+## РЕАЛЬНОЙ ширины ряда и обязан участвовать в расчёте, иначе визуал шире математики.
+const FRAME_GROUP_PAD := 16.0
 ## Тезисы внутри рамки НЕкликабельны (кликабельна только сама РАМКА) — им можно ложиться
 ## внахлёст плотно, как карты Разбора в стопке клинча. Тот же шаг (9px), тот же приём.
 const THESIS_PITCH_MIN := 9.0
-## Отступ МЕЖДУ рамками сжимаем мягче — рамки кликабельны (цель атаки), слишком плотно
-## нельзя, иначе промахивающийся клик по соседней рамке. Не ниже этой доли от дефолта.
-const FRAME_SEP_MIN_FACTOR := 0.3
+## Между рамками сначала используется separation из сцены. Если внутреннего нахлёста уже
+## недостаточно, разрешаем аварийно сближать и сами группы, но не сильнее этого значения.
+const FRAME_SEP_HARD_MIN := -40.0
+const FRAME_SEP_DEFAULT := 12.0
+const CLINCH_STACK_OFFSET := 10.0
+const CLINCH_STACK_PITCH := 9.0
+## Фактический правый край карт держим не у самой линии, а заранее начинаем сжатие в этой
+## защитной зоне. Row уже имеет 8 px отступа от видимого контура Board.
+const BOARD_EDGE_APPROACH := 12.0
 
 var _drawer_closed_x := 0.0  ## закрытое (за правым краем) положение ящика — из ширины экрана
 var _drawer_open_x := 0.0    ## открытое положение — из ширины экрана И ширины самого ящика
@@ -48,6 +60,8 @@ var _menu_overlay: Control
 var _opp_sep0 := 0.0
 var _you_sep0 := 0.0
 var _gate_ticks: Array = []  ## риски порогов зал-гейта на баре ({node, level}), создаются лениво
+var _bubble_owner: Control
+var _cutscene_active := false
 
 @onready var _stage: Control = $Stage
 @onready var _score_label: Label = %ScoreLabel
@@ -55,8 +69,8 @@ var _gate_ticks: Array = []  ## риски порогов зал-гейта на
 @onready var _hint_label: Label = %HintLabel
 @onready var _marker: ColorRect = %BarMarker
 @onready var _fill: ColorRect = %BarFill
-@onready var _opp_row: HBoxContainer = %OppRow
-@onready var _you_row: HBoxContainer = %YouRow
+@onready var _opp_row: Control = %OppRow
+@onready var _you_row: Control = %YouRow
 @onready var _hand_row: HBoxContainer = %HandRow
 @onready var _draw_count: Label = %DrawCount
 @onready var _log_rt: RichTextLabel = %Log
@@ -67,6 +81,9 @@ var _gate_ticks: Array = []  ## риски порогов зал-гейта на
 @onready var _drawer: Control = %TranscriptDrawer
 @onready var _bar_bg: ColorRect = %BarBg  ## геометрия бара ЗАЛа читается отсюда, не дублируется числами
 @onready var _reaction: Control = $ReactionScene  ## мини-сцена реакции (Ace Attorney-стиль)
+@onready var _card_bubble: Panel = %CardInfoBubble
+@onready var _card_bubble_title: Label = %CardInfoTitle
+@onready var _card_bubble_body: Label = %CardInfoBody
 
 
 func _ready() -> void:
@@ -78,8 +95,12 @@ func _ready() -> void:
 	var chars := CharacterCore.new()
 	chars.bind(_stage, _reaction)
 	add_child(chars)
-	_opp_sep0 = float(_opp_row.get_theme_constant("separation"))
-	_you_sep0 = float(_you_row.get_theme_constant("separation"))
+	# ReactionScene — модальный полноэкранный слой. Строковый connect сохраняет доступ к
+	# кастомным сигналам сцены при статическом типе Control у onready-ссылки.
+	_reaction.connect("scene_started", _on_cutscene_started)
+	_reaction.connect("scene_finished", _on_cutscene_finished)
+	_opp_sep0 = FRAME_SEP_DEFAULT
+	_you_sep0 = FRAME_SEP_DEFAULT
 	_build_menu()  # оверлей паузы (модальный, строится кодом)
 	# Закрытое/открытое положение ящика — из реальной ширины экрана и самого ящика, не числами.
 	_drawer_closed_x = size.x
@@ -110,6 +131,10 @@ func _cancel_targeting() -> void:
 
 func _on_clinch_pass() -> void:
 	controller.clinch_pass()
+
+
+func _on_opening_pressed(headline_id: String) -> void:
+	controller.choose_opening(headline_id)
 
 
 func _new_match() -> void:
@@ -268,56 +293,217 @@ func _update_gate_ticks(center: float, bar_w: float, bar_y: float, bar_h: float,
 		node.size = Vector2(2.0, bar_h + 6.0)
 
 
-## Ширина зоны доски ФИКСИРОВАНА (row.size.x — из сцены, под будущие ресайзы/экраны). Если
-## рамки при полных отступах не влезают — сжимаем ДВУМЯ рычагами по очереди, а не даём картам
-## уезжать за пределы зоны:
+## Ширина зоны доски ФИКСИРОВАНА (row.size.x — внутренняя область видимой рамки Board). Если
+## карты при полных отступах не влезают — fit_board_row сжимает их ДВУМЯ рычагами по очереди:
 ##   1) шаг тезисов ВНУТРИ рамки — они некликабельны, ложатся внахлёст (как стопка Разбора
 ##      в клинче), поэтому это основной и самый ёмкий рычаг;
-##   2) отступ МЕЖДУ рамками — они кликабельны (цель атаки), сжимаем мягче и только если
-##      одного первого рычага не хватило.
-func _rebuild_frames(row: HBoxContainer, lines: Array, is_you: bool, default_sep: float) -> void:
+##   2) отступ МЕЖДУ рамками — сжимаем только если первого рычага не хватило.
+## Board.clip_contents дополнительно гарантирует, что ни один декоративный выброс не перекроет
+## персонажей или соседние зоны даже при заведомо невозможной ширине.
+func _rebuild_frames(row: Control, lines: Array, is_you: bool, default_sep: float) -> void:
 	for c in row.get_children():
 		c.queue_free()
 	var n := lines.size()
+	var thesis_counts: Array = []
+	var trailing_pads: Array = []
+	for i in n:
+		thesis_counts.append(int(lines[i].theses))
+		trailing_pads.append(_frame_trailing_pad(is_you, i))
+	var fit := fit_board_row(thesis_counts, trailing_pads, row.size.x, default_sep)
+	var gap_used := float(fit.gap)
+	var sep_used := float(fit.separation)
+	var reverse := not is_you
+	row.set_meta("reverse_layout", reverse)
+	var cursor_x := row.size.x if reverse else 0.0
+	for i in n:
+		var group := _make_frame_group(lines[i], is_you, i, gap_used,
+			float(trailing_pads[i]), reverse)
+		if reverse:
+			cursor_x -= group.custom_minimum_size.x
+			group.position.x = cursor_x
+			cursor_x -= sep_used
+		else:
+			group.position.x = cursor_x
+			cursor_x += group.custom_minimum_size.x + sep_used
+		row.add_child(group)
+	# Второй проход намеренно отложен: Control должен сначала применить реальные minimum size
+	# текста/стилей. После этого измеряем уже не формулу, а фактические прямоугольники карт.
+	var generation := int(row.get_meta("layout_generation", 0)) + 1
+	row.set_meta("layout_generation", generation)
+	call_deferred("_compress_row_from_actual_bounds", row, generation)
+
+
+## Фактический проход от якорной рамки к внешнему краю линии. Для игрока ось идёт слева
+## направо, для оппонента координаты зеркально считаются от правого края к левому. Если карты
+## вошли в защитную зону BOARD_EDGE_APPROACH, равномерно уменьшаем реальные промежутки.
+## Размеры карт не масштабируются. Стык рамка→первый тезис может дойти до касания, но никогда
+## не становится отрицательным — тезис не прячется под свою золотую рамку.
+func _compress_row_from_actual_bounds(row: Control, generation: int) -> void:
+	if not is_instance_valid(row) or int(row.get_meta("layout_generation", -1)) != generation:
+		return
+	var entries: Array = []
+	var reverse := bool(row.get_meta("reverse_layout", false))
+	for group in row.get_children():
+		if group.is_queued_for_deletion():
+			continue
+		for card in group.get_children():
+			if not card is Control or not bool(card.get_meta("board_card", false)):
+				continue
+			var node := card as Control
+			var absolute_x := float(group.position.x + node.position.x)
+			var width := float(node.size.x)
+			entries.append({
+				"node": node,
+				"group": group,
+				"local_x": float(node.position.x),
+				# axis_x всегда растёт ОТ якорной рамки к внешнему краю линии.
+				"axis_x": row.size.x - (absolute_x + width) if reverse else absolute_x,
+				"width": width,
+				"role": String(node.get_meta("board_role", "thesis")),
+			})
+	if entries.size() < 2:
+		return
+	entries.sort_custom(func(a: Dictionary, b: Dictionary): return float(a.axis_x) < float(b.axis_x))
+	var first_x := float(entries[0].axis_x)
+	var last_right := first_x
+	for entry in entries:
+		last_right = maxf(last_right, float(entry.axis_x) + float(entry.width))
+	var target_right := row.size.x - BOARD_EDGE_APPROACH
+	var required := last_right - target_right
+	if required <= 0.0:
+		return
+
+	# Ёмкость каждого реального промежутка. Между рамкой и её первым тезисом минимум = ширина
+	# рамки (касание); между тезисами разрешён карточный нахлёст до THESIS_PITCH_MIN.
+	var capacities: Array = []
+	var total_capacity := 0.0
+	for i in range(1, entries.size()):
+		var prev: Dictionary = entries[i - 1]
+		var cur: Dictionary = entries[i]
+		var delta := float(cur.axis_x) - float(prev.axis_x)
+		var same_group: bool = cur.group == prev.group
+		var frame_to_first: bool = same_group and String(prev.role) == "frame" and String(cur.role) == "thesis"
+		var floor_pitch := float(prev.width) if frame_to_first else THESIS_PITCH_MIN
+		# Новая рамка не должна залезать под последнюю карту предыдущей группы: до касания можно,
+		# глубже — только жёсткий clip_contents как аварийная страховка невозможного состояния.
+		if not same_group and String(cur.role) == "frame":
+			floor_pitch = float(prev.width)
+		var capacity := maxf(0.0, delta - floor_pitch)
+		capacities.append(capacity)
+		total_capacity += capacity
+	if total_capacity <= 0.0:
+		return
+	var ratio := minf(1.0, required / total_capacity)
+	var desired_x: Array = [first_x]
+	for i in range(1, entries.size()):
+		var delta := float(entries[i].axis_x) - float(entries[i - 1].axis_x)
+		desired_x.append(float(desired_x[i - 1]) + delta - float(capacities[i - 1]) * ratio)
+
+	# Сначала переносим корни групп по их золотой рамке, затем раскладываем дочерние карты
+	# относительно нового корня. Row — обычный Control и не перезапишет эти координаты.
+	var group_x := {}
+	for i in entries.size():
+		var entry: Dictionary = entries[i]
+		var desired_absolute := row.size.x - float(desired_x[i]) - float(entry.width) \
+			if reverse else float(desired_x[i])
+		entry["desired_absolute"] = desired_absolute
+		if String(entry.role) == "frame":
+			group_x[entry.group] = desired_absolute - float(entry.local_x)
+	for group in group_x:
+		(group as Control).position.x = float(group_x[group])
+	for i in entries.size():
+		var entry: Dictionary = entries[i]
+		var group := entry.group as Control
+		var node := entry.node as Control
+		node.position.x = float(entry.desired_absolute) - group.position.x
+
+
+## Чистая функция горизонтальной укладки доски. Возвращает общий gap карт внутри рамок и
+## separation между рамками. В расчёт входят не только лица карт, но и реальные хвосты групп.
+static func fit_board_row(thesis_counts: Array, trailing_pads: Array,
+	available_width: float, default_sep: float) -> Dictionary:
+	var n := thesis_counts.size()
+	if n == 0:
+		return {"gap": CARD_G, "separation": default_sep, "width": 0.0}
 	var natural_total := 0.0
-	var total_gaps := 0  # суммарное число тезис-промежутков по всем рамкам ряда
-	for line in lines:
-		natural_total += _group_width(int(line.theses), CARD_G)
-		total_gaps += mini(int(line.theses), 8)
+	var total_gaps := 0
+	for i in n:
+		var theses := int(thesis_counts[i])
+		natural_total += _group_width(theses, CARD_G) + float(trailing_pads[i])
+		# Первый стык «рамка → тезис» защищён от нахлёста. Рычаг сжатия начинается
+		# только со второго тезиса.
+		total_gaps += maxi(0, mini(theses, 8) - 1)
 	if n > 1:
 		natural_total += default_sep * float(n - 1)
 
-	# THESIS_PITCH_MIN — целевой ШАГ между позициями тезисов (как «k*9.0» у стопки Разбора).
-	# У тезисов шаг = CARD_W + gap (не голый gap, как у Разбора) — поэтому порог для самого
-	# gap ниже нуля: gap_floor = ШАГ - CARD_W = 9 - 42 = -33 (это и есть нахлёст в 33px).
+	# THESIS_PITCH_MIN — минимальный шаг позиций тезисов. Так как позиция считается как
+	# CARD_W + gap, отрицательный gap означает контролируемый нахлёст, а не отрицательный шаг.
 	var gap_floor := THESIS_PITCH_MIN - CARD_W
 	var gap_used := CARD_G
 	var sep_used := default_sep
-	var overflow := natural_total - row.size.x
-	if overflow > 0.0:
+	var overflow := maxf(0.0, natural_total - available_width)
+	if overflow > 0.0 and total_gaps > 0:
 		var thesis_budget := float(total_gaps) * (CARD_G - gap_floor)
-		if total_gaps > 0 and overflow <= thesis_budget:
-			# Хватает одного нахлёста тезисов — рамки друг друга не трогают.
-			gap_used = CARD_G - overflow / float(total_gaps)
-		else:
-			gap_used = gap_floor
-			var residual := overflow - maxf(0.0, thesis_budget)
-			if n > 1 and residual > 0.0:
-				var sep_room := default_sep * (1.0 - FRAME_SEP_MIN_FACTOR)
-				var sep_reduction := clampf(residual / float(n - 1), 0.0, sep_room)
-				sep_used = default_sep - sep_reduction
-	row.add_theme_constant_override("separation", int(round(sep_used)))
-	for i in n:
-		row.add_child(_make_frame_group(lines[i], is_you, i, gap_used))
+		var thesis_reduction := minf(overflow, thesis_budget)
+		gap_used -= thesis_reduction / float(total_gaps)
+		overflow -= thesis_reduction
+	if overflow > 0.0 and n > 1:
+		var sep_room := (default_sep - FRAME_SEP_HARD_MIN) * float(n - 1)
+		var sep_reduction := minf(overflow, sep_room)
+		sep_used -= sep_reduction / float(n - 1)
+		overflow -= sep_reduction
+	var fitted_width := _board_row_width(thesis_counts, trailing_pads, gap_used, sep_used)
+	return {"gap": gap_used, "separation": sep_used, "width": fitted_width,
+		"clipped_overflow": overflow}
+
+
+static func _board_row_width(thesis_counts: Array, trailing_pads: Array,
+	gap: float, separation: float) -> float:
+	var total := 0.0
+	for i in thesis_counts.size():
+		total += _group_width(int(thesis_counts[i]), gap) + float(trailing_pads[i])
+	if thesis_counts.size() > 1:
+		total += separation * float(thesis_counts.size() - 1)
+	return total
+
+
+## Стопка Разборов в клинче торчит правее обычного хвоста рамки; её ширина тоже участвует
+## в раскладке, чтобы соседняя рамка не накрывала стопку и не выталкивала её за контур.
+func _frame_trailing_pad(is_you: bool, idx: int) -> float:
+	var trailing := FRAME_GROUP_PAD
+	var cl: Dictionary = model.clinch
+	if cl.is_empty():
+		return trailing
+	var side := ZalV3.SIDE_YOU if is_you else ZalV3.SIDE_OPP
+	if String(cl.get("defender", "")) != side or int(cl.get("idx", -1)) != idx:
+		return trailing
+	var razbors := int(cl.get("r_count", 0))
+	if razbors > 0:
+		trailing = maxf(trailing, CLINCH_STACK_OFFSET + float(razbors - 1) * CLINCH_STACK_PITCH)
+	return trailing
 
 
 ## Ширина группы «рамка + видимые тезисы» при заданном отступе gap между карточками.
-func _group_width(theses: int, gap: float) -> float:
-	var ncards := 1 + mini(theses, 8)
-	return float(ncards) * CARD_W + float(ncards - 1) * gap
+static func _group_width(theses: int, gap: float) -> float:
+	var shown := mini(theses, 8)
+	if shown <= 0:
+		return CARD_W
+	return CARD_W + FRAME_TO_THESIS_GAP + CARD_W + \
+		float(shown - 1) * (CARD_W + gap)
 
 
-func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float) -> Control:
+static func thesis_position_x(index: int, gap: float) -> float:
+	return CARD_W + FRAME_TO_THESIS_GAP + float(index) * (CARD_W + gap)
+
+
+## Зеркалим только ПОЗИЦИЮ карты внутри группы, но не scale/текст/саму ноду.
+static func board_card_position_x(ltr_x: float, content_width: float,
+	outer_pad: float, reverse: bool) -> float:
+	return outer_pad + content_width - CARD_W - ltr_x if reverse else ltr_x
+
+
+func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
+	trailing_pad: float = FRAME_GROUP_PAD, reverse: bool = false) -> Control:
 	var theses := int(line.theses)
 	var stolen := int(line.get("stolen", 0))
 	var closed: bool = line.closed
@@ -338,7 +524,7 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float) -> 
 	var shown := mini(theses, 8)
 	var width := _group_width(theses, gap)
 	var root := Control.new()
-	root.custom_minimum_size = Vector2(maxf(width, CARD_W) + 16.0, CARD_H + 30.0)
+	root.custom_minimum_size = Vector2(maxf(width, CARD_W) + trailing_pad, CARD_H + 30.0)
 	var y0 := 26.0
 	if shaky:
 		_start_wobble(root)
@@ -346,13 +532,15 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float) -> 
 	# Карта-установка показывает claim (позицию-топик), если он назначен.
 	var claim_txt: String = String(line.get("claim", line.name))
 	var uc := _mkcard("РАМКА\n«%s»" % _short(claim_txt), COL_USTAN, closed, contested)
-	uc.position = Vector2(0, y0)
-	uc.tooltip_text = claim_txt
+	uc.set_meta("board_card", true)
+	uc.set_meta("board_role", "frame")
+	uc.position = Vector2(board_card_position_x(0.0, width, trailing_pad, reverse), y0)
+	var frame_info := claim_txt
 	if shaky:
-		uc.tooltip_text += "\n⚠ ШАТАЕТСЯ: Кража соперника заберёт эту рамку целиком (трофеем)."
+		frame_info += "\n\n⚠ ШАТАЕТСЯ: Кража соперника заберёт эту рамку целиком."
 		var warn := Label.new()
 		warn.text = "шатается"
-		warn.position = Vector2(-2.0, y0 - 18.0)
+		warn.position = Vector2(uc.position.x - 2.0, y0 - 18.0)
 		warn.add_theme_font_size_override("font_size", 10)
 		warn.add_theme_color_override("font_color", Color.html("#" + COL_RAZBOR))
 		warn.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -360,17 +548,28 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float) -> 
 	if targetable:
 		uc.disabled = false
 		uc.pressed.connect(_on_target_pressed.bind(idx))
+		var spoken: String = controller.target_preview(idx)
+		if spoken != "":
+			frame_info += "\n\nСКАЖЕТЕ:\n%s" % spoken
+	_attach_card_bubble(uc, "Рамка", frame_info,
+		{"type": ZalV3.TYPE_USTANOVKA, "steals": false})
 	root.add_child(uc)
 
 	for j in shown:
 		var is_st := j >= (theses - stolen)
 		var tc := _mkcard("ПЕРЕ-\nХВАТ" if is_st else "тезис", (COL_GOLD if is_st else COL_TEZIS), closed, false)
-		tc.position = Vector2(float(j + 1) * (CARD_W + gap), y0)
+		tc.set_meta("board_card", true)
+		tc.set_meta("board_role", "thesis")
+		# Первый тезис стоит ПОСЛЕ рамки; отрицательный gap уплотняет только следующие
+		# тезисы относительно друг друга и больше не прячет их под золотую карту.
+		tc.position = Vector2(board_card_position_x(thesis_position_x(j, gap),
+			width, trailing_pad, reverse), y0)
 		root.add_child(tc)
 	if theses > 8:
 		var more := Label.new()
 		more.text = "+%d" % (theses - 8)
-		more.position = Vector2(width + 2.0, y0 + CARD_H / 2.0 - 8.0)
+		more.position = Vector2(maxf(0.0, trailing_pad - 24.0) if reverse else width + 2.0,
+			y0 + CARD_H / 2.0 - 8.0)
 		more.add_theme_font_size_override("font_size", 11)
 		more.add_theme_color_override("font_color", Color.html("#" + COL_TEZIS))
 		more.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -379,7 +578,12 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float) -> 
 	if contested and razbors > 0:
 		for k in razbors:
 			var rc := _mkcard("раз-\nбор", COL_RAZBOR, false, false)
-			rc.position = Vector2(width - CARD_W + 10.0 + float(k) * 9.0, y0 - 20.0)
+			rc.set_meta("board_card", true)
+			rc.set_meta("board_role", "overlay")
+			var overlay_ltr_x := width - CARD_W + CLINCH_STACK_OFFSET + \
+				float(k) * CLINCH_STACK_PITCH
+			rc.position = Vector2(board_card_position_x(overlay_ltr_x,
+				width, trailing_pad, reverse), y0 - 20.0)
 			root.add_child(rc)
 	return root
 
@@ -400,7 +604,11 @@ func _mkcard(text: String, colhex: String, dim: bool, contested: bool) -> Button
 	var b := Button.new()
 	b.size = Vector2(CARD_W, CARD_H)
 	b.custom_minimum_size = Vector2(CARD_W, CARD_H)
-	b.clip_text = false
+	# Критично для геометрии Board: при clip_text=false Button включает ширину всей строки
+	# в свой внутренний minimum size и молча становится шире CARD_W. Тогда fit_board_row считает
+	# 42 px, а реальная «РАМКА «длинный claim»» занимает 80–100 px и тезисы уезжают под неё.
+	b.clip_text = true
+	b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	b.add_theme_font_size_override("font_size", 10)
 	b.text = text
 	var border := Color.html("#" + colhex)
@@ -428,10 +636,15 @@ func _short(s: String) -> String:
 
 
 func _rebuild_hand() -> void:
+	_clear_card_bubble()
 	for c in _hand_row.get_children():
 		c.queue_free()
-	var hand: Array = model.sides[ZalV3.SIDE_YOU].hand
 	var mode := String(controller.input_mode())
+	if mode == "opening":
+		_rebuild_opening_hand()
+		_center_hand()
+		return
+	var hand: Array = model.sides[ZalV3.SIDE_YOU].hand
 	for i in hand.size():
 		var card: Dictionary = hand[i]
 		var enabled := false
@@ -442,31 +655,106 @@ func _rebuild_hand() -> void:
 				enabled = card.type == ZalV3.TYPE_RAZBOR
 			"move":
 				enabled = true
-		# Лицо карты: у ванильной — приём нарратива + превью-реплика («что примерно скажет»,
-		# при розыгрыше катается заново); у ИМЕННОЙ (zal_run §2) — имя и правило-твист.
+		# Лицо карты: у ванильной — точная контекстная реплика; у ИМЕННОЙ (zal_run §2) —
+		# имя и правило-твист. Для Разбора точная строка появляется на рамке после выбора карты,
+		# потому что содержание зависит от цели.
 		# Сам дизайн карты (слои/шрифты/размер) — шаблон ui/card/card.tscn, правится в редакторе.
 		var is_named: bool = card.has("named")
-		var title: String = String(card.get("name", "")) if is_named else nar.device_label(card)
-		var body: String = String(card.get("text", "")) if is_named else "«%s»" % nar.preview_text(ZalV3.SIDE_YOU, card)
+		# Установки имеют собственные названия (Рамка / Тезис дня / Позиция), поэтому не
+		# схлопываем их все в одинаковый заголовок «Установка».
+		var title: String = String(card.get("name", "")) if is_named or \
+			card.type == ZalV3.TYPE_USTANOVKA else nar.device_label(card)
+		var body: String = String(card.get("text", "")) if is_named else controller.hand_preview(i)
 		var btn: Button = CardScene.instantiate()
 		_hand_row.add_child(btn)  # в дерево ДО setup: слои шаблона резолвятся в _ready
 		btn.setup(card, title, body, enabled)
+		var bubble_title := title if is_named else "%s · %s" % [title, String(card.get("name", ""))]
+		var bubble_body := String(card.get("text", "")) if is_named else "СКАЖЕТЕ:\n%s" % body
 		if is_named:
-			btn.tooltip_text = "%s — именной приём\n%s" % [title, String(card.get("text", ""))]
-		else:
-			btn.tooltip_text = "%s · приём: %s\n%s" % [String(card.get("name", "")), title, body]
+			bubble_body = "Именной приём\n\n" + bubble_body
+		_attach_card_bubble(btn, bubble_title, bubble_body, card)
 		btn.pressed.connect(_on_hand_pressed.bind(i))
+	_center_hand()
+
+
+## На нулевом ходе смысловые варианты выглядят как обычные карты-Установки в руке.
+## Это presentation-only: контроллер по-прежнему не списывает U-карту и не двигает ход.
+func _rebuild_opening_hand() -> void:
+	for option in controller.opening_options():
+		var axes: Array = nar.axis_tags(option.get("preferred_axes", []))
+		var focus := "" if axes.is_empty() else "Фокус: %s" % " · ".join(axes)
+		var card := {"type": ZalV3.TYPE_USTANOVKA, "name": "Стартовая рамка", "steals": false}
+		var body := "«%s»" % String(option.get("text", ""))
+		if focus != "":
+			body += "\n\n" + focus
+		var btn: Button = CardScene.instantiate()
+		_hand_row.add_child(btn)
+		btn.setup(card, "Установка", body, true)
+		var bubble_body := "%s\n\n%s\n\nНе расходует карту или ход. Сила Базы остаётся 1." % [
+			"«%s»" % String(option.get("text", "")), focus]
+		_attach_card_bubble(btn, "Стартовая Установка", bubble_body, card)
+		btn.pressed.connect(_on_opening_pressed.bind(String(option.get("id", ""))))
+
+
+func _center_hand() -> void:
 	# Центрируем руку по X между иконками колод добора/сброса (в местных координатах HandArea).
 	# Y НЕ трогаем — она держится тем, что задано в сцене (двигаешь всю зону HandArea в редакторе).
 	# Ширина карты читается из ШАБЛОНА (меняешь размер в card.tscn — центровка следует сама).
-	var n := hand.size()
+	var live: Array = _hand_row.get_children().filter(func(c): return not c.is_queued_for_deletion())
+	var n := live.size()
 	var cw := HAND_W
 	if n > 0:
-		cw = (_hand_row.get_child(_hand_row.get_child_count() - 1) as Control).custom_minimum_size.x
+		cw = (live[-1] as Control).custom_minimum_size.x
 	var sep := float(_hand_row.get_theme_constant("separation"))
 	var w := float(n) * cw + maxf(0.0, float(n - 1)) * sep
 	var area_w := (_hand_row.get_parent() as Control).size.x
 	_hand_row.position.x = maxf(104.0, (area_w - w) / 2.0)
+
+
+## Нативный tooltip заменён фиксированным непрозрачным баблом: он не прыгает за мышью,
+## имеет стабильную ширину и переносит текст по словам.
+func _attach_card_bubble(owner: Control, title: String, body: String, card: Dictionary) -> void:
+	owner.tooltip_text = ""
+	owner.mouse_entered.connect(_show_card_bubble.bind(owner, title, body, card))
+	owner.mouse_exited.connect(_hide_card_bubble.bind(owner))
+
+
+func _show_card_bubble(owner: Control, title: String, body: String, card: Dictionary) -> void:
+	if _cutscene_active or _reaction.visible:
+		return
+	_bubble_owner = owner
+	_card_bubble_title.text = title
+	_card_bubble_body.text = body
+	var border := Color.html("#" + COL_TEZIS)
+	match String(card.get("type", "")):
+		ZalV3.TYPE_RAZBOR:
+			border = Color.html("#" + (COL_GOLD if bool(card.get("steals", false)) else COL_RAZBOR))
+		ZalV3.TYPE_USTANOVKA:
+			border = Color.html("#" + COL_USTAN)
+	_card_bubble.add_theme_stylebox_override("panel",
+		_card_style(Color.html("#111722"), border, 2))
+	_card_bubble.visible = true
+
+
+func _hide_card_bubble(owner: Control) -> void:
+	if _bubble_owner == owner:
+		_clear_card_bubble()
+
+
+func _clear_card_bubble() -> void:
+	_bubble_owner = null
+	_card_bubble.visible = false
+
+
+func _on_cutscene_started() -> void:
+	_cutscene_active = true
+	# Hover мог открыться кадром раньше микросцены — убираем его синхронно со стартом,
+	# чтобы ни рамка, ни текст карточки не проступали поверх крупного плана.
+	_clear_card_bubble()
+
+
+func _on_cutscene_finished() -> void:
+	_cutscene_active = false
 
 
 func _card_style(bg: Color, border: Color, w: int) -> StyleBoxFlat:
@@ -491,7 +779,7 @@ func _show_flash(txt: String, col: Color) -> void:
 func _build_menu() -> void:
 	_menu_overlay = Control.new()
 	_menu_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_menu_overlay.size = Vector2(1152, 648)
+	_menu_overlay.z_index = 200
 	_menu_overlay.mouse_filter = Control.MOUSE_FILTER_STOP  # глушит клики по доске под меню
 	_menu_overlay.visible = false
 	add_child(_menu_overlay)

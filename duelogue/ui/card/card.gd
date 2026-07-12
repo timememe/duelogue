@@ -54,6 +54,17 @@ func setup(card: Dictionary, title: String, body: String, enabled: bool) -> void
 	var tcol := _type_color(card)
 	_title.text = title
 	_body.text = body
+	# Пока у карты нет настоящего арта, длинная точная реплика важнее серого плейсхолдера.
+	# Освобождаем ей всю высоту под заголовком и мягко уменьшаем кегль по длине.
+	var text_first := body.length() > 72
+	_art.visible = not text_first
+	_body.offset_top = 34.0 if text_first else 96.0
+	var body_font := 10
+	if body.length() > 210:
+		body_font = 8
+	elif body.length() > 135:
+		body_font = 9
+	_body.add_theme_font_size_override("font_size", body_font)
 	_ribbon.visible = named
 	disabled = not enabled
 	# Приглушение неиграбельной: акценты гаснут, подложку ведёт stylebox disabled.

@@ -9,6 +9,7 @@ extends Control
 
 const RunController := preload("res://duelogue/app/run_controller.gd")
 const RoomTypes := preload("res://duelogue/core/run/room_types.gd")
+const RunRules := preload("res://duelogue/core/run/run_rules.gd")
 const RunEvents := preload("res://duelogue/core/run/run_events.gd")
 
 ## Цвета типов комнат (узлы карты). Каркас/панель красятся в tscn.
@@ -153,7 +154,8 @@ func _refresh() -> void:
 				b.disabled = true
 				b.modulate = Color(1, 1, 1, 0.3)
 	_act_label.text = "Акт %d/%d · сид %d" % [st.act, st.acts_total, st.run_seed]
-	_res_label.text = "Репутация %d · Гонорары %d" % [st.reputation, st.fees]
+	_res_label.text = "Репутация %s · Поражения %s · Гонорары %d" % [
+		_fmt_rep(float(st.reputation)), _marks(int(st.defeat_marks)), int(st.fees)]
 	_canvas.queue_redraw()
 
 
@@ -208,22 +210,32 @@ func _on_room_entered(node: Dictionary) -> void:
 		if String(eng.get("twist", "")) != "":
 			rows.append("[b]СПЕЦ-ПРАВИЛО:[/b] %s (бестиарий §5 — подключится с боссами)" % eng.twist)
 		rows.append("")
-		rows.append("[color=#8a93a3]Боёвка подключится по лестнице §9 — конфиг боя (battle_config) уже готов. Пока исход выбирается заглушкой:[/color]")
+		rows.append("[color=#8a93a3]РУЧНОЙ ТЕСТ МЕТА-ЯДРА: выберите формальный исход и финальный зал. Настоящая боевая сцена позже пришлёт такой же отчёт автоматически.[/color]")
 		_room_body.text = "\n".join(rows)
-		_add_choice("Победа (заглушка боя)", func() -> void: controller.resolve_room("win"))
-		_add_choice("Поражение (заглушка боя)", func() -> void: controller.resolve_room("lose"))
+		_add_choice("Победа · зал +5", func() -> void:
+			controller.resolve_battle({"winner": "you", "end_reason": "decision", "final_zal": 5}))
+		_add_choice("Победа, но зал против · зал −5", func() -> void:
+			controller.resolve_battle({"winner": "you", "end_reason": "decision", "final_zal": -5}))
+		_add_choice("Поражение, но зал за нас · зал +5", func() -> void:
+			controller.resolve_battle({"winner": "opp", "end_reason": "decision", "final_zal": 5}))
+		_add_choice("Поражение · зал −5", func() -> void:
+			controller.resolve_battle({"winner": "opp", "end_reason": "decision", "final_zal": -5}))
 	elif type == RoomTypes.ROOM_EVENT:
 		var ev := RunEvents.get_event(String(node.event_id))
 		_room_title.text = "?  %s" % String(ev.get("title", "Событие"))
 		_room_body.text = "\n\n".join(ev.get("lines", []))
 		var choices: Array = ev.get("choices", [])
 		for i in choices.size():
-			_add_choice(String(choices[i].label), controller.event_choice.bind(i))
+			var status: Dictionary = controller.event_choice_status(i)
+			_add_choice(String(choices[i].label), controller.event_choice.bind(i),
+				bool(status.ok), String(status.reason))
 	elif type == RoomTypes.ROOM_SHOP:
-		_room_body.text = "Кулуары гудят, но прилавок пока пуст: торговец приёмами (замены в обойме, §1) появится на шаге 4 лестницы §9.\n\n[color=#8a93a3]Пока здесь только кофе и слухи.[/color]"
+		_room_body.text = "Кулуары гудят. Торговец приёмами появится позже, но кризисная служба уже умеет стереть одну горящую точку поражения.\n\n[color=#8a93a3]Цена списывается атомарно: не хватает ресурса — выбор недоступен.[/color]"
+		_add_clear_services()
 		_add_choice("Уйти", func() -> void: controller.resolve_room("done"))
 	else:  # prep
-		_room_body.text = "Комната подготовки: заготовка стартовой рамки, порядок колоды и разведка (§3) лягут сюда на шаге 4 лестницы §9.\n\n[color=#8a93a3]Пока — репетиция перед зеркалом.[/color]"
+		_room_body.text = "Комната подготовки: заготовка стартовой рамки, порядок колоды и разведка появятся позже. Для ручного теста здесь доступна та же кризисная очистка одной страховки."
+		_add_clear_services()
 		_add_choice("Продолжить путь", func() -> void: controller.resolve_room("done"))
 
 
@@ -234,11 +246,13 @@ func _on_room_resolved(result: Dictionary) -> void:
 	if outcome == "win":
 		rows.append("[b]Эфир отработан — победа.[/b]")
 	elif outcome == "lose":
-		rows.append("[b]Эфир провален.[/b] Карьера продолжается, но счёт запомнит (§10.4).")
+		rows.append("[b]Эфир провален.[/b] Формальное поражение учитывается отдельно от мнения зала.")
+	elif outcome == "draw":
+		rows.append("[b]Эфир закончился ничьей.[/b]")
 	var outro := String(result.get("outro", ""))
 	if outro != "":
 		rows.append(outro)
-	rows.append("[color=#8a93a3]%s[/color]" % _fx_text(result.get("effects", {})))
+	rows.append("[color=#8a93a3]%s[/color]" % _result_text(result.get("result", {})))
 	_room_body.text = "\n\n".join(rows)
 	_add_choice("Продолжить", _hide_panel)
 
@@ -246,16 +260,17 @@ func _on_room_resolved(result: Dictionary) -> void:
 func _on_run_ended(outcome: String, info: Dictionary) -> void:
 	_show_panel()
 	_clear_choices()
-	var titles := {"victory": "СЕЗОН ЗАКРЫТ", "cancelled": "ВЫ ОТМЕНЕНЫ", "abandoned": "СЕЗОН БРОШЕН"}
+	var titles := {"victory": "СЕЗОН ЗАКРЫТ", "defeated": "СЕЗОН ПРОВАЛЕН", "abandoned": "СЕЗОН БРОШЕН"}
 	var bodies := {
 		"victory": "Все %d акта отработаны. Контракты закрыты, имя звучит из каждого эфира." % int(controller.state.acts_total),
-		"cancelled": "Репутация выгорела до нуля — букинг молчит, эфиры отменены (§4).",
+		"defeated": "Три страховки уже горели, и следующее поражение закрыло сезон.",
 		"abandoned": "Вы сошли с тура на середине сезона.",
 	}
 	_room_title.text = String(titles.get(outcome, outcome))
-	_room_body.text = "%s\n\n[color=#8a93a3]Комнат пройдено: %d · Репутация: %d · Гонорары: %d[/color]" % [
+	_room_body.text = "%s\n\n[color=#8a93a3]Комнат пройдено: %d · Репутация: %s · Поражения: %s · Гонорары: %d[/color]" % [
 		String(bodies.get(outcome, "")), int(info.get("rooms", 0)),
-		int(info.get("reputation", 0)), int(info.get("fees", 0))]
+		_fmt_rep(float(info.get("reputation", 0.0))), _marks(int(info.get("defeat_marks", 0))),
+		int(info.get("fees", 0))]
 	_add_choice("Новый сезон", _on_restart)
 
 
@@ -263,21 +278,64 @@ func _on_restart() -> void:
 	controller.start_run()
 
 
-func _fx_text(fx: Dictionary) -> String:
+func _result_text(result: Dictionary) -> String:
+	var payload: Dictionary = result.get("settlement", result.get("transaction", {}))
+	if payload.is_empty():
+		return "Без последствий."
 	var parts: Array = []
-	if int(fx.get("rep", 0)) != 0:
-		parts.append("Репутация %+d" % int(fx.rep))
-	if int(fx.get("fee", 0)) != 0:
-		parts.append("Гонорар %+d" % int(fx.fee))
+	var rep_delta := float(payload.get("reputation_delta", 0.0))
+	if not is_zero_approx(rep_delta):
+		parts.append("Репутация %s" % _fmt_rep(rep_delta))
+	var overflow := float(payload.get("reputation_overflow", 0.0))
+	if not is_zero_approx(overflow):
+		parts.append("забыто за капом %s" % _fmt_rep(overflow))
+	var fee_delta := int(payload.get("fee_delta", 0))
+	if fee_delta != 0:
+		parts.append("Гонорар %+d" % fee_delta)
+	if bool(payload.get("defeat_mark_added", false)):
+		parts.append("зажжена точка поражения")
+	var cleared := int(payload.get("defeat_marks_cleared", 0))
+	if cleared > 0:
+		parts.append("очищена точка поражения")
 	return "Без последствий." if parts.is_empty() else " · ".join(parts)
 
 
-func _add_choice(label: String, fn: Callable) -> void:
+func _add_clear_services() -> void:
+	var fee_status: Dictionary = controller.clear_mark_status("fee")
+	_add_choice("Очистить точку · %d гонораров" % RunRules.CLEAR_MARK_FEE,
+		_buy_clear.bind("fee"), bool(fee_status.ok), String(fee_status.reason))
+	var rep_status: Dictionary = controller.clear_mark_status("rep")
+	_add_choice("Очистить точку · %.0f репутации" % RunRules.CLEAR_MARK_REP,
+		_buy_clear.bind("rep"), bool(rep_status.ok), String(rep_status.reason))
+
+
+func _buy_clear(currency: String) -> void:
+	var result: Dictionary = controller.purchase_clear_mark(currency)
+	if bool(result.get("ok", false)):
+		# Перестроить открытую панель: ресурсы/доступность кнопок изменились, комната та же.
+		_on_room_entered(controller.state.node(controller.state.current_id))
+
+
+func _add_choice(label: String, fn: Callable, enabled: bool = true, disabled_reason: String = "") -> void:
 	var b := Button.new()
 	b.text = label
 	b.add_theme_font_size_override("font_size", 14)
+	b.disabled = not enabled
+	if not enabled:
+		b.tooltip_text = disabled_reason
 	b.pressed.connect(fn)
 	_room_choices.add_child(b)
+
+
+func _fmt_rep(value: float) -> String:
+	return "%+.1f" % value
+
+
+func _marks(n: int) -> String:
+	var out := ""
+	for i in RunRules.DEFEAT_MARKS_MAX:
+		out += "●" if i < n else "○"
+	return out
 
 
 func _clear_choices() -> void:

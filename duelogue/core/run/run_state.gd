@@ -4,9 +4,9 @@ extends RefCounted
 ## переходы/эффекты над ними. Правил потока здесь НЕТ (владелец — run_controller, как
 ## battle_controller у боя). Сериализуемо в Dictionary — контракт будущего сейва.
 ##
-## Ресурсы дистанции: репутация (§4, «HP кампании») и гонорары (валюта кулуаров §6) —
-## пока СТАБЫ-числа, чтобы пайплайн эффектов (события/исходы) работал end-to-end;
-## механики (крен зала от репутации и т.д.) — по лестнице §9.
+## Ресурсы дистанции: репутация (§4, накопительный «зал сезона» −50…+50), гонорары
+## и три страховки поражения. Все ПРАВИЛА над ними принадлежат run_rules.gd; здесь только
+## сериализуемые поля и механические операции пути/комнаты.
 
 const RoomTypes := preload("res://duelogue/core/run/room_types.gd")
 
@@ -17,10 +17,11 @@ var map := {}            ## карта ТЕКУЩЕГО акта (run_map.genera
 var current_id := -1     ## узел, в котором стоим (-1 — старт акта, перед первым слоем)
 var room_open := false   ## комната текущего узла не закрыта — по карте идти нельзя
 var path: Array = []     ## пройденное за весь забег: [{act, id, type, outcome}]
-var reputation := 5
+var reputation := 0.0
 var fees := 0
+var defeat_marks := 0   ## 0..3 горящих страховки; четвёртое поражение завершает run_rules
 var over := false
-var outcome := ""        ## "" | victory | cancelled | abandoned
+var outcome := ""        ## "" | victory | defeated | abandoned
 
 
 func node(id: int) -> Dictionary:
@@ -78,13 +79,6 @@ func resolve(room_outcome: String) -> void:
 	path.append({"act": act, "id": current_id, "type": String(nd.get("type", "")), "outcome": room_outcome})
 
 
-## Эффекты комнат/событий: rep (репутация §4), fee (гонорар). Зарезервировано контрактом,
-## не реализовано: card (замена в обойме §1), intel (разведка §3.4), zal (стартовый крен §3.1).
-func apply_effects(fx: Dictionary) -> void:
-	reputation = maxi(0, reputation + int(fx.get("rep", 0)))  # дно 0 = «отменён» (§4)
-	fees = maxi(0, fees + int(fx.get("fee", 0)))
-
-
 # --- сейв-контракт ---
 
 func to_dict() -> Dictionary:
@@ -92,7 +86,7 @@ func to_dict() -> Dictionary:
 		"run_seed": run_seed, "act": act, "acts_total": acts_total,
 		"current_id": current_id, "room_open": room_open,
 		"path": path.duplicate(true),
-		"reputation": reputation, "fees": fees,
+		"reputation": reputation, "fees": fees, "defeat_marks": defeat_marks,
 		"over": over, "outcome": outcome,
 		# Карта не сериализуется: она детерминирована (run_seed + act) и перегенерится.
 	}
@@ -105,8 +99,9 @@ func from_dict(d: Dictionary, regenerated_map: Dictionary) -> void:
 	current_id = int(d.get("current_id", -1))
 	room_open = bool(d.get("room_open", false))
 	path = (d.get("path", []) as Array).duplicate(true)
-	reputation = int(d.get("reputation", 5))
+	reputation = float(d.get("reputation", 0.0))
 	fees = int(d.get("fees", 0))
+	defeat_marks = int(d.get("defeat_marks", 0))
 	over = bool(d.get("over", false))
 	outcome = String(d.get("outcome", ""))
 	map = regenerated_map

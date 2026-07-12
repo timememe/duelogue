@@ -322,24 +322,28 @@ func advance() -> void:
 
 ## Применить ОДНО действие. Для RAZBOR — снос одного тезиса БЕЗ воли (single-razbor).
 ## Волю клинча («разбор↔тезис») ведёт драйвер снаружи через remove_attack + clinch_finalize.
-func play_action(side: String, type: String, target: int = -1) -> Dictionary:
+func play_action(side: String, type: String, target: int = -1, hand_index: int = -1) -> Dictionary:
 	var info := {"side": side, "type": type, "name": "", "removed": false}
 	var s: Dictionary = sides[side]
 	match type:
 		TYPE_TEZIS:
-			var c := _remove_card(side, TYPE_TEZIS)
+			var c := _remove_selected_card(side, TYPE_TEZIS, hand_index)
 			info.name = c.get("name", "")
 			s.lines[-1].theses = int(s.lines[-1].theses) + 1
 			if c.get("stolen", false):
 				s.lines[-1].stolen = int(s.lines[-1].get("stolen", 0)) + 1
 		TYPE_USTANOVKA:
-			var c := _remove_card(side, TYPE_USTANOVKA)
+			var c := _remove_selected_card(side, TYPE_USTANOVKA, hand_index)
 			info.name = c.get("name", "")
 			if not s.lines.is_empty():
 				s.lines[-1].closed = true
 			s.lines.append({"theses": 1, "closed": false, "name": info.name, "stolen": 0})
 		TYPE_RAZBOR:
-			var c := remove_attack(side, true)
+			var c: Dictionary
+			if hand_index >= 0:
+				c = _remove_selected_card(side, TYPE_RAZBOR, hand_index)
+			else:
+				c = remove_attack(side, true)
 			info.name = c.get("name", "")
 			var init_steals: bool = c.get("steals", false)
 			_discard(side, c)  # потраченная атака — в свой сброс
@@ -622,14 +626,14 @@ func clinch_can_act(side: String) -> bool:
 ## Решение текущей стороны. "play" продолжает волю, "pass" завершает клинч (finalize).
 ## Возвращает {event}: "hold" (защитник держит, card=тезис) | "press" (атакующий добил,
 ## card=карта атаки) | "resolved" (клинч закрыт; info+landed+счётчики).
-func clinch_submit(decision: String, prefer_steal: bool = true) -> Dictionary:
+func clinch_submit(decision: String, prefer_steal: bool = true, hand_index: int = -1) -> Dictionary:
 	if clinch.is_empty():
 		return {}
 	if decision != "play":
 		return _finish_clinch()
 	if clinch.phase == "await_defend":
 		var line: Dictionary = sides[clinch.defender].lines[clinch.idx]
-		var dc: Dictionary = _remove_card(clinch.defender, TYPE_TEZIS)
+		var dc: Dictionary = _remove_selected_card(clinch.defender, TYPE_TEZIS, hand_index)
 		line.theses = int(line.theses) + 1
 		clinch.t_added = int(clinch.t_added) + 1
 		if not clinch_freeze:
@@ -637,7 +641,11 @@ func clinch_submit(decision: String, prefer_steal: bool = true) -> Dictionary:
 		clinch.phase = "await_attack"
 		return {"event": "hold", "card": dc}
 	else:
-		var ac: Dictionary = remove_attack(clinch.attacker, prefer_steal)
+		var ac: Dictionary
+		if hand_index >= 0:
+			ac = _remove_selected_card(clinch.attacker, TYPE_RAZBOR, hand_index)
+		else:
+			ac = remove_attack(clinch.attacker, prefer_steal)
 		_discard(clinch.attacker, ac)
 		clinch.r_count = int(clinch.r_count) + 1
 		if ac.get("steals", false):
@@ -737,6 +745,17 @@ func _remove_card(side: String, type: String) -> Dictionary:
 				hand.remove_at(i)
 				return c
 	return {}
+
+
+## UI выбирает конкретную карту, а не только её тип. Fallback сохраняет старый API для AI,
+## симуляций и страховочных автодействий, где hand_index не передаётся.
+func _remove_selected_card(side: String, type: String, hand_index: int) -> Dictionary:
+	var hand: Array = sides[side].hand
+	if hand_index >= 0 and hand_index < hand.size() and String(hand[hand_index].type) == type:
+		var card: Dictionary = hand[hand_index]
+		hand.remove_at(hand_index)
+		return card
+	return _remove_card(side, type)
 
 
 func _finish(win_side: String, reason: String) -> void:

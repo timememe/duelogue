@@ -10,6 +10,11 @@ extends Control
 
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 
+## Модальный контракт с экраном боя: с первого кадра катсцены UI очищает hover-баблы и
+## перестаёт их создавать; finished приходит только после полного fade-out.
+signal scene_started
+signal scene_finished
+
 ## Фазы (FADE_IN/FADE_OUT/IMPACT_HOLD) — в ReadingPace: единые часы с пейсингом контроллера
 ## (scene_time/impact_time), чтобы автоход никогда не обрывал идущую сцену.
 const BUBBLE_MARGIN := 32.0  ## отступ бабла от края экрана — бабл держится СО СТОРОНЫ,
@@ -61,6 +66,7 @@ const MOOD_FX := {
 
 var _gen := 0            ## генерация; новый show_* инвалидирует ожидающие await прошлого
 var _active_tween: Tween  ## текущий tween (убиваем перед стартом нового — без борьбы за свойства)
+var _modal_active := false
 
 
 func _ready() -> void:
@@ -69,6 +75,19 @@ func _ready() -> void:
 	_bubble.pivot_offset = _bubble.size / 2.0
 	_bg_mood.visible = false
 	_bg_shader.visible = false
+
+
+func is_modal_active() -> bool:
+	return _modal_active
+
+
+## Новый show_* может заменить уже идущую реакцию. В таком случае модальность не моргает:
+## started/finished обрамляют всю непрерывную цепочку крупных планов.
+func _begin_modal_scene() -> void:
+	if not _modal_active:
+		_modal_active = true
+		scene_started.emit()
+	visible = true
 
 
 ## Юниформы спидлайн-фона из профиля MOOD_FX. Градиент замешивается здесь, на CPU:
@@ -133,6 +152,7 @@ func _layout_bubble(side: String) -> void:
 func show_utterance(side: String, text: String, portrait_tex: Texture2D, mood: String = "") -> void:
 	_gen += 1
 	var my_gen := _gen
+	_begin_modal_scene()
 	_apply_mood_bg(side, mood)
 	_bg_mood.visible = true
 	_bg_shader.visible = false
@@ -144,7 +164,6 @@ func show_utterance(side: String, text: String, portrait_tex: Texture2D, mood: S
 	_bubble_label.text = text
 	_bubble_label.visible_ratio = 0.0
 	_bubble.scale = Vector2(0.7, 0.7)
-	visible = true
 	if _active_tween:
 		_active_tween.kill()
 	_active_tween = create_tween()
@@ -173,6 +192,7 @@ func show_utterance(side: String, text: String, portrait_tex: Texture2D, mood: S
 func show_impact(side: String, portrait_tex: Texture2D, intensity: float = 1.0) -> void:
 	_gen += 1
 	var my_gen := _gen
+	_begin_modal_scene()
 	_bg_mood.visible = false
 	_bg_shader.visible = true
 	_shader_mat.set_shader_parameter("progress", 0.0)
@@ -180,7 +200,6 @@ func show_impact(side: String, portrait_tex: Texture2D, intensity: float = 1.0) 
 	_portrait.texture = portrait_tex
 	_portrait.flip_h = side == "opp"
 	_bubble.visible = false
-	visible = true
 	modulate.a = 1.0
 	if _active_tween:
 		_active_tween.kill()
@@ -206,3 +225,6 @@ func _fade_out(my_gen: int) -> void:
 	if my_gen != _gen:
 		return
 	visible = false
+	if _modal_active:
+		_modal_active = false
+		scene_finished.emit()

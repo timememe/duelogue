@@ -26,4 +26,4 @@ signal run_map_changed()                        ## карта/позиция/р�
 signal room_entered(node: Dictionary)           ## вошли в узел карты (открыть панель комнаты)
 signal room_resolved(result: Dictionary)        ## комната закрыта: {node_id, type, outcome, effects, outro}
 signal act_advanced(act: int)                   ## переход в следующий акт (карта перегенерена)
-signal run_ended(outcome: String, info: Dictionary)  ## финал забега: victory | cancelled | abandoned
+signal run_ended(outcome: String, info: Dictionary)  ## финал забега: victory | defeated | abandoned

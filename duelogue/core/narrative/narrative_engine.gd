@@ -109,6 +109,53 @@ const TEZIS_PAT := {
 	],
 }
 
+# Theme v0.4: схема сначала ищет ТИПИЗИРОВАННУЮ опору в данных оси. Старый TEZIS_PAT —
+# fallback для тем v0.3 (шаурма остаётся регрессионной темой обратной совместимости).
+const SUPPORT_KINDS := {
+	"Пример": ["case"],
+	"Авторитет": ["source"],
+	"Статистика": ["number"],
+	"Аналогия": ["analogy"],
+	"Здравый смысл": ["common", "case"],
+	"Эмоция": ["stake"],
+	"Определение": ["definition"],
+	"Традиция": ["precedent"],
+}
+const TEZIS_SUPPORT_PAT := {
+	# Опора уже авторится как самостоятельный аргумент полюса. Не дублируем рядом ещё и
+	# take той же оси: рамка задаёт позицию, карта добавляет ОДИН новый факт/образ/случай.
+	"Пример": ["{m}{s}."],
+	"Авторитет": ["{m}{s}."],
+	"Статистика": ["{m}{s}."],
+	"Аналогия": ["{m}{s}."],
+	"Здравый смысл": ["{m}{s}."],
+	"Эмоция": ["{m}{s}!"],
+	"Определение": ["{m}{s}."],
+	"Традиция": ["{m}{s}."],
+}
+
+# Содержательные атаки используют полноценные атомы темы вместо случайного существительного.
+const HOOK_SUPPORT_KINDS := {
+	"исключение": ["exception", "case"],
+	"сходство": ["distinction"],
+	"следствие": ["consequence"],
+}
+const HOOK_SUPPORT_PAT := {
+	"исключение": ["{m}{g}? Контрпример: {s}."],
+	"сходство": ["{m}{g}? Не сходится: {s}."],
+	"следствие": ["{m}{g}? Тогда выходит: {s}."],
+}
+const SUB_SUPPORT_KINDS := {
+	"Контрпример": ["exception", "case"],
+	"Ложная аналогия": ["distinction"],
+	"До абсурда": ["consequence"],
+}
+const RAZBOR_SUB_SUPPORT_PAT := {
+	"Контрпример": ["{m}{g}? Контрпример: {s}."],
+	"Ложная аналогия": ["{m}{g}? Не сходится: {s}."],
+	"До абсурда": ["{m}{g}? Тогда выходит: {s}."],
+}
+
 # HIT: зацепка попала в открытую уязвимость схемы цели. Один хват-шаблон × объект схемы →
 # 7×8 различимых звучаний из ~15 деклараций (факторизация §15.3): «а эксперты — откуда?» vs
 # «а цифры — откуда?» — один шаблон. Пустые слоты гасят вариант: {tag} — только если у оси
@@ -117,28 +164,28 @@ const TEZIS_PAT := {
 # «мы вообще-то про канон» имеет право звучать лишь по уклонившейся защите.
 const HOOK_PAT := {
 	"источник": [
-		"{m}{g}? А {obj} — откуда, собственно?",
-		"{m}{obj}, значит. А источник где?",
+		"{m}{g}? Источник где?",
+		"{m}{obj} без источника.",
 	],
 	"исключение": [
-		"{m}{g}? {obj} — ещё не правило. Как раз наоборот: {o}.",
-		"{m}а исключения? Их полно: {o}.",
+		"{m}{g}? А вот исключение: {o}.",
+		"{m}контрпример: {o}.",
 	],
 	"сходство": [
-		"{m}{g}? Похоже, да не то: {o}.",
-		"{m}{obj} хромает: {x} — это не «{tag}». {o}.",
+		"{m}{g}? Не похоже: {o}.",
+		"{m}{obj} не сходится: {o}.",
 	],
 	"следствие": [
-		"{m}{g}? Скользкая дорожка: тогда и {x} завтра — норма. {o}.",
-		"{m}доведи до конца — и абсурд: выходит, {x} — тоже норма. {o}.",
+		"{m}{g}? Тогда выходит: {o}.",
+		"{m}следствие уже без границ: {o}.",
 	],
 	"подмена": [
-		"{m}{g} — а это подмена: разговор был не о том.",
-		"{m}не жонглируй: {g} — это передёрг, а не довод.",
+		"{m}{g} — это подмена темы.",
+		"{m}не жонглируй: {g} — не ответ.",
 	],
 	"связь": [
-		"{m}{g}? {obj} отдельно, вывод отдельно. Где связь?",
-		"{m}совпало — не значит связано. Покажи связь.",
+		"{m}{g}? Где связь?",
+		"{m}совпало — не значит связано.",
 	],
 	"уместность": [
 		"{m}мы вообще-то про «{stag}» — {obj} тут при чём?",
@@ -164,7 +211,7 @@ const MISS_PUNCH := {
 	"Контрпример": ["Да всё наоборот!", "Наоборот же!"],
 	"До абсурда": ["Это же абсурд!", "Бред же выходит!"],
 	"Ложная аналогия": ["Ну и сравнил!", "Мимо! Совсем мимо!"],
-	"Передёрг": ["Я такого не говорил!", "Не приписывай мне!"],
+	"Передёрг": ["Не искажай мой тезис!", "Это карикатура, не ответ!"],
 	"Не в кассу": ["Да при чём тут это!", "Не туда! Совсем не туда!"],
 	"Корреляция": ["Одно к другому не липнет!", "Да не связано это!"],
 }
@@ -190,18 +237,19 @@ const HOOK_CLOSE_HELD := [
 # Разбор MISS содержательный: рефьютит чужой взгляд {g} своим противоположным {o} (мотив {x}).
 # {g} приходит из референции УЖЕ в кавычках (цитата/клип/тег) — паттерны кавычек не добавляют.
 const RAZBOR_SUB := {
-	"Контрпример": ["{m}да какой там {g} — {o}.", "{m}{g}? Как раз наоборот: {o}."],
-	"До абсурда": ["{m}если {g}, то и {x} под запрет. На деле {o}.", "{m}{g} — доведи до конца, и абсурд: {o}."],
-	"Ложная аналогия": ["{m}{g}? Сравнение хромает. По факту {o}.", "{m}{g}? Мимо. {o}."],
+	"Контрпример": ["{m}{g}? Контрпример: {o}.", "{m}{g}? Наоборот: {o}."],
+	"До абсурда": ["{m}{g}? Тогда выходит: {o}.", "{m}{g}? Дальше — абсурд: {o}."],
+	"Ложная аналогия": ["{m}{g}? Не сходится: {o}.", "{m}{g}? Не похоже: {o}."],
 }
 # Разбор MISS процедурный: придирка к тексту чужого довода {g} (содержание оси не нужно).
 # «Не в кассу» с обвинением в уходе от темы гейтится стазисом ({stag}): по доводу, стоящему
 # ровно на теме раунда, звучит только пренебрежение («спора не решает»), не ложное «не по теме».
 const RAZBOR_PROC := {
-	"Источник?": ["{m}{g}? Пруфы где? Назови хоть один.", "{m}а кто это сказал: {g}? Источник."],
-	"Передёрг": ["{m}я не говорил {g} — ты передёрнул.", "{m}{g} — это твоя выдумка за меня, не лепи."],
-	"Не в кассу": ["{m}при чём тут {g}? Мы про «{stag}».", "{m}{g} — и что? Спора это не решает.", "{m}{g} — слабо. Нас это никуда не ведёт."],
-	"Корреляция": ["{m}{g}? Совпало — не значит следствие.", "{m}из {g} такой вывод не вытекает."],
+	"Источник?": ["{m}{g}? Источник?", "{m}{g} — кто это сказал?"],
+	"Передёрг": ["{m}{g} — карикатура на мой тезис.", "{m}{g} искажает мою позицию."],
+	"Не в кассу": ["{m}при чём тут {g}? Мы про «{stag}».", "{m}{g} — спор это не решает.",
+		"{m}{g} — мимо сути."],
+	"Корреляция": ["{m}{g}? Где связь?", "{m}{g} — вывод не следует."],
 }
 # Кража: разворот оси — чужой взгляд {g} как довод за себя {o}.
 const KRAJA_PAT := {
@@ -251,7 +299,9 @@ var theme: Dictionary
 var stance_of := {"you": "contra", "opp": "pro"}
 var _axis_by_id := {}
 var _recent_motifs: Array = []
-var _headline_ptr := {"you": 0, "opp": 0}
+## Выбранные headline-id по сторонам. Стартовая рамка теперь выбирается игроком, а следующие
+## Установки берут ещё не использованные позиции из того же пула.
+var _headline_used := {"you": {}, "opp": {}}
 var _kraja_i := 0
 ## Референция (§14.6): сколько раз ось уже цитировали ссылкой → цитата/клип/тег.
 var _axis_seen := {}
@@ -288,7 +338,7 @@ func start(p_theme: Dictionary, seed: int, p_stance: Dictionary = {}) -> void:
 	for ax in theme.axes:
 		_axis_by_id[ax.id] = ax
 	_recent_motifs = []
-	_headline_ptr = {"you": 0, "opp": 0}
+	_headline_used = {"you": {}, "opp": {}}
 	_kraja_i = 0
 	_axis_seen = {}
 	_asserted = {"you": {}, "opp": {}}
@@ -327,12 +377,148 @@ func stance_label(side: String) -> String:
 	return theme.stances[_pole(side)].label
 
 
-## Следующая широкая позиция стойки (для Установки / стартовой рамки).
+func axis_tags(axis_ids: Array) -> Array:
+	var out: Array = []
+	for axis_id in axis_ids:
+		var ax: Dictionary = _axis_by_id.get(String(axis_id), {})
+		var label := String(ax.get("tag", axis_id))
+		if label != "" and not out.has(label):
+			out.append(label)
+	return out
+
+
+## Нормализованный headline. Новый контракт допускает структуру
+## {id, text, preferred_axes}; старые строковые темы остаются совместимы.
+func _headline_entry(raw: Variant, index: int) -> Dictionary:
+	if raw is Dictionary:
+		var d: Dictionary = (raw as Dictionary).duplicate(true)
+		d["id"] = String(d.get("id", "frame_%d" % index))
+		d["text"] = String(d.get("text", ""))
+		d["preferred_axes"] = (d.get("preferred_axes", []) as Array).duplicate()
+		return d
+	return {"id": "frame_%d" % index, "text": String(raw), "preferred_axes": []}
+
+
+func _headline_pool(side: String) -> Array:
+	var raw_pool: Array = theme.stances[_pole(side)].headlines
+	var out: Array = []
+	for i in raw_pool.size():
+		out.append(_headline_entry(raw_pool[i], i))
+	return out
+
+
+## Доступные широкие позиции стойки. limit<=0 возвращает все неиспользованные.
+func headline_options(side: String, limit: int = 0) -> Array:
+	var pool := _headline_pool(side)
+	var used: Dictionary = _headline_used[side]
+	var out: Array = []
+	for h in pool:
+		if used.has(String(h.id)):
+			continue
+		out.append((h as Dictionary).duplicate(true))
+		if limit > 0 and out.size() >= limit:
+			break
+	# Тема исчерпана — разрешаем повторный цикл вместо падения движка.
+	if out.is_empty():
+		for h in pool:
+			out.append((h as Dictionary).duplicate(true))
+			if limit > 0 and out.size() >= limit:
+				break
+	return out
+
+
+## Зафиксировать конкретную позицию. Возвращает пустой словарь при неизвестном id.
+func select_headline(side: String, headline_id: String) -> Dictionary:
+	for h in _headline_pool(side):
+		if String(h.id) != headline_id:
+			continue
+		_headline_used[side][headline_id] = true
+		return (h as Dictionary).duplicate(true)
+	return {}
+
+
+## Автовыбор для оппонента: риторический стиль даёт мягкое предпочтение апелляции рамки.
+func auto_headline(side: String, preferred_appeal: String = "") -> Dictionary:
+	var pool := headline_options(side)
+	if preferred_appeal != "":
+		var fit: Array = pool.filter(func(h):
+			for axis_id in h.get("preferred_axes", []):
+				var ax: Dictionary = _axis_by_id.get(String(axis_id), {})
+				if String(ax.get("appeal", "")) == preferred_appeal:
+					return true
+			return false)
+		if not fit.is_empty():
+			pool = fit
+	if pool.is_empty():
+		return {}
+	var chosen: Dictionary = pool[rng.randi() % pool.size()]
+	return select_headline(side, String(chosen.id))
+
+
+## Следующая широкая позиция для обычной Установки после opening-фазы.
+func next_headline_data(side: String) -> Dictionary:
+	var options := headline_options(side, 1)
+	if options.is_empty():
+		return {}
+	return select_headline(side, String(options[0].id))
+
+
 func next_headline(side: String) -> String:
-	var pool: Array = theme.stances[_pole(side)].headlines
-	var i: int = _headline_ptr[side]
-	_headline_ptr[side] = i + 1
-	return pool[i % pool.size()]
+	return String(next_headline_data(side).get("text", ""))
+
+
+## Theme v0.4 data helpers. v0.3 axis[pole]: String остаётся полным fallback.
+func _take_pool(axis: Dictionary, pole: String) -> Array:
+	var takes: Dictionary = axis.get("takes", {})
+	var raw: Variant = takes.get(pole, [])
+	var pool: Array = (raw as Array).duplicate() if raw is Array else []
+	if pool.is_empty():
+		pool.append(String(axis.get(pole, "")))
+	return pool.filter(func(v): return String(v) != "")
+
+
+func _axis_take(axis: Dictionary, pole: String) -> String:
+	return _pick(_take_pool(axis, pole))
+
+
+func _axis_take_at(axis: Dictionary, pole: String, prng: RandomNumberGenerator) -> String:
+	return _pick_at(_take_pool(axis, pole), prng)
+
+
+## supports.{pole}.{kind} = String | [String]. Каждый atom — целая fill-safe фраза без точки.
+func _support_options(axis: Dictionary, pole: String, kinds: Array) -> Array:
+	var supports: Dictionary = axis.get("supports", {})
+	var by_pole: Dictionary = supports.get(pole, {})
+	var out: Array = []
+	for kind in kinds:
+		var raw: Variant = by_pole.get(String(kind), [])
+		var texts: Array = (raw as Array) if raw is Array else [raw]
+		for value in texts:
+			var s := String(value)
+			if s != "":
+				out.append({"kind": String(kind), "text": s})
+	return out
+
+
+func _axis_has_support(axis: Dictionary, pole: String, kinds: Array) -> bool:
+	return not _support_options(axis, pole, kinds).is_empty()
+
+
+func _pick_support(axis: Dictionary, pole: String, kinds: Array) -> Dictionary:
+	var options := _support_options(axis, pole, kinds)
+	return {} if options.is_empty() else (options[rng.randi() % options.size()] as Dictionary).duplicate(true)
+
+
+func _pick_support_at(axis: Dictionary, pole: String, kinds: Array, prng: RandomNumberGenerator) -> Dictionary:
+	var options := _support_options(axis, pole, kinds)
+	return {} if options.is_empty() else (options[prng.randi() % options.size()] as Dictionary).duplicate(true)
+
+
+func _statement_full(dev: String, marker: String, take: String, motif: String, support: Dictionary) -> String:
+	var reps := {"m": marker, "t": take, "x": motif, "s": String(support.get("text", ""))}
+	if not support.is_empty() and TEZIS_SUPPORT_PAT.has(dev):
+		return _fill(_pick(TEZIS_SUPPORT_PAT[dev]), reps)
+	return _fill(_pick(TEZIS_PAT.get(dev, TEZIS_PAT["Пример"])), reps)
 
 
 func device_for(card: Dictionary) -> String:
@@ -362,7 +548,7 @@ func device_label(card: Dictionary) -> String:
 
 
 ## Превью реплики карты для её лица в руке. ЧИСТАЯ: не трогает rng/_recent_motifs/
-## _headline_ptr/_kraja_i/_axis_seen — текст представительный, при розыгрыше катается заново.
+## _headline_used/_kraja_i/_axis_seen — текст представительный, при розыгрыше катается заново.
 ## Детерминирована по личности карты, чтобы не мерцать на _refresh. Карта атаки показывает
 ## свой ФИРМЕННЫЙ хват (HIT на типовой уязвимой схеме) — приём читается прямо в руке.
 func preview_text(side: String, card: Dictionary) -> String:
@@ -375,24 +561,37 @@ func preview_text(side: String, card: Dictionary) -> String:
 	match String(card.get("type", "")):
 		TYPE_USTANOVKA:
 			var pool: Array = theme.stances[pole].headlines
-			return _cap(_mark_at("open", prng) + String(pool[prng.randi() % pool.size()]) + ".")
+			var hi := prng.randi() % pool.size()
+			var headline := _headline_entry(pool[hi], hi)
+			return _cap(_mark_at("open", prng) + String(headline.text) + ".")
 		TYPE_TEZIS:
-			var axis: Dictionary = _axis_for_appeal(String(DEV_APPEAL.get(dev, "")), prng)
-			var take := String(axis[pole])
+			var support_kinds: Array = SUPPORT_KINDS.get(dev, [])
+			var axis: Dictionary = _axis_for_device(dev, pole, prng)
+			var take := _axis_take_at(axis, pole, prng)
 			var motif := _motif_pure(axis, prng)
-			return _cap(_fill(_pick_at(TEZIS_PAT.get(dev, TEZIS_PAT["Пример"]), prng),
-				{"m": _mark_at("assert", prng), "t": take, "x": motif}))
+			var support := _pick_support_at(axis, pole, support_kinds, prng)
+			var reps := {"m": _mark_at("assert", prng), "t": take, "x": motif,
+				"s": String(support.get("text", ""))}
+			var pats: Array = TEZIS_SUPPORT_PAT.get(dev, []) if not support.is_empty() else []
+			if pats.is_empty():
+				pats = TEZIS_PAT.get(dev, TEZIS_PAT["Пример"])
+			return _cap(_fill(_pick_at(pats, prng), reps))
 		TYPE_RAZBOR:
 			# Реактивна к цели — для превью берём типовой чужой довод (взгляд другого полюса).
-			var axis: Dictionary = theme.axes[prng.randi() % theme.axes.size()]
-			var gist := String(axis[_other_pole(pole)])
-			var reps := {"m": _mark_at("refute", prng), "g": "«%s»" % gist, "o": String(axis[pole]),
-				"x": _motif_pure(axis, prng), "c": "", "obj": "", "tag": String(axis.get("tag", ""))}
+			var hook := String(HOOK_OF.get(dev, ""))
+			var hook_kinds: Array = HOOK_SUPPORT_KINDS.get(hook, [])
+			var axis: Dictionary = _axis_for_support(hook_kinds, pole, prng)
+			var gist := _axis_take_at(axis, _other_pole(pole), prng)
+			var reps := {"m": _mark_at("refute", prng), "g": "«%s»" % gist, "o": _axis_take_at(axis, pole, prng),
+				"x": _motif_pure(axis, prng), "c": "", "obj": "", "tag": String(axis.get("tag", "")), "s": ""}
 			if bool(card.get("steals", false)):
 				return _cap(_fill(_pick_at(KRAJA_PAT.get(dev, KRAJA_PAT["Разворот"]), prng), reps))
-			var hook := String(HOOK_OF.get(dev, ""))
 			if hook != "":
 				reps.obj = SCHEME_OBJ.get(_typical_scheme_for(hook), "довод")
+				var support := _pick_support_at(axis, pole, hook_kinds, prng)
+				if not support.is_empty() and HOOK_SUPPORT_PAT.has(hook):
+					reps.s = String(support.text)
+					return _cap(_fill(_pick_at(_gated(HOOK_SUPPORT_PAT[hook], reps), prng), reps))
 				return _cap(_fill(_pick_at(_gated(HOOK_PAT.get(hook, []), reps), prng), reps))
 			if SUBSTANTIVE.has(dev):
 				return _cap(_fill(_pick_at(RAZBOR_SUB.get(dev, RAZBOR_SUB["Контрпример"]), prng), reps))
@@ -400,21 +599,101 @@ func preview_text(side: String, card: Dictionary) -> String:
 	return ""
 
 
+## Контекстный preview должен быть НЕ «похожей фразой», а той же фразой, которую движок
+## произнесёт при немедленном розыгрыше. Для этого прогоняем настоящий сборщик, затем
+## возвращаем всё его нарративное состояние (включая RNG и анти-повторы) на место.
+func _preview_snapshot() -> Dictionary:
+	return {
+		"rng_state": rng.state,
+		"recent_motifs": _recent_motifs.duplicate(true),
+		"headline_used": _headline_used.duplicate(true),
+		"kraja_i": _kraja_i,
+		"axis_seen": _axis_seen.duplicate(true),
+		"asserted": _asserted.duplicate(true),
+		"rally": _rally.duplicate(true),
+		"last_pick": _last_pick.duplicate(true),
+		"mood": _mood,
+	}
+
+
+func _preview_restore(s: Dictionary) -> void:
+	rng.state = int(s.rng_state)
+	_recent_motifs = (s.recent_motifs as Array).duplicate(true)
+	_headline_used = (s.headline_used as Dictionary).duplicate(true)
+	_kraja_i = int(s.kraja_i)
+	_axis_seen = (s.axis_seen as Dictionary).duplicate(true)
+	_asserted = (s.asserted as Dictionary).duplicate(true)
+	_rally = (s.rally as Dictionary).duplicate(true)
+	_last_pick = (s.last_pick as Dictionary).duplicate(true)
+	_mood = String(s.mood)
+
+
+func preview_statement_exact(side: String, card: Dictionary, used_axes: Array,
+	mark_kind: String = "assert", frame: Dictionary = {}) -> Dictionary:
+	var snapshot := _preview_snapshot()
+	var statement := make_statement(side, card, used_axes, mark_kind, frame)
+	statement["mood"] = _mood
+	_preview_restore(snapshot)
+	return statement
+
+
+func preview_refute_exact(attacker: String, target_claim: String, target_stmt: Dictionary,
+	card: Dictionary, is_callback: bool, target_frame: Dictionary = {}) -> Dictionary:
+	var snapshot := _preview_snapshot()
+	var text := refute_line(attacker, target_claim, target_stmt, card, is_callback, target_frame)
+	var out := {"text": text, "mood": _mood}
+	_preview_restore(snapshot)
+	return out
+
+
+func preview_press_exact(attacker: String, target_stmt: Dictionary, card: Dictionary) -> Dictionary:
+	var snapshot := _preview_snapshot()
+	var text := press_line(attacker, target_stmt, card)
+	var out := {"text": text, "mood": _mood}
+	_preview_restore(snapshot)
+	return out
+
+
+func preview_next_open_exact(side: String) -> Dictionary:
+	var snapshot := _preview_snapshot()
+	var headline := next_headline_data(side)
+	var text := open_line(side, String(headline.get("text", "")), "open")
+	var out := {"text": text, "headline": headline, "mood": _mood}
+	_preview_restore(snapshot)
+	return out
+
+
+## Точное превью КОНКРЕТНОЙ рамки. В отличие от preview_next_open_exact, не подставляет
+## всем картам одну и ту же первую свободную позицию: контроллер передаёт вариант,
+## закреплённый за порядком конкретной Установки в руке.
+func preview_open_exact(side: String, headline: Dictionary) -> Dictionary:
+	var snapshot := _preview_snapshot()
+	var text := open_line(side, String(headline.get("text", "")), "open")
+	var out := {"text": text, "headline": headline.duplicate(true), "mood": _mood}
+	_preview_restore(snapshot)
+	return out
+
+
 ## Тезис: взгляд своего полюса на свежую ось (с биасом апелляции приёма, §14.8).
 ## used_axes — id осей, уже звучавших на рамке.
 ## Регистры защиты в ралли (mark_kind=="hold"): 1-я полная форма, 2-я — голый взгляд,
 ## 3-я+ — панч; при висящей зацепке полная форма получает маркер-уклонение (§15.6-Q2).
 ## Возвращает {axis, pole, device, motif, gist, text}; gist = текст взгляда (для ссылок).
-func make_statement(side: String, card: Dictionary, used_axes: Array, mark_kind: String = "assert") -> Dictionary:
+func make_statement(side: String, card: Dictionary, used_axes: Array, mark_kind: String = "assert", frame: Dictionary = {}) -> Dictionary:
 	var dev := device_for(card)
 	var heard: Dictionary = _asserted[side]
-	var axis := _pick_axis(used_axes, String(DEV_APPEAL.get(dev, "")), heard)
+	var preferred_axes: Array = frame.get("preferred_axes", [])
+	var pole := _pole(side)
+	var support_kinds: Array = SUPPORT_KINDS.get(dev, [])
+	var axis := _pick_axis(used_axes, String(DEV_APPEAL.get(dev, "")), heard, preferred_axes,
+		pole, support_kinds)
 	var axis_id := String(axis.id)
 	var repeated := heard.has(axis_id)
 	heard[axis_id] = int(heard.get(axis_id, 0)) + 1
-	var pole := _pole(side)
-	var take := String(axis[pole])
+	var take := _axis_take(axis, pole)
 	var motif := _axis_motif(axis, take)
+	var support := _pick_support(axis, pole, support_kinds)
+	var support_used := false
 	var text: String
 	if mark_kind == "hold" and not _rally.is_empty():
 		_rally.holds = int(_rally.get("holds", 0)) + 1
@@ -429,7 +708,8 @@ func make_statement(side: String, card: Dictionary, used_axes: Array, mark_kind:
 			_:
 				_mood = "evade" if evading else "hold"
 				var mk := _pick(EVADE_MARK) if evading else _mark(mark_kind)
-				text = _cap(_fill(_pick(TEZIS_PAT.get(dev, TEZIS_PAT["Пример"])), {"m": mk, "t": take, "x": motif}))
+				text = _cap(_statement_full(dev, mk, take, motif, support))
+				support_used = not support.is_empty()
 	else:
 		var adverse := -_zal if side == "you" else _zal
 		if adverse >= ZAL_SWAY:
@@ -445,8 +725,13 @@ func make_statement(side: String, card: Dictionary, used_axes: Array, mark_kind:
 			mk = _pick(END_ASSERT_MARK)
 		else:
 			mk = _mark(mark_kind)
-		text = _cap(_fill(_pick(TEZIS_PAT.get(dev, TEZIS_PAT["Пример"])), {"m": mk, "t": take, "x": motif}))
-	return {"axis": axis.id, "pole": pole, "device": dev, "motif": motif, "gist": take, "text": text}
+		text = _cap(_statement_full(dev, mk, take, motif, support))
+		support_used = not support.is_empty()
+	var spoken_gist := String(support.get("text", "")) if support_used else take
+	return {"axis": axis.id, "pole": pole, "device": dev, "motif": motif,
+		"support_kind": String(support.get("kind", "")) if support_used else "",
+		"support_text": String(support.get("text", "")) if support_used else "",
+		"take": take, "gist": spoken_gist, "text": text}
 
 
 func open_line(side: String, headline: String, mark_kind: String = "open") -> String:
@@ -485,7 +770,8 @@ func pass_line(side: String) -> String:
 
 ## Атака по чужому доводу target_stmt (его ось/взгляд/схема). is_callback — рамка старая
 ## (закрытая). ОТКРЫВАЕТ ралли: ось цели становится СТАЗИСОМ (темой раунда, §15.4).
-func refute_line(attacker: String, target_claim: String, target_stmt: Dictionary, card: Dictionary, is_callback: bool) -> String:
+func refute_line(attacker: String, target_claim: String, target_stmt: Dictionary, card: Dictionary,
+	is_callback: bool, target_frame: Dictionary = {}) -> String:
 	var st_axis := ""
 	var st_tag := ""
 	if target_stmt.has("axis") and _axis_by_id.has(target_stmt.axis):
@@ -497,7 +783,7 @@ func refute_line(attacker: String, target_claim: String, target_stmt: Dictionary
 	_rally = {"stasis_axis": st_axis, "stasis_tag": st_tag, "hook": "", "obj": "",
 		"presses": 1, "holds": 0}
 	var mk := _mark("callback") if is_callback else _mark("refute")
-	return _attack_line(attacker, target_claim, target_stmt, card, mk, 1)
+	return _attack_line(attacker, target_claim, target_stmt, card, mk, 1, target_frame)
 
 
 ## Добив в клинче — по только что выложенному защитному доводу. Аччелерандо: 2-й удар
@@ -551,7 +837,8 @@ func _pole(side: String) -> String:
 ## схемы цели) → MISS содержательный/процедурный. HIT хватает за объект схемы и запоминается
 ## в ралли для закрывашки/уклонений. gist приходит через референцию (цитата → клип → тег).
 ## tier — регистр §14.5: 1 полный, 2 короткий (без маркера, сжатая референция), 3 панч.
-func _attack_line(attacker: String, target_claim: String, target_stmt: Dictionary, card: Dictionary, mk: String, tier: int = 1) -> String:
+func _attack_line(attacker: String, target_claim: String, target_stmt: Dictionary, card: Dictionary,
+	mk: String, tier: int = 1, target_frame: Dictionary = {}) -> String:
 	var dev := device_for(card)
 	var pole := _pole(attacker)
 	var axis: Dictionary
@@ -562,8 +849,9 @@ func _attack_line(attacker: String, target_claim: String, target_stmt: Dictionar
 		counted = true
 		gist = String(target_stmt.get("gist", ""))
 	else:
-		axis = _pick_axis([])
-		gist = target_claim if target_claim != "" else String(axis[_other_pole(pole)])
+		var preferred: Array = target_frame.get("preferred_axes", [])
+		axis = _pick_axis([], "", {}, preferred)
+		gist = target_claim if target_claim != "" else _axis_take(axis, _other_pole(pole))
 	var steals := bool(card.get("steals", false))
 	var hook := String(HOOK_OF.get(dev, ""))
 	var scheme := String(target_stmt.get("device", ""))
@@ -588,7 +876,7 @@ func _attack_line(attacker: String, target_claim: String, target_stmt: Dictionar
 		return _pick(MISS_PUNCH.get(dev, ["Мимо!"]))
 	if tier == 2:
 		mk = ""
-	var opp_take := String(axis[pole])
+	var opp_take := _axis_take(axis, pole)
 	var motif := _axis_motif(axis, gist + " " + opp_take)
 	var tag := String(axis.get("tag", ""))
 	# Стазис (§15.4): «мы вообще-то про X» законно только если цель УШЛА с темы раунда
@@ -599,18 +887,27 @@ func _attack_line(attacker: String, target_claim: String, target_stmt: Dictionar
 			stag = String(_rally.get("stasis_tag", ""))
 	var reps := {"m": mk, "g": _ref(axis if counted else {}, gist, tier - 1), "o": opp_take,
 		"x": motif, "c": target_claim, "obj": String(SCHEME_OBJ.get(scheme, "довод")),
-		"tag": tag, "stag": stag}
+		"tag": tag, "stag": stag, "s": ""}
 	if steals:
 		return _cap(_fill(_pick(_gated(KRAJA_PAT.get(dev, KRAJA_PAT["Разворот"]), reps)), reps))
 	if is_hit:
+		var hit_support := _pick_support(axis, pole, HOOK_SUPPORT_KINDS.get(hook, []))
+		if not hit_support.is_empty() and HOOK_SUPPORT_PAT.has(hook):
+			reps.s = String(hit_support.text)
+			return _cap(_fill(_pick(_gated(HOOK_SUPPORT_PAT[hook], reps)), reps))
 		return _cap(_fill(_pick(_gated(HOOK_PAT.get(hook, []), reps)), reps))
 	if SUBSTANTIVE.has(dev):
+		var sub_support := _pick_support(axis, pole, SUB_SUPPORT_KINDS.get(dev, []))
+		if not sub_support.is_empty() and RAZBOR_SUB_SUPPORT_PAT.has(dev):
+			reps.s = String(sub_support.text)
+			return _cap(_fill(_pick(_gated(RAZBOR_SUB_SUPPORT_PAT[dev], reps)), reps))
 		return _cap(_fill(_pick(_gated(RAZBOR_SUB.get(dev, RAZBOR_SUB["Контрпример"]), reps)), reps))
 	return _cap(_fill(_pick(_gated(RAZBOR_PROC.get(dev, RAZBOR_PROC["Источник?"]), reps)), reps))
 
 
-## Референция на чужой довод (§14.6): 1-е упоминание оси — полная цитата, 2-е — клип по
-## границе слова, дальше — тег оси («канон»). Значение всегда в кавычках — номинативная
+## Референция на чужой довод (§14.6): 1-е упоминание оси — смысловой клип, 2-е — ещё короче,
+## дальше — тег оси («канон»). Полную реплику игрок уже видел на цели; повторять её внутри
+## Разбора значит превращать реакцию в абзац. Значение всегда в кавычках — номинативная
 ## цитата, паттерны кавычек не добавляют и ничего не склоняют.
 ## min_tier поджимает ссылку принудительно (короткий регистр говорит короче истории).
 func _ref(axis: Dictionary, gist: String, min_tier: int = 0) -> String:
@@ -625,7 +922,7 @@ func _ref(axis: Dictionary, gist: String, min_tier: int = 0) -> String:
 		return "«%s»" % tag
 	if n >= 1:
 		return "«%s»" % _clip(gist, 30)
-	return "«%s»" % gist
+	return "«%s»" % _clip(gist, 32)
 
 
 ## Грубая основа слова для сравнения «мотив уже звучит в тексте»: хвостовые гласные долой
@@ -691,14 +988,31 @@ func _other_pole(pole: String) -> String:
 ## нет подходящих — любая свежая; осей нет — любая. Ось без поля appeal матчится со всеми.
 ## heard — оси, уже утверждённые этой стороной за матч: неслыханные в приоритете
 ## (разброс по темам вместо дословных повторов).
-func _pick_axis(used_ids: Array, appeal: String = "", heard: Dictionary = {}) -> Dictionary:
+func _pick_axis(used_ids: Array, appeal: String = "", heard: Dictionary = {}, preferred_ids: Array = [],
+	pole: String = "", support_kinds: Array = []) -> Dictionary:
 	var axes: Array = theme.axes
 	var fresh: Array = axes.filter(func(a): return not used_ids.has(a.id))
 	var src: Array = fresh if not fresh.is_empty() else axes
-	if appeal != "":
-		var fit: Array = src.filter(func(a): return String(a.get("appeal", "")) in ["", appeal])
-		if not fit.is_empty():
-			src = fit
+	# Содержательная совместимость важнее стилистического bias: Статистика сначала ищет
+	# реальное число, Авторитет — источник и т. д. Если тема v0.3 — спокойно откатываемся.
+	if pole != "" and not support_kinds.is_empty():
+		var supported: Array = src.filter(func(a): return _axis_has_support(a, pole, support_kinds))
+		if not supported.is_empty():
+			src = supported
+	# Иерархия мягких биасов: совпали рамка+приём → рамка → приём → любая свежая ось.
+	# Поэтому выбранная рамка направляет каскад, но никогда не делает карту неиграбельной.
+	var preferred: Array = src.filter(func(a): return preferred_ids.has(String(a.id))) if not preferred_ids.is_empty() else []
+	var appeal_fit: Array = src.filter(func(a): return String(a.get("appeal", "")) in ["", appeal]) if appeal != "" else []
+	if not preferred.is_empty() and appeal != "":
+		var exact: Array = preferred.filter(func(a): return String(a.get("appeal", "")) in ["", appeal])
+		if not exact.is_empty():
+			src = exact
+		else:
+			src = preferred
+	elif not preferred.is_empty():
+		src = preferred
+	elif not appeal_fit.is_empty():
+		src = appeal_fit
 	if not heard.is_empty():
 		var unheard: Array = src.filter(func(a): return not heard.has(String(a.id)))
 		if not unheard.is_empty():
@@ -760,6 +1074,30 @@ func _axis_for_appeal(appeal: String, prng: RandomNumberGenerator) -> Dictionary
 		var fit: Array = axes.filter(func(a): return String(a.get("appeal", "")) in ["", appeal])
 		if not fit.is_empty():
 			return fit[prng.randi() % fit.size()]
+	return axes[prng.randi() % axes.size()]
+
+
+func _axis_for_device(dev: String, pole: String, prng: RandomNumberGenerator) -> Dictionary:
+	var axes: Array = theme.axes
+	var kinds: Array = SUPPORT_KINDS.get(dev, [])
+	if not kinds.is_empty():
+		var supported: Array = axes.filter(func(a): return _axis_has_support(a, pole, kinds))
+		if not supported.is_empty():
+			axes = supported
+	var appeal := String(DEV_APPEAL.get(dev, ""))
+	if appeal != "":
+		var fit: Array = axes.filter(func(a): return String(a.get("appeal", "")) in ["", appeal])
+		if not fit.is_empty():
+			axes = fit
+	return axes[prng.randi() % axes.size()]
+
+
+func _axis_for_support(kinds: Array, pole: String, prng: RandomNumberGenerator) -> Dictionary:
+	var axes: Array = theme.axes
+	if not kinds.is_empty():
+		var supported: Array = axes.filter(func(a): return _axis_has_support(a, pole, kinds))
+		if not supported.is_empty():
+			axes = supported
 	return axes[prng.randi() % axes.size()]
 
 

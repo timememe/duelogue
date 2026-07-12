@@ -18,18 +18,30 @@ var nar: RefCounted
 var ai: RefCounted
 var match_id := 0
 var _theme: Dictionary
+var _stdout_only := false
+var _runs := 5
+var _v04_only := false
 
 
 func _init() -> void:
+	var args := OS.get_cmdline_user_args()
+	_stdout_only = args.has("--stdout-only")
+	_v04_only = args.has("--v04-only")
+	for arg in args:
+		if String(arg).begins_with("--runs="):
+			_runs = maxi(1, int(String(arg).trim_prefix("--runs=")))
 	model = ZalV3.new()
 	nar = NarEngine.new()
 	ai = Ai.new()
 	# Чистим smoke-транскрипт перед прогоном.
-	if FileAccess.file_exists(TX_PATH):
+	if not _stdout_only and FileAccess.file_exists(TX_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(TX_PATH))
 	# Обе темы через ОДИН движок — проверка модульности и fill-safe сборки.
-	for spec in [{"t": PineappleTheme.data(), "base": 1000}, {"t": ShawarmaTheme.data(), "base": 2000}, {"t": EvangelionTheme.data(), "base": 3000}]:
-		for run in 5:
+	var specs := [{"t": PineappleTheme.data(), "base": 1000}, {"t": ShawarmaTheme.data(), "base": 2000}, {"t": EvangelionTheme.data(), "base": 3000}]
+	if _v04_only:
+		specs = [specs[0], specs[2]]
+	for spec in specs:
+		for run in _runs:
 			print("\n========== %s · МАТЧ %d ==========" % [spec.t.id, run + 1])
 			_play_match(int(spec.base) + run, spec.t)
 	quit()
@@ -44,8 +56,10 @@ func _play_match(seed: int, theme: Dictionary) -> void:
 	var draw0 := maxi(1, _draw_left())
 	_tx_header(first)
 	_narrate("ТЕМА: «%s». Первым: %s." % [nar.topic(), ("вы" if first == ZalV3.SIDE_YOU else "оппонент")])
-	_say(ZalV3.SIDE_YOU, nar.open_line(ZalV3.SIDE_YOU, _claim_of(ZalV3.SIDE_YOU, model.sides[ZalV3.SIDE_YOU].lines[0])), "start you база")
-	_say(ZalV3.SIDE_OPP, nar.open_line(ZalV3.SIDE_OPP, _claim_of(ZalV3.SIDE_OPP, model.sides[ZalV3.SIDE_OPP].lines[0])), "start opp база")
+	_bind_claim(model.sides[ZalV3.SIDE_YOU].lines[0], nar.auto_headline(ZalV3.SIDE_YOU))
+	_bind_claim(model.sides[ZalV3.SIDE_OPP].lines[0], nar.auto_headline(ZalV3.SIDE_OPP))
+	for side in [first, model.other(first)]:
+		_say(side, nar.open_line(side, _claim_of(side, model.sides[side].lines[0])), "start %s база" % side)
 
 	var guard := 0
 	while not model.game_over and guard < 300:
@@ -85,7 +99,7 @@ func _auto_clinch(attacker: String, defender: String, idx: int) -> void:
 	var is_callback: bool = line.closed
 	var atk_word := "кража" if init_steals else "разбор"
 	var cb := "←старая" if is_callback else ""
-	_say(attacker, nar.refute_line(attacker, target_claim, _top_stmt(line), initc, is_callback),
+	_say(attacker, nar.refute_line(attacker, target_claim, _top_stmt(line), initc, is_callback, line),
 		"t%d %s clinch→%s[%d] %s%s" % [model.turn_count, attacker, defender, idx, atk_word, cb])
 
 	var t_added := 0
@@ -98,7 +112,7 @@ func _auto_clinch(attacker: String, defender: String, idx: int) -> void:
 			var dc: Dictionary = model.remove_card_of(defender, ZalV3.TYPE_TEZIS)
 			line.theses = int(line.theses) + 1
 			t_added += 1
-			var stmt: Dictionary = nar.make_statement(defender, dc, _used_axes(line), "hold")
+			var stmt: Dictionary = nar.make_statement(defender, dc, _used_axes(line), "hold", line)
 			_push_stmt(line, stmt)
 			_say(defender, stmt.text, "    hold %s [%s]" % [defender, stmt.axis])
 		else:
@@ -136,7 +150,7 @@ func _narrate_move(info: Dictionary) -> void:
 		ZalV3.TYPE_TEZIS:
 			var line: Dictionary = model.sides[side].lines[-1]
 			_claim_of(side, line)
-			var stmt: Dictionary = nar.make_statement(side, card, _used_axes(line), "assert")
+			var stmt: Dictionary = nar.make_statement(side, card, _used_axes(line), "assert", line)
 			_push_stmt(line, stmt)
 			_say(side, stmt.text, "t%d %s тезис[%s/%s]" % [model.turn_count, side, stmt.device, stmt.axis])
 		ZalV3.TYPE_USTANOVKA:
@@ -187,6 +201,8 @@ func _tx(tag: String, body: String) -> void:
 		_tx_write("%-30s %s" % ["[" + tag + "]", body])
 
 func _tx_write(s: String) -> void:
+	if _stdout_only:
+		return
 	var f: FileAccess
 	if FileAccess.file_exists(TX_PATH):
 		f = FileAccess.open(TX_PATH, FileAccess.READ_WRITE)
@@ -202,9 +218,14 @@ func _tx_write(s: String) -> void:
 func _claim_of(side: String, line: Dictionary) -> String:
 	var c := String(line.get("claim", ""))
 	if c == "":
-		c = nar.next_headline(side)
-		line["claim"] = c
+		_bind_claim(line, nar.next_headline_data(side))
+		c = String(line.get("claim", ""))
 	return c
+
+func _bind_claim(line: Dictionary, headline: Dictionary) -> void:
+	line["claim_id"] = String(headline.get("id", ""))
+	line["claim"] = String(headline.get("text", ""))
+	line["preferred_axes"] = (headline.get("preferred_axes", []) as Array).duplicate()
 
 func _push_stmt(line: Dictionary, stmt: Dictionary) -> void:
 	if not line.has("statements"):

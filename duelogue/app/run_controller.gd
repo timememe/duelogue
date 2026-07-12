@@ -1,19 +1,19 @@
 extends Node
 
 ## DUELOGUE — КОНТРОЛЛЕР ЗАБЕГА («Сезон», спека context/zal_run_v0.1.md). Единственный
-## владелец потока забега: генерит карту акта, ведёт позицию/ресурсы дистанции, открывает
-## и закрывает комнаты, применяет правила слоя. Эмитит run_* в EventBus; сцена карты
+## владелец ПОТОКА забега: генерит карту акта, открывает/закрывает комнаты и передаёт
+## интенты чистому run_rules. Эмитит run_* в EventBus; сцена карты
 ## (run_map_screen) — чистый view поверх, шлёт сюда интенты.
 ##
 ## Инвариант §8.1 «ядро боя не знает о забеге»: боёвкой остаётся battle_controller —
 ## забег лишь ГОТОВИТ ему конфиг (battle_config: составы/тумблеры/мета-входы §3/тема/стороны)
-## и будет читать отчёт (winner, end_reason, статистика). Пока бой из карты не запускается
-## (лестница §9: сначала скелет слоя) — боевые комнаты закрываются заглушками исходов
-## resolve_room("win"/"lose"), у которых уже работают правила дистанции.
+## и читает отчёт {winner, end_reason, final_zal, fee}. Пока настоящая боевая сцена не
+## подключена, экран карты шлёт такие же отчёты кнопками ручного мета-плейтеста.
 
 const RoomTypes := preload("res://duelogue/core/run/room_types.gd")
 const RunMap := preload("res://duelogue/core/run/run_map.gd")
 const RunState := preload("res://duelogue/core/run/run_state.gd")
+const RunRules := preload("res://duelogue/core/run/run_rules.gd")
 const RunEvents := preload("res://duelogue/core/run/run_events.gd")
 ## Боевой контроллер НЕ инстанцируется — отсюда читаются только его константы,
 ## чтобы battle_config не дублировал числа ядра («константы становятся полем конфига», §8.1).
@@ -24,8 +24,6 @@ const ACTS_TOTAL := 3
 const LAYERS_PER_ACT := 6     ## слоёв в акте, включая передышку и босса (~6 комнат на путь)
 const LANES_MIN := 2
 const LANES_MAX := 4
-const REP_START := 5          ## репутация — «HP кампании» (§4); 0 = «отменён»
-const REP_LOSS_DEFEAT := 2    ## цена поражения в дебатах (§10.4: не смерть — удар по карьере)
 
 ## Пул оппонентов для афиш (§6): имя × стиль ИИ (стили — параметры ai.gd, §5).
 const OPP_POOL := [
@@ -55,7 +53,7 @@ func start_run(run_seed := -1) -> void:
 	state = RunState.new()
 	state.run_seed = run_seed if run_seed >= 0 else randi() % 1000000
 	state.acts_total = ACTS_TOTAL
-	state.reputation = REP_START
+	state.reputation = RunRules.REP_START
 	_gen_act_map()
 	EventBus.run_started.emit({
 		"seed": state.run_seed, "act": state.act, "acts_total": state.acts_total,
@@ -103,24 +101,58 @@ func enter_node(id: int) -> void:
 	_changed()
 
 
-## Закрыть НЕ-событийную комнату. Боевые: outcome "win"/"lose" (пока заглушки вместо
-## боя); кулуары/подготовка: "done". События закрываются только через event_choice.
+## Закрыть НЕ-событийную комнату. Старый win/lose-маршрут сохранён для smoke и переводится
+## в полноценный отчёт боя с тестовым залом ±5. UI ручного теста зовёт resolve_battle прямо.
 func resolve_room(room_outcome := "done") -> void:
 	if state.over or not state.room_open:
 		return
 	var nd: Dictionary = state.node(state.current_id)
 	if nd.type == RoomTypes.ROOM_EVENT:
 		return
-	var fx := {}
 	if RoomTypes.is_battle(nd.type):
-		if room_outcome == "win":
-			fx = {"fee": int((nd.engagement as Dictionary).get("fee", 0))}
-		else:
-			fx = {"rep": -REP_LOSS_DEFEAT}
-	_close_room(nd, room_outcome, fx, "")
+		resolve_battle({
+			"winner": "you" if room_outcome == "win" else "opp",
+			"end_reason": "manual_stub",
+			"final_zal": 5 if room_outcome == "win" else -5,
+		})
+		return
+	_finish_room(nd, room_outcome, {"kind": "room", "ok": true}, "")
 
 
-## Выбор в событии: применить эффекты выбранного варианта и закрыть комнату.
+## Единственный вход отчёта боевой комнаты в мета-ядро. Настоящий battle_controller позже
+## пришлёт тот же словарь; сейчас его формирует панель ручного теста карты.
+func resolve_battle(report: Dictionary) -> void:
+	if state.over or not state.room_open:
+		return
+	var nd: Dictionary = state.node(state.current_id)
+	if not RoomTypes.is_battle(String(nd.get("type", ""))):
+		return
+	var full_report := report.duplicate(true)
+	full_report["fee"] = int((nd.engagement as Dictionary).get("fee", 0))
+	var settlement := RunRules.settle_battle(state, full_report)
+	if not bool(settlement.get("ok", false)):
+		return
+	var winner := String(settlement.winner)
+	var room_outcome := "win" if winner == "you" else ("lose" if winner == "opp" else "draw")
+	_finish_room(nd, room_outcome, {"kind": "battle", "settlement": settlement}, "")
+
+
+## Доступность выбора для view: стоимость и эффект проверяются вместе (включая наличие
+## горящей страховки для clear_defeat). Возвращает {ok, reason}.
+func event_choice_status(choice_index: int) -> Dictionary:
+	if state.over or not state.room_open:
+		return {"ok": false, "reason": "Комната уже закрыта."}
+	var nd: Dictionary = state.node(state.current_id)
+	if nd.type != RoomTypes.ROOM_EVENT:
+		return {"ok": false, "reason": "Это не событие."}
+	var choices: Array = RunEvents.get_event(String(nd.event_id)).get("choices", [])
+	if choice_index < 0 or choice_index >= choices.size():
+		return {"ok": false, "reason": "Нет такого выбора."}
+	var ch: Dictionary = choices[choice_index]
+	return RunRules.validate_transaction(state, ch.get("cost", {}), ch.get("effects", {}))
+
+
+## Выбор в событии: атомарная стоимость+эффекты через run_rules, затем закрытие комнаты.
 func event_choice(choice_index: int) -> void:
 	if state.over or not state.room_open:
 		return
@@ -132,24 +164,43 @@ func event_choice(choice_index: int) -> void:
 	if choice_index < 0 or choice_index >= choices.size():
 		return
 	var ch: Dictionary = choices[choice_index]
-	_close_room(nd, "choice_%d" % choice_index, ch.get("effects", {}), String(ch.get("outro", "")))
+	var transaction := RunRules.apply_transaction(state, ch.get("cost", {}), ch.get("effects", {}))
+	if not bool(transaction.get("ok", false)):
+		return
+	_finish_room(nd, "choice_%d" % choice_index,
+		{"kind": "event", "transaction": transaction}, String(ch.get("outro", "")))
 
 
-## Общее закрытие комнаты: эффекты → запись пути → сигнал → правила дистанции.
-func _close_room(nd: Dictionary, room_outcome: String, fx: Dictionary, outro: String) -> void:
-	state.apply_effects(fx)
+## Сервис Кулуаров/Подготовки для ручного мета-плейтеста. Не закрывает комнату: после
+## покупки игрок нажимает «Уйти». Позже станет обычной транзакцией контента комнаты.
+func purchase_clear_mark(currency: String) -> Dictionary:
+	if state.over or not state.room_open:
+		return {"ok": false, "reason": "Нет открытой комнаты."}
+	var nd: Dictionary = state.node(state.current_id)
+	if not [RoomTypes.ROOM_SHOP, RoomTypes.ROOM_PREP].has(String(nd.type)):
+		return {"ok": false, "reason": "Очистка доступна в Кулуарах или Подготовке."}
+	var result := RunRules.clear_defeat_mark(state, currency)
+	if bool(result.get("ok", false)):
+		_changed()
+	return result
+
+
+func clear_mark_status(currency: String) -> Dictionary:
+	var cost := {"fee": RunRules.CLEAR_MARK_FEE} if currency == "fee" else {"rep": RunRules.CLEAR_MARK_REP}
+	return RunRules.validate_transaction(state, cost, {"clear_defeat": 1})
+
+
+## Общее закрытие комнаты: запись пути → сигнал → терминальные/актовые правила потока.
+func _finish_room(nd: Dictionary, room_outcome: String, result: Dictionary, outro: String) -> void:
 	state.resolve(room_outcome)
 	EventBus.room_resolved.emit({
 		"node_id": int(nd.id), "type": String(nd.type),
-		"outcome": room_outcome, "effects": fx, "outro": outro,
+		"outcome": room_outcome, "result": result, "outro": outro,
 	})
-	# Правила дистанции (§4): выгоревшая репутация = «отменён», конец забега.
-	if state.reputation <= 0:
-		_end_run("cancelled")
+	if RunRules.is_run_failed(state):
+		_end_run("defeated")
 		return
-	# Финал акта закрыт → следующий акт. Проигрыш боссу (при живой репутации) тоже двигает
-	# сезон дальше — развилка §10.4 решена в пользу «поражение — контент»; ветка
-	# реабилитации ляжет сюда позже.
+	# Финал акта закрыт → следующий акт. Проигрыш босса до четвёртого поражения — контент.
 	if nd.type == RoomTypes.ROOM_BOSS:
 		_advance_act()
 		return
@@ -172,6 +223,7 @@ func _end_run(run_outcome: String) -> void:
 	EventBus.run_ended.emit(run_outcome, {
 		"act": state.act, "rooms": state.path.size(),
 		"reputation": state.reputation, "fees": state.fees,
+		"defeat_marks": state.defeat_marks,
 	})
 	_changed()
 

@@ -119,6 +119,7 @@ theme_override_font_sizes/font_size = 12
 horizontal_alignment = 1
 
 [node name="Board" type="Control" parent="." unique_id=1265665614]
+clip_contents = true
 layout_mode = 1
 anchors_preset = 0
 offset_left = 275.0
@@ -127,38 +128,57 @@ offset_right = 875.0
 offset_bottom = 402.0
 mouse_filter = 2
 
-[node name="OppFramesLabel" type="Label" parent="Board" unique_id=951560743]
+[node name="BoundaryTop" type="ColorRect" parent="Board" unique_id=1087059348]
+z_index = 40
 layout_mode = 1
-offset_right = 388.0
-offset_bottom = 22.0
-theme_override_colors/font_color = Color(0.851, 0.549, 0.298, 1)
-theme_override_font_sizes/font_size = 12
-text = "РАМКИ ОППОНЕНТА"
-
-[node name="OppRow" type="HBoxContainer" parent="Board" unique_id=467109647]
-unique_name_in_owner = true
-layout_mode = 1
-offset_top = 18.0
 offset_right = 600.0
-offset_bottom = 118.0
-theme_override_constants/separation = 12
+offset_bottom = 2.0
+mouse_filter = 2
+color = Color(0.5412, 0.5765, 0.6392, 0.72)
 
-[node name="YouFramesLabel" type="Label" parent="Board" unique_id=745854874]
+[node name="BoundaryBottom" type="ColorRect" parent="Board" unique_id=14614518]
+z_index = 40
 layout_mode = 1
-offset_top = 134.0
-offset_right = 388.0
-offset_bottom = 156.0
-theme_override_colors/font_color = Color(0.4353, 0.8118, 0.498, 1)
-theme_override_font_sizes/font_size = 12
-text = "ВАШИ РАМКИ"
-
-[node name="YouRow" type="HBoxContainer" parent="Board" unique_id=1983522663]
-unique_name_in_owner = true
-layout_mode = 1
-offset_top = 152.0
+offset_top = 250.0
 offset_right = 600.0
 offset_bottom = 252.0
-theme_override_constants/separation = 12
+mouse_filter = 2
+color = Color(0.5412, 0.5765, 0.6392, 0.72)
+
+[node name="BoundaryLeft" type="ColorRect" parent="Board" unique_id=2064272444]
+z_index = 40
+layout_mode = 1
+offset_right = 2.0
+offset_bottom = 252.0
+mouse_filter = 2
+color = Color(0.5412, 0.5765, 0.6392, 0.72)
+
+[node name="BoundaryRight" type="ColorRect" parent="Board" unique_id=55695833]
+z_index = 40
+layout_mode = 1
+offset_left = 598.0
+offset_right = 600.0
+offset_bottom = 252.0
+mouse_filter = 2
+color = Color(0.5412, 0.5765, 0.6392, 0.72)
+
+[node name="OppRow" type="Control" parent="Board" unique_id=467109647]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 0
+offset_left = 8.0
+offset_top = 18.0
+offset_right = 592.0
+offset_bottom = 118.0
+
+[node name="YouRow" type="Control" parent="Board" unique_id=1983522663]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 0
+offset_left = 8.0
+offset_top = 152.0
+offset_right = 592.0
+offset_bottom = 252.0
 
 [node name="ActionBar" type="Control" parent="." unique_id=1311964788]
 layout_mode = 1
@@ -368,6 +388,42 @@ text = "☰ Меню"
 layout_mode = 1
 grow_horizontal = 2
 grow_vertical = 2
+
+[node name="CardInfoBubble" type="Panel" parent="." unique_id=1778430210]
+unique_name_in_owner = true
+visible = false
+z_index = 45
+layout_mode = 1
+offset_left = 888.0
+offset_top = 42.0
+offset_right = 1136.0
+offset_bottom = 242.0
+mouse_filter = 2
+
+[node name="CardInfoTitle" type="Label" parent="CardInfoBubble" unique_id=1778430211]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 14.0
+offset_top = 12.0
+offset_right = 234.0
+offset_bottom = 38.0
+theme_override_colors/font_color = Color(1, 0.8235, 0.2902, 1)
+theme_override_font_sizes/font_size = 15
+text = "Карта"
+autowrap_mode = 3
+
+[node name="CardInfoBody" type="Label" parent="CardInfoBubble" unique_id=1778430212]
+unique_name_in_owner = true
+clip_contents = true
+layout_mode = 1
+offset_left = 14.0
+offset_top = 48.0
+offset_right = 234.0
+offset_bottom = 184.0
+theme_override_colors/font_color = Color(0.9, 0.92, 0.95, 1)
+theme_override_font_sizes/font_size = 12
+text = "Описание карты с переносом по словам."
+autowrap_mode = 3
 
 [connection signal="pressed" from="ActionBar/RestartBtn" to="." method="_new_match"]
 [connection signal="pressed" from="ActionBar/CancelBtn" to="." method="_cancel_targeting"]
