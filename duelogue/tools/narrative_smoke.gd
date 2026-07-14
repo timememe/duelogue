@@ -7,6 +7,8 @@ extends SceneTree
 const ZalV3 := preload("res://duelogue/core/rules/rules_core.gd")  ## ядро правил (псевдоним сохранён)
 const Ai := preload("res://duelogue/core/ai/ai.gd")
 const NarEngine := preload("res://duelogue/core/narrative/narrative_engine.gd")
+const EmotionCore := preload("res://duelogue/core/emotion/emotion_core.gd")
+const DefaultReactions := preload("res://duelogue/core/emotion/reaction_decks/volatile_default.gd")
 const PineappleTheme := preload("res://duelogue/core/narrative/themes/theme_pineapple.gd")
 const ShawarmaTheme := preload("res://duelogue/core/narrative/themes/theme_shawarma.gd")
 const EvangelionTheme := preload("res://duelogue/core/narrative/themes/theme_evangelion.gd")
@@ -16,6 +18,7 @@ const TX_PATH := "res://duelogue/tools/narrative_transcript_smoke.md"
 var model: RefCounted
 var nar: RefCounted
 var ai: RefCounted
+var emotion: RefCounted
 var match_id := 0
 var _theme: Dictionary
 var _stdout_only := false
@@ -33,6 +36,7 @@ func _init() -> void:
 	model = ZalV3.new()
 	nar = NarEngine.new()
 	ai = Ai.new()
+	emotion = EmotionCore.new()
 	# Чистим smoke-транскрипт перед прогоном.
 	if not _stdout_only and FileAccess.file_exists(TX_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(TX_PATH))
@@ -53,6 +57,7 @@ func _play_match(seed: int, theme: Dictionary) -> void:
 	match_id = seed
 	model.reset(first, 3, 8, 9, 5, 1, 0, 2, 0, true, true)
 	nar.start(theme, seed, {"you": "contra", "opp": "pro"})
+	emotion.start(DefaultReactions.data(), seed ^ 0x5EED, [ZalV3.SIDE_YOU, ZalV3.SIDE_OPP])
 	var draw0 := maxi(1, _draw_left())
 	_tx_header(first)
 	_narrate("ТЕМА: «%s». Первым: %s." % [nar.topic(), ("вы" if first == ZalV3.SIDE_YOU else "оппонент")])
@@ -124,6 +129,8 @@ func _auto_clinch(attacker: String, defender: String, idx: int) -> void:
 				atk_steals += 1
 			_say(attacker, nar.press_line(attacker, _top_stmt(line), ac),
 				"    press %s %s" % [attacker, ("кража" if ac.get("steals", false) else "разбор")])
+			_emotion_event(attacker, "clinch_pressure", 1, target_claim)
+			_emotion_event(defender, "clinch_pressure", 1, target_claim)
 		else:
 			break
 
@@ -139,6 +146,15 @@ func _auto_clinch(attacker: String, defender: String, idx: int) -> void:
 		var stx: Array = line.get("statements", [])
 		while stx.size() > int(line.theses):
 			stx.pop_back()
+	var strained_side := defender if landed else attacker
+	var stimulus := "attack_stalled"
+	if landed:
+		stimulus = "captured" if info.get("captured", false) else \
+			("frame_lost" if info.get("removed", false) else "argument_lost")
+	var intensity := 1 + (1 if info.get("removed", false) else 0)
+	if info.get("captured", false):
+		intensity += 1
+	_emotion_event(strained_side, stimulus, mini(3, intensity), target_claim)
 
 
 func _narrate_move(info: Dictionary) -> void:
@@ -164,6 +180,19 @@ func _show_end() -> void:
 		nar.stance_label(ZalV3.SIDE_YOU), nar.stance_label(ZalV3.SIDE_OPP)),
 		"END %s winner=%s рамки %d:%d zal=%+d" % [String(model.end_reason), winner_s,
 			model.score(ZalV3.SIDE_YOU), model.score(ZalV3.SIDE_OPP), model.zal()])
+	var ey: Dictionary = emotion.state(ZalV3.SIDE_YOU)
+	var eo: Dictionary = emotion.state(ZalV3.SIDE_OPP)
+	_narrate("ЭМОЦИИ: вы %d/6, реакций %d · оппонент %d/6, реакций %d." % [
+		int(ey.strain), int(ey.reactions), int(eo.strain), int(eo.reactions)], "emotion summary")
+
+
+func _emotion_event(side: String, stimulus: String, intensity: int, target: String) -> void:
+	var result: Dictionary = emotion.observe(side, stimulus, intensity, {"target": target})
+	var reaction: Dictionary = result.get("reaction", {})
+	if reaction.is_empty():
+		return
+	_say(side, String(reaction.text), "    reaction %s %s %d→%d→%d" % [
+		side, String(reaction.id), int(result.before), int(result.peak), int(result.after)])
 
 
 # --- helpers (зеркало zal_narr.gd) ---

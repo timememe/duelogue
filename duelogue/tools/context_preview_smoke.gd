@@ -50,18 +50,27 @@ func _test_selected_card() -> void:
 
 func _test_selected_clinch_cards() -> void:
 	var rules := Rules.new()
+	var stolen_hold := Deck.make_card(Cards.TYPE_TEZIS, 4)
+	stolen_hold["stolen"] = true
 	rules.sides = {
 		"you": _side([Deck.make_card(Cards.TYPE_RAZBOR, 1), Deck.make_card(Cards.TYPE_RAZBOR, 2)],
 			[{"theses": 1, "closed": false, "name": "База", "stolen": 0}]),
-		"opp": _side([Deck.make_card(Cards.TYPE_TEZIS, 0), Deck.make_card(Cards.TYPE_TEZIS, 4)],
+		"opp": _side([Deck.make_card(Cards.TYPE_TEZIS, 0), stolen_hold],
 			[{"theses": 2, "closed": false, "name": "База", "stolen": 0}]),
 	}
 	var opened: Dictionary = rules.begin_clinch("you", "opp", 0, false, 1)
 	_check(String(opened.card.name) == "Контрпример", "клинч открывает нажатый Разбор")
 	var held: Dictionary = rules.clinch_submit("play", false, 1)
 	_check(String(held.card.name) == "Пример", "защита клинча тратит нажатый Тезис")
+	_check(int(rules.sides.opp.lines[0].stolen) == 1,
+		"украденный Тезис сохраняет золотой статус при защите клинча")
 	var pressed: Dictionary = rules.clinch_submit("play", false, 0)
 	_check(String(pressed.card.name) == "Передёрг", "добив клинча тратит нажатый Разбор")
+	var sequence: Array = rules.clinch.get("sequence", [])
+	_check(sequence.size() == 3 and String(sequence[0].type) == Cards.TYPE_RAZBOR and
+		String(sequence[1].type) == Cards.TYPE_TEZIS and
+		bool(sequence[1].get("stolen", false)) and String(sequence[2].type) == Cards.TYPE_RAZBOR,
+		"клинч хранит визуальный порядок Разбор → Тезис → Разбор")
 
 
 func _test_exact_narrative(theme: Dictionary) -> void:

@@ -1,18 +1,44 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene format=3 uid="uid://dswk2icr7etk1"]
 
-[ext_resource type="Script" path="res://duelogue/core/characters/reaction_scene.gd" id="1"]
-[ext_resource type="Shader" path="res://duelogue/assets/shaders/speed_lines.gdshader" id="3"]
-[ext_resource type="Texture2D" path="res://duelogue/assets/states_test/idle.png" id="4"]
-[ext_resource type="Shader" path="res://duelogue/assets/shaders/mood_bg.gdshader" id="5"]
-[ext_resource type="Shader" path="res://duelogue/assets/shaders/dither.gdshader" id="6"]
-[ext_resource type="Texture2D" path="res://duelogue/assets/bg_closeup_right_v1.png" id="7"]
-[ext_resource type="Texture2D" path="res://duelogue/assets/bg_closeup_left_v1.png" id="8"]
-
-[sub_resource type="ShaderMaterial" id="1"]
-shader = ExtResource("3")
+[ext_resource type="Script" uid="uid://brse1t4kjst61" path="res://duelogue/core/characters/reaction_scene.gd" id="1"]
+[ext_resource type="Shader" uid="uid://d0xsvmp4nbij2" path="res://duelogue/assets/shaders/speed_lines.gdshader" id="3"]
+[ext_resource type="Texture2D" uid="uid://du137dey3t6l0" path="res://duelogue/assets/states_test/idle.png" id="4"]
+[ext_resource type="Shader" uid="uid://by6y1f11uyefd" path="res://duelogue/assets/shaders/mood_bg.gdshader" id="5"]
+[ext_resource type="Shader" uid="uid://uex1ce1dnuij" path="res://duelogue/assets/shaders/dither.gdshader" id="6"]
+[ext_resource type="Texture2D" uid="uid://bg61cvy33mufj" path="res://duelogue/assets/bg_closeup_right_v1.png" id="7"]
+[ext_resource type="Texture2D" uid="uid://ddv71yuvmqqnd" path="res://duelogue/assets/bg_closeup_left_v1.png" id="8"]
 
 [sub_resource type="ShaderMaterial" id="2"]
 shader = ExtResource("5")
+shader_parameter/direction = Vector2(1, 0)
+shader_parameter/line_intensity = 0.5
+shader_parameter/line_color_a = Color(1, 0.97, 0.88, 1)
+shader_parameter/line_color_b = Color(0.75, 0.8, 0.85, 1)
+shader_parameter/edge_color = Color(0.02, 0.05, 0.045, 1)
+shader_parameter/center_color = Color(0.086, 0.2, 0.15, 1)
+shader_parameter/line_density = 30.0
+shader_parameter/speed = 2.0
+shader_parameter/dash_scale = 0.5
+shader_parameter/line_fill = 0.6
+shader_parameter/thick_min = 0.3
+shader_parameter/thick_max = 0.8
+shader_parameter/dither_px = 2.0
+shader_parameter/beam_color = Color(0.5, 0.6, 0.55, 1)
+shader_parameter/beam_strength = 0.4
+shader_parameter/beam_width = 0.32
+shader_parameter/beam_grain = 4.0
+shader_parameter/beam_levels = 5.0
+
+[sub_resource type="ShaderMaterial" id="1"]
+shader = ExtResource("3")
+shader_parameter/direction = Vector2(1, 0)
+shader_parameter/progress = 0.0
+shader_parameter/line_color = Color(1, 1, 1, 1)
+shader_parameter/edge_color = Color(0.05, 0.08, 0.35, 1)
+shader_parameter/center_color = Color(0.55, 0.85, 1, 1)
+shader_parameter/line_density = 18.0
+shader_parameter/speed = 3.0
+shader_parameter/softness = 0.5
 
 [sub_resource type="ShaderMaterial" id="3"]
 shader = ExtResource("6")
@@ -22,34 +48,72 @@ shader_parameter/dark_ceiling = 0.15
 shader_parameter/dark_soft = 0.0
 shader_parameter/strength = 0.25
 
-[node name="ReactionScene" type="Control"]
+[sub_resource type="Shader" id="Shader_bubble_frame"]
+code = "shader_type canvas_item;
+
+uniform vec4 panel_color : source_color = vec4(0.045, 0.06, 0.09, 0.94);
+uniform vec4 border_color : source_color = vec4(0.45, 0.72, 0.62, 0.9);
+
+float bayer4(vec2 pixel) {
+	ivec2 p = ivec2(mod(floor(pixel), 4.0));
+	float value = 0.0;
+	if (p.y == 0) {
+		value = p.x == 0 ? 0.0 : (p.x == 1 ? 8.0 : (p.x == 2 ? 2.0 : 10.0));
+	} else if (p.y == 1) {
+		value = p.x == 0 ? 12.0 : (p.x == 1 ? 4.0 : (p.x == 2 ? 14.0 : 6.0));
+	} else if (p.y == 2) {
+		value = p.x == 0 ? 3.0 : (p.x == 1 ? 11.0 : (p.x == 2 ? 1.0 : 9.0));
+	} else {
+		value = p.x == 0 ? 15.0 : (p.x == 1 ? 7.0 : (p.x == 2 ? 13.0 : 5.0));
+	}
+	return (value + 0.5) / 16.0;
+}
+
+void fragment() {
+	float edge = min(min(UV.x, 1.0 - UV.x), min(UV.y, 1.0 - UV.y));
+	float frame_coverage = 1.0 - smoothstep(0.008, 0.026, edge);
+	float grain = step(bayer4(FRAGCOORD.xy / 1.5), frame_coverage);
+	COLOR = vec4(mix(panel_color.rgb, border_color.rgb, grain * 0.78), panel_color.a);
+}
+"
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_bubble_frame"]
+shader = SubResource("Shader_bubble_frame")
+shader_parameter/panel_color = Color(0.045, 0.06, 0.09, 0.94)
+shader_parameter/border_color = Color(0.45, 0.72, 0.62, 0.9)
+
+[node name="ReactionScene" type="Control" unique_id=874009548]
 visible = false
 z_index = 1000
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-mouse_filter = 0
+grow_horizontal = 2
+grow_vertical = 2
 script = ExtResource("1")
 
-[node name="BgDim" type="ColorRect" parent="."]
+[node name="BgDim" type="ColorRect" parent="." unique_id=1273557905]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 mouse_filter = 2
 color = Color(0.03, 0.03, 0.045, 1)
 
-[node name="BgMood" type="ColorRect" parent="."]
+[node name="BgMood" type="ColorRect" parent="." unique_id=1639786720]
+material = SubResource("2")
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 mouse_filter = 2
-material = SubResource("2")
-color = Color(1, 1, 1, 1)
 
-[node name="BgOppDefault" type="TextureRect" parent="."]
+[node name="BgOppDefault" type="TextureRect" parent="." unique_id=1583329095]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -61,7 +125,7 @@ texture = ExtResource("7")
 expand_mode = 3
 stretch_mode = 6
 
-[node name="BgYouDefault" type="TextureRect" parent="."]
+[node name="BgYouDefault" type="TextureRect" parent="." unique_id=15791468]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -73,16 +137,17 @@ texture = ExtResource("8")
 expand_mode = 3
 stretch_mode = 6
 
-[node name="BgShader" type="ColorRect" parent="."]
+[node name="BgShader" type="ColorRect" parent="." unique_id=853808692]
+material = SubResource("1")
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 mouse_filter = 2
-material = SubResource("1")
-color = Color(1, 1, 1, 1)
 
-[node name="PortraitFrameYou" type="Control" parent="."]
+[node name="PortraitFrameYou" type="Control" parent="." unique_id=831435475]
 unique_name_in_owner = true
 layout_mode = 1
 anchors_preset = 0
@@ -92,7 +157,7 @@ offset_right = 416.0
 offset_bottom = 648.0
 mouse_filter = 2
 
-[node name="PortraitFrameOpp" type="Control" parent="."]
+[node name="PortraitFrameOpp" type="Control" parent="." unique_id=185183670]
 unique_name_in_owner = true
 layout_mode = 1
 anchors_preset = 0
@@ -102,41 +167,88 @@ offset_right = 1136.0
 offset_bottom = 648.0
 mouse_filter = 2
 
-[node name="Portrait" type="TextureRect" parent="."]
+[node name="Portrait" type="TextureRect" parent="." unique_id=1253977414]
+material = SubResource("3")
 layout_mode = 1
-anchors_preset = 0
 offset_left = 16.0
 offset_top = 8.0
 offset_right = 416.0
 offset_bottom = 648.0
 mouse_filter = 2
-material = SubResource("3")
 texture = ExtResource("4")
 expand_mode = 1
 stretch_mode = 5
 
-[node name="Bubble" type="ColorRect" parent="."]
+[node name="Bubble" type="Control" parent="." unique_id=1916593755]
 layout_mode = 1
 anchors_preset = 0
-offset_left = 256.0
-offset_top = 60.0
-offset_right = 896.0
-offset_bottom = 210.0
+offset_left = 216.0
+offset_top = 476.0
+offset_right = 936.0
+offset_bottom = 626.0
 mouse_filter = 2
-color = Color(0.09, 0.1, 0.13, 0.94)
 
-[node name="Label" type="Label" parent="Bubble"]
+[node name="Frame" type="ColorRect" parent="Bubble" unique_id=1916593760]
+material = SubResource("ShaderMaterial_bubble_frame")
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 16.0
-offset_top = 10.0
-offset_right = -16.0
-offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
 mouse_filter = 2
+
+[node name="SpeakerPlate" type="ColorRect" parent="Bubble" unique_id=1916593761]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 20.0
+offset_top = -26.0
+offset_right = 188.0
+mouse_filter = 2
+color = Color(0.1294, 0.3059, 0.2196, 0.96)
+
+[node name="SpeakerLabel" type="Label" parent="Bubble/SpeakerPlate" unique_id=1916593762]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0.8, 1, 0.87, 1)
+theme_override_font_sizes/font_size = 12
+text = "ВЫ"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Eyebrow" type="Label" parent="Bubble" unique_id=1852402749]
+visible = false
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 206.0
+offset_top = -24.0
+offset_right = -20.0
+offset_bottom = -2.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0.9373, 0.6941, 0.2745, 1)
+theme_override_font_sizes/font_size = 11
+text = "ЭМОЦИОНАЛЬНЫЙ СРЫВ"
+horizontal_alignment = 2
+
+[node name="Label" type="Label" parent="Bubble" unique_id=1235297565]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 22.0
+offset_top = 12.0
+offset_right = -22.0
+offset_bottom = -12.0
+grow_horizontal = 2
+grow_vertical = 2
 theme_override_colors/font_color = Color(0.9608, 0.9608, 0.9294, 1)
 theme_override_font_sizes/font_size = 17
-autowrap_mode = 3
-vertical_alignment = 1
 horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 3

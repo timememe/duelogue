@@ -14,17 +14,17 @@ const RunEvents := preload("res://duelogue/core/run/run_events.gd")
 
 ## Цвета типов комнат (узлы карты). Каркас/панель красятся в tscn.
 const COL_ROOM := {
-	RoomTypes.ROOM_EFIR: Color("6fcf7f"),
-	RoomTypes.ROOM_ELITE: Color("d9594c"),
-	RoomTypes.ROOM_SHOP: Color("ffd24a"),
-	RoomTypes.ROOM_PREP: Color("6fb7cf"),
+	RoomTypes.ROOM_EFIR: Color("43c59e"),
+	RoomTypes.ROOM_ELITE: Color("e45b5b"),
+	RoomTypes.ROOM_SHOP: Color("e5b84b"),
+	RoomTypes.ROOM_PREP: Color("57a3e3"),
 	RoomTypes.ROOM_EVENT: Color("c48fd9"),
 	RoomTypes.ROOM_BOSS: Color("ff7a45"),
 }
 const COL_EDGE := Color(0.35, 0.38, 0.45, 0.8)
 const COL_EDGE_WALKED := Color(0.44, 0.81, 0.5, 0.95)   ## пройденный маршрут
 const COL_EDGE_OPEN := Color(0.95, 0.88, 0.55, 0.95)    ## доступные сейчас шаги
-const COL_GOLD := Color("ffd24a")
+const COL_GOLD := Color("e5b84b")
 
 # --- геометрия карты (слой = колонка, lane = ряд) ---
 const NODE_W := 118.0

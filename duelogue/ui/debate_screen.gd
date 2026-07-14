@@ -9,16 +9,17 @@ extends Control
 const ZalV3 := preload("res://duelogue/core/rules/rules_core.gd")  ## ядро правил — константы SIDE_*/TYPE_*/ZAL_MAX
 const BattleController := preload("res://duelogue/app/battle_controller.gd")
 const CardScene := preload("res://duelogue/ui/card/card.tscn")  ## шаблон карты руки (слои правятся в card.tscn)
+const CardArt := preload("res://duelogue/core/cards/card_art.gd")
 const CharacterCore := preload("res://duelogue/core/characters/character_core.gd")  ## ядро персонажей (актёры на сцену)
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")  ## настройка скорости печати (меню)
 
-const COL_TEZIS := "6fcf7f"
-const COL_RAZBOR := "d9594c"
-const COL_USTAN := "ffd24a"
-const COL_YOU := "6fcf7f"
+const COL_TEZIS := "43c59e"
+const COL_RAZBOR := "e45b5b"
+const COL_USTAN := "57a3e3"
+const COL_YOU := "43c59e"
 const COL_OPP := "d98c4c"
 const COL_DIM := "8a93a3"
-const COL_GOLD := "ffd24a"
+const COL_GOLD := "e5b84b"
 
 const CARD_W := 42.0
 const CARD_H := 56.0
@@ -26,8 +27,13 @@ const CARD_G := 4.0
 ## Первый тезис не должен заезжать под золотую рамку. Сжимаются только интервалы МЕЖДУ
 ## зелёными тезисами; этот стык всегда остаётся обычным положительным отступом.
 const FRAME_TO_THESIS_GAP := CARD_G
-const HAND_W := 160.0
-const HAND_H := 132.0
+const HAND_CARD_PITCH := 84.0
+const HAND_CARD_PITCH_MIN := 52.0
+const HAND_SIDE_GUTTER := 108.0
+const HAND_FAN_DEPTH := 15.0
+const HAND_FAN_ANGLE := 7.0
+const HAND_HOVER_LIFT := 26.0
+const HAND_HOVER_SCALE := 1.1
 ## Служебный хвост группы справа: место под +N/лёгкое вращение рамки. Он является частью
 ## РЕАЛЬНОЙ ширины ряда и обязан участвовать в расчёте, иначе визуал шире математики.
 const FRAME_GROUP_PAD := 16.0
@@ -39,7 +45,7 @@ const THESIS_PITCH_MIN := 9.0
 const FRAME_SEP_HARD_MIN := -40.0
 const FRAME_SEP_DEFAULT := 12.0
 const CLINCH_STACK_OFFSET := 10.0
-const CLINCH_STACK_PITCH := 9.0
+const CLINCH_STACK_PITCH := 18.0
 ## Фактический правый край карт держим не у самой линии, а заранее начинаем сжатие в этой
 ## защитной зоне. Row уже имеет 8 px отступа от видимого контура Board.
 const BOARD_EDGE_APPROACH := 12.0
@@ -71,7 +77,7 @@ var _cutscene_active := false
 @onready var _fill: ColorRect = %BarFill
 @onready var _opp_row: Control = %OppRow
 @onready var _you_row: Control = %YouRow
-@onready var _hand_row: HBoxContainer = %HandRow
+@onready var _hand_row: Control = %HandRow
 @onready var _draw_count: Label = %DrawCount
 @onready var _log_rt: RichTextLabel = %Log
 @onready var _flash: Label = %Flash
@@ -84,6 +90,12 @@ var _cutscene_active := false
 @onready var _card_bubble: Panel = %CardInfoBubble
 @onready var _card_bubble_title: Label = %CardInfoTitle
 @onready var _card_bubble_body: Label = %CardInfoBody
+@onready var _you_strain_bg: ColorRect = %YouStrainBg
+@onready var _you_strain_fill: ColorRect = %YouStrainFill
+@onready var _you_strain_label: Label = %YouStrainLabel
+@onready var _opp_strain_bg: ColorRect = %OppStrainBg
+@onready var _opp_strain_fill: ColorRect = %OppStrainFill
+@onready var _opp_strain_label: Label = %OppStrainLabel
 
 
 func _ready() -> void:
@@ -163,7 +175,10 @@ func _on_match_started(_info: Dictionary) -> void:
 func _on_utterance(side: String, text: String, meta: Dictionary) -> void:
 	var col := COL_YOU if side == ZalV3.SIDE_YOU else COL_OPP
 	var who := "Вы" if side == ZalV3.SIDE_YOU else "Оппонент"
-	_log("[color=#%s]— %s (%s):[/color] %s" % [col, who, String(meta.get("stance", "")), text])
+	var role := "РЕАКЦИЯ · %s" % String(meta.get("reaction_title", "срыв")) \
+		if meta.get("reaction", false) else String(meta.get("stance", ""))
+	var bolt := "⚡ " if meta.get("reaction", false) else ""
+	_log("[color=#%s]— %s%s (%s):[/color] %s" % [col, bolt, who, role, text])
 	_log_rt.text = "\n".join(log_lines)
 
 
@@ -222,11 +237,45 @@ func _refresh() -> void:
 			gate_note = "  ·  ЗАЛ СКАНДИРУЕТ: %d/%d — ВЕРНИТЕ ЗАЛ!" % [so, int(model.zal_hold)]
 	_zal_label.text = "ЗАЛ: %+d  (рамки + сила)%s" % [z, gate_note]
 	_update_bar(z)
-	_rebuild_frames(_opp_row, model.sides[ZalV3.SIDE_OPP].lines, false, _opp_sep0)
-	_rebuild_frames(_you_row, model.sides[ZalV3.SIDE_YOU].lines, true, _you_sep0)
+	_update_emotion_hud()
+	var input_mode := String(controller.input_mode())
+	_rebuild_frames(_opp_row, board_lines_for_mode(model.sides[ZalV3.SIDE_OPP].lines,
+		input_mode), false, _opp_sep0)
+	_rebuild_frames(_you_row, board_lines_for_mode(model.sides[ZalV3.SIDE_YOU].lines,
+		input_mode), true, _you_sep0)
 	_rebuild_hand()
 	_draw_count.text = str(model.sides[ZalV3.SIDE_YOU].draw.size())
 	_update_controls()
+
+
+## Стартовые рамки уже существуют в rules state для симметричной Базы 1:1, но до выбора
+## игроком это ещё не сыгранные карты. Скрываем только presentation; модель не мутируем.
+static func board_lines_for_mode(lines: Array, input_mode: String) -> Array:
+	return [] if input_mode == "opening" else lines
+
+
+func _update_emotion_hud() -> void:
+	_render_strain(controller.emotion_state(ZalV3.SIDE_YOU), _you_strain_bg,
+		_you_strain_fill, _you_strain_label, "ВЫ")
+	_render_strain(controller.emotion_state(ZalV3.SIDE_OPP), _opp_strain_bg,
+		_opp_strain_fill, _opp_strain_label, "ОПП")
+
+
+func _render_strain(state: Dictionary, bg: ColorRect, fill: ColorRect, label: Label,
+	who: String) -> void:
+	var maximum := maxi(1, int(state.get("max", 6)))
+	var strain := clampi(int(state.get("strain", 0)), 0, maximum)
+	var t := float(strain) / float(maximum)
+	var height := bg.size.y * t
+	fill.size = Vector2(bg.size.x, height)
+	fill.position = Vector2(bg.position.x, bg.position.y + bg.size.y - height)
+	fill.color = Color.html("#d8b04a").lerp(Color.html("#ef4b4b"), t)
+	var status := "СРЫВ %d%%" % roundi(float(state.get("chance", 0.0)) * 100.0)
+	if int(state.get("draw_left", 0)) <= 0:
+		status = "ПУСТО"
+	elif int(state.get("cooldown", 0)) > 0:
+		status = "РАЗРЯДКА"
+	label.text = "%s\n%d/%d\n%s" % [who, strain, maximum, status]
 
 
 ## Подсказка и кнопки клинча/отмены — из режима ввода контроллера.
@@ -307,7 +356,7 @@ func _rebuild_frames(row: Control, lines: Array, is_you: bool, default_sep: floa
 	var thesis_counts: Array = []
 	var trailing_pads: Array = []
 	for i in n:
-		thesis_counts.append(int(lines[i].theses))
+		thesis_counts.append(_display_thesis_count(lines[i], is_you, i))
 		trailing_pads.append(_frame_trailing_pad(is_you, i))
 	var fit := fit_board_row(thesis_counts, trailing_pads, row.size.x, default_sep)
 	var gap_used := float(fit.gap)
@@ -467,8 +516,8 @@ static func _board_row_width(thesis_counts: Array, trailing_pads: Array,
 	return total
 
 
-## Стопка Разборов в клинче торчит правее обычного хвоста рамки; её ширина тоже участвует
-## в раскладке, чтобы соседняя рамка не накрывала стопку и не выталкивала её за контур.
+## Хронологическая стопка клинча торчит правее обычного хвоста рамки; её ширина тоже
+## участвует в раскладке, чтобы соседняя рамка не накрывала последовательность ходов.
 func _frame_trailing_pad(is_you: bool, idx: int) -> float:
 	var trailing := FRAME_GROUP_PAD
 	var cl: Dictionary = model.clinch
@@ -477,10 +526,42 @@ func _frame_trailing_pad(is_you: bool, idx: int) -> float:
 	var side := ZalV3.SIDE_YOU if is_you else ZalV3.SIDE_OPP
 	if String(cl.get("defender", "")) != side or int(cl.get("idx", -1)) != idx:
 		return trailing
-	var razbors := int(cl.get("r_count", 0))
-	if razbors > 0:
-		trailing = maxf(trailing, CLINCH_STACK_OFFSET + float(razbors - 1) * CLINCH_STACK_PITCH)
+	var sequence := _clinch_sequence(cl)
+	if not sequence.is_empty():
+		trailing = maxf(trailing, CLINCH_STACK_OFFSET +
+			float(sequence.size() - 1) * CLINCH_STACK_PITCH)
 	return trailing
+
+
+func _display_thesis_count(line: Dictionary, is_you: bool, idx: int) -> int:
+	var count := int(line.theses)
+	var cl: Dictionary = model.clinch
+	if cl.is_empty():
+		return count
+	var side := ZalV3.SIDE_YOU if is_you else ZalV3.SIDE_OPP
+	if String(cl.get("defender", "")) == side and int(cl.get("idx", -1)) == idx:
+		count -= int(cl.get("t_added", 0))
+	return maxi(0, count)
+
+
+## Новые партии получают точную sequence из rules_core. Реконструкция оставлена для старых
+## сейвов/ручных тестов: автомат клинча всегда чередует Разбор → Тезис → Разбор.
+func _clinch_sequence(cl: Dictionary) -> Array:
+	var exact: Array = cl.get("sequence", [])
+	if not exact.is_empty():
+		return exact
+	var fallback: Array = []
+	var razbors := int(cl.get("r_count", 0))
+	var theses := int(cl.get("t_added", 0))
+	var steals_left := int(cl.get("atk_steals", 0))
+	for i in razbors:
+		var steals := bool(cl.get("init_steals", false)) if i == 0 else steals_left > 0
+		fallback.append({"type": ZalV3.TYPE_RAZBOR, "steals": steals})
+		if steals:
+			steals_left = maxi(0, steals_left - 1)
+		if i < theses:
+			fallback.append({"type": ZalV3.TYPE_TEZIS, "stolen": false})
+	return fallback
 
 
 ## Ширина группы «рамка + видимые тезисы» при заданном отступе gap между карточками.
@@ -504,7 +585,7 @@ static func board_card_position_x(ltr_x: float, content_width: float,
 
 func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 	trailing_pad: float = FRAME_GROUP_PAD, reverse: bool = false) -> Control:
-	var theses := int(line.theses)
+	var total_theses := int(line.theses)
 	var stolen := int(line.get("stolen", 0))
 	var closed: bool = line.closed
 	# Контест и счётчик ударов — прямо из стейта клинча в ядре (model.clinch).
@@ -515,6 +596,8 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 		var my_side := ZalV3.SIDE_YOU if is_you else ZalV3.SIDE_OPP
 		contested = (int(cl.idx) == idx) and (String(cl.defender) == my_side)
 		razbors = int(cl.r_count)
+	var theses := total_theses - (int(cl.get("t_added", 0)) if contested else 0)
+	theses = maxi(0, theses)
 	var targetable: bool = String(controller.input_mode()) == "target" and not is_you
 	# «Шатается» = рамку прямо сейчас может забрать целиком Кража соперника её владельца:
 	# тезисов не больше его порога захвата (базово 1; зал-гейт против фаворита поднимает до 2/3).
@@ -531,7 +614,8 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 
 	# Карта-установка показывает claim (позицию-топик), если он назначен.
 	var claim_txt: String = String(line.get("claim", line.name))
-	var uc := _mkcard("У", COL_USTAN, closed, contested)
+	var uc := _mkcard({"type": ZalV3.TYPE_USTANOVKA, "steals": false},
+		COL_USTAN, closed, contested)
 	uc.set_meta("board_card", true)
 	uc.set_meta("board_role", "frame")
 	uc.position = Vector2(board_card_position_x(0.0, width, trailing_pad, reverse), y0)
@@ -556,8 +640,11 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 	root.add_child(uc)
 
 	for j in shown:
-		var is_st := j >= (theses - stolen)
-		var tc := _mkcard("П" if is_st else "Т", (COL_GOLD if is_st else COL_TEZIS), closed, false)
+		var is_st := j >= (theses - mini(stolen, theses))
+		# Украденный тезис сохраняет тезисную пиктограмму; золото живёт только в окантовке.
+		var tc := _mkcard({"type": ZalV3.TYPE_TEZIS, "steals": false},
+			(COL_GOLD if is_st else COL_TEZIS), closed, false)
+		tc.set_meta("board_stolen", is_st)
 		tc.set_meta("board_card", true)
 		tc.set_meta("board_role", "thesis")
 		# Первый тезис стоит ПОСЛЕ рамки; отрицательный gap уплотняет только следующие
@@ -576,14 +663,24 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 		root.add_child(more)
 
 	if contested and razbors > 0:
-		for k in razbors:
-			var rc := _mkcard("Р", COL_RAZBOR, false, false)
+		var sequence := _clinch_sequence(cl)
+		for k in sequence.size():
+			var played: Dictionary = sequence[k]
+			var played_type := String(played.get("type", ZalV3.TYPE_RAZBOR))
+			var is_theft := played_type == ZalV3.TYPE_RAZBOR and bool(played.get("steals", false))
+			var is_stolen_thesis := played_type == ZalV3.TYPE_TEZIS and bool(played.get("stolen", false))
+			var border_col := COL_TEZIS if played_type == ZalV3.TYPE_TEZIS else COL_RAZBOR
+			if is_theft or is_stolen_thesis:
+				border_col = COL_GOLD
+			var rc := _mkcard({"type": played_type, "steals": is_theft}, border_col, false, false)
 			rc.set_meta("board_card", true)
 			rc.set_meta("board_role", "overlay")
+			rc.set_meta("clinch_order", k)
 			var overlay_ltr_x := width - CARD_W + CLINCH_STACK_OFFSET + \
 				float(k) * CLINCH_STACK_PITCH
 			rc.position = Vector2(board_card_position_x(overlay_ltr_x,
-				width, trailing_pad, reverse), y0 - 20.0)
+				width, trailing_pad, reverse), y0 - 18.0 - float(k) * 1.5)
+			rc.z_index = 20 + k
 			root.add_child(rc)
 	return root
 
@@ -600,7 +697,7 @@ func _start_wobble(root: Control) -> void:
 	, CONNECT_ONE_SHOT)
 
 
-func _mkcard(symbol: String, colhex: String, dim: bool, contested: bool) -> Button:
+func _mkcard(visual: Dictionary, colhex: String, dim: bool, contested: bool) -> Button:
 	var b := Button.new()
 	b.size = Vector2(CARD_W, CARD_H)
 	b.custom_minimum_size = Vector2(CARD_W, CARD_H)
@@ -608,27 +705,32 @@ func _mkcard(symbol: String, colhex: String, dim: bool, contested: bool) -> Butt
 	# в свой внутренний minimum size и молча становится шире CARD_W. Тогда fit_board_row считает
 	# 42 px, а реальная «РАМКА «длинный claim»» занимает 80–100 px и тезисы уезжают под неё.
 	b.clip_text = true
-	b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	b.add_theme_font_size_override("font_size", 27)
-	b.text = symbol
-	b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.clip_contents = true
+	b.text = ""
 	var base := Color.html("#" + colhex)
 	var border := base.lightened(0.18)
-	var bg := base
+	var bg := Color.html("#05080c")
 	if dim:
 		border = border.darkened(0.35)
-		bg = bg.darkened(0.48)
+		bg = bg.darkened(0.22)
 	if contested:
-		border = Color.html("#" + COL_RAZBOR).lightened(0.18)
+		bg = bg.lerp(Color.html("#" + COL_RAZBOR), 0.2)
 	b.add_theme_stylebox_override("normal", _card_style(bg, border, 3))
-	b.add_theme_stylebox_override("hover", _card_style(bg.lightened(0.12), border.lightened(0.08), 3))
+	b.add_theme_stylebox_override("hover", _card_style(bg.lightened(0.08), border.lightened(0.1), 3))
 	b.add_theme_stylebox_override("pressed", _card_style(bg.darkened(0.12), border, 3))
 	b.add_theme_stylebox_override("disabled", _card_style(bg, border, 3))
-	var fcol := Color("141820") if base.get_luminance() > 0.55 else Color("fff8ea")
-	if dim:
-		fcol = Color("d7dce6")
-	b.add_theme_color_override("font_color", fcol)
-	b.add_theme_color_override("font_disabled_color", fcol)
+	b.icon = CardArt.type_icon_for(visual, true)
+	b.expand_icon = true
+	b.add_theme_constant_override("icon_max_width", 32)
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var icon_color := Color(1.0, 1.0, 1.0, 0.5 if dim else 1.0)
+	b.add_theme_color_override("icon_normal_color", icon_color)
+	b.add_theme_color_override("icon_hover_color", icon_color)
+	b.add_theme_color_override("icon_pressed_color", icon_color)
+	b.add_theme_color_override("icon_disabled_color", icon_color)
+	b.set_meta("board_visual_type", String(visual.get("type", "")))
+	b.set_meta("board_visual_steals", bool(visual.get("steals", false)))
+	b.set_meta("board_border_color", colhex)
 	b.disabled = true
 	return b
 
@@ -644,7 +746,7 @@ func _rebuild_hand() -> void:
 	var mode := String(controller.input_mode())
 	if mode == "opening":
 		_rebuild_opening_hand()
-		_center_hand()
+		_layout_hand()
 		return
 	var hand: Array = model.sides[ZalV3.SIDE_YOU].hand
 	for i in hand.size():
@@ -675,8 +777,9 @@ func _rebuild_hand() -> void:
 		if is_named:
 			bubble_body = "Именной приём\n\n" + bubble_body
 		_attach_card_bubble(btn, bubble_title, bubble_body, card)
+		_attach_hand_motion(btn)
 		btn.pressed.connect(_on_hand_pressed.bind(i))
-	_center_hand()
+	_layout_hand()
 
 
 ## На нулевом ходе смысловые варианты выглядят как обычные карты-Установки в руке.
@@ -695,22 +798,71 @@ func _rebuild_opening_hand() -> void:
 		var bubble_body := "%s\n\n%s\n\nНе расходует карту или ход. Сила Базы остаётся 1." % [
 			"«%s»" % String(option.get("text", "")), focus]
 		_attach_card_bubble(btn, "Стартовая Установка", bubble_body, card)
+		_attach_hand_motion(btn)
 		btn.pressed.connect(_on_opening_pressed.bind(String(option.get("id", ""))))
 
 
-func _center_hand() -> void:
-	# Центрируем руку по X между иконками колод добора/сброса (в местных координатах HandArea).
-	# Y НЕ трогаем — она держится тем, что задано в сцене (двигаешь всю зону HandArea в редакторе).
-	# Ширина карты читается из ШАБЛОНА (меняешь размер в card.tscn — центровка следует сама).
+## Карты лежат веером с нахлёстом, как физическая рука: центр выше, края ниже и повёрнуты.
+## Раскладка ручная, потому что Container не позволяет соседям перекрываться и вращаться.
+func _layout_hand() -> void:
 	var live: Array = _hand_row.get_children().filter(func(c): return not c.is_queued_for_deletion())
 	var n := live.size()
-	var cw := HAND_W
-	if n > 0:
-		cw = (live[-1] as Control).custom_minimum_size.x
-	var sep := float(_hand_row.get_theme_constant("separation"))
-	var w := float(n) * cw + maxf(0.0, float(n - 1)) * sep
+	if n == 0:
+		return
+	var sample := live[0] as Control
+	var card_size := sample.custom_minimum_size
 	var area_w := (_hand_row.get_parent() as Control).size.x
-	_hand_row.position.x = maxf(104.0, (area_w - w) / 2.0)
+	var available_pitch := (area_w - HAND_SIDE_GUTTER * 2.0 - card_size.x) / maxf(1.0, float(n - 1))
+	var pitch := HAND_CARD_PITCH if n == 1 else clampf(available_pitch,
+		HAND_CARD_PITCH_MIN, HAND_CARD_PITCH)
+	var total_w := card_size.x + pitch * float(n - 1)
+	var left := maxf(HAND_SIDE_GUTTER, (area_w - total_w) * 0.5)
+	var center := float(n - 1) * 0.5
+	var radius := maxf(1.0, center)
+	for i in n:
+		var card := live[i] as Control
+		var fan := (float(i) - center) / radius
+		var y := pow(absf(fan), 1.55) * HAND_FAN_DEPTH
+		var base_position := Vector2(left + float(i) * pitch, y)
+		var base_rotation := fan * HAND_FAN_ANGLE
+		card.position = base_position
+		card.rotation_degrees = base_rotation
+		card.scale = Vector2.ONE
+		card.pivot_offset = Vector2(card_size.x * 0.5, card_size.y)
+		card.z_index = i
+		card.set_meta("hand_base_position", base_position)
+		card.set_meta("hand_base_rotation", base_rotation)
+		card.set_meta("hand_base_z", i)
+		card.set_meta("hand_hovered", false)
+
+
+func _attach_hand_motion(card: Control) -> void:
+	card.mouse_entered.connect(_set_hand_hover.bind(card, true))
+	card.mouse_exited.connect(_set_hand_hover.bind(card, false))
+
+
+func _set_hand_hover(card: Control, hovered: bool) -> void:
+	if not is_instance_valid(card) or not card.has_meta("hand_base_position"):
+		return
+	card.set_meta("hand_hovered", hovered)
+	var previous: Variant = card.get_meta("hand_tween", null)
+	if previous is Tween and (previous as Tween).is_valid():
+		(previous as Tween).kill()
+	var base_position: Vector2 = card.get_meta("hand_base_position")
+	var base_rotation := float(card.get_meta("hand_base_rotation"))
+	var base_z := int(card.get_meta("hand_base_z"))
+	var target_position := base_position + Vector2(0.0, -HAND_HOVER_LIFT) if hovered else base_position
+	var target_rotation := 0.0 if hovered else base_rotation
+	var target_scale := Vector2.ONE * HAND_HOVER_SCALE if hovered else Vector2.ONE
+	# При уходе сразу возвращаем базовый z: выходящая левая карта больше не перехватывает
+	# мышь у соседки во время обратного tween и не вызывает дрожание слоёв.
+	card.z_index = 1000 + base_z if hovered else base_z
+	var tween := card.create_tween()
+	tween.set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tween.tween_property(card, "position", target_position, 0.15)
+	tween.tween_property(card, "rotation_degrees", target_rotation, 0.15)
+	tween.tween_property(card, "scale", target_scale, 0.15)
+	card.set_meta("hand_tween", tween)
 
 
 ## Нативный tooltip заменён фиксированным непрозрачным баблом: он не прыгает за мышью,

@@ -4,6 +4,74 @@
 [ext_resource type="PackedScene" uid="uid://dwtmtf8q0p2r7" path="res://duelogue/core/stage/stage.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://duelogue/core/characters/reaction_scene.tscn" id="3"]
 
+[sub_resource type="Shader" id="Shader_hand_dither"]
+code = "shader_type canvas_item;
+
+uniform vec4 shadow_color : source_color = vec4(0.018, 0.024, 0.040, 0.86);
+
+float bayer4(vec2 pixel) {
+	ivec2 p = ivec2(mod(floor(pixel), 4.0));
+	float value = 0.0;
+	if (p.y == 0) {
+		value = p.x == 0 ? 0.0 : (p.x == 1 ? 8.0 : (p.x == 2 ? 2.0 : 10.0));
+	} else if (p.y == 1) {
+		value = p.x == 0 ? 12.0 : (p.x == 1 ? 4.0 : (p.x == 2 ? 14.0 : 6.0));
+	} else if (p.y == 2) {
+		value = p.x == 0 ? 3.0 : (p.x == 1 ? 11.0 : (p.x == 2 ? 1.0 : 9.0));
+	} else {
+		value = p.x == 0 ? 15.0 : (p.x == 1 ? 7.0 : (p.x == 2 ? 13.0 : 5.0));
+	}
+	return (value + 0.5) / 16.0;
+}
+
+void fragment() {
+	float vertical = smoothstep(0.02, 0.78, UV.y);
+	float side = smoothstep(0.0, 0.09, UV.x) * smoothstep(0.0, 0.09, 1.0 - UV.x);
+	float coverage = clamp((0.06 + vertical * 0.9) * side, 0.0, 1.0);
+	float mask = step(bayer4(FRAGCOORD.xy / 2.0), coverage);
+	float alpha = shadow_color.a * mask * (0.32 + vertical * 0.68);
+	COLOR = vec4(shadow_color.rgb, alpha);
+}
+"
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_hand_dither"]
+shader = SubResource("Shader_hand_dither")
+shader_parameter/shadow_color = Color(0.018, 0.024, 0.04, 0.86)
+
+[sub_resource type="Shader" id="Shader_board_dither"]
+code = "shader_type canvas_item;
+
+uniform vec4 fill_color : source_color = vec4(0.11, 0.15, 0.22, 0.56);
+uniform float edge_fade : hint_range(0.01, 0.20) = 0.065;
+
+float bayer4(vec2 pixel) {
+	ivec2 p = ivec2(mod(floor(pixel), 4.0));
+	float value = 0.0;
+	if (p.y == 0) {
+		value = p.x == 0 ? 0.0 : (p.x == 1 ? 8.0 : (p.x == 2 ? 2.0 : 10.0));
+	} else if (p.y == 1) {
+		value = p.x == 0 ? 12.0 : (p.x == 1 ? 4.0 : (p.x == 2 ? 14.0 : 6.0));
+	} else if (p.y == 2) {
+		value = p.x == 0 ? 3.0 : (p.x == 1 ? 11.0 : (p.x == 2 ? 1.0 : 9.0));
+	} else {
+		value = p.x == 0 ? 15.0 : (p.x == 1 ? 7.0 : (p.x == 2 ? 13.0 : 5.0));
+	}
+	return (value + 0.5) / 16.0;
+}
+
+void fragment() {
+	float distance_to_edge = min(min(UV.x, 1.0 - UV.x), min(UV.y, 1.0 - UV.y));
+	float coverage = smoothstep(0.0, edge_fade, distance_to_edge);
+	float dither = step(bayer4(FRAGCOORD.xy / 2.0), coverage);
+	COLOR = vec4(fill_color.rgb, fill_color.a * dither);
+}
+"
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_board_dither"]
+shader = SubResource("Shader_board_dither")
+shader_parameter/fill_color = Color(0.11, 0.15, 0.22, 0.56)
+shader_parameter/edge_fade = 0.065
+
 [node name="DebateScreen" type="Control" unique_id=805132598]
 layout_mode = 3
 anchors_preset = 15
@@ -118,6 +186,95 @@ theme_override_colors/font_color = Color(0.9098, 0.9098, 0.9098, 1)
 theme_override_font_sizes/font_size = 12
 horizontal_alignment = 1
 
+[node name="EmotionHud" type="Control" parent="." unique_id=1732082637]
+layout_mode = 1
+anchors_preset = 0
+offset_right = 1152.0
+offset_bottom = 420.0
+mouse_filter = 2
+
+[node name="YouStrain" type="Control" parent="EmotionHud" unique_id=2066149605]
+layout_mode = 1
+anchors_preset = 0
+offset_left = 20.0
+offset_top = 155.0
+offset_right = 105.0
+offset_bottom = 400.0
+mouse_filter = 2
+
+[node name="YouStrainBg" type="ColorRect" parent="EmotionHud/YouStrain" unique_id=428091190]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 28.0
+offset_top = 58.0
+offset_right = 57.0
+offset_bottom = 224.0
+mouse_filter = 2
+color = Color(0.3333, 0.3529, 0.3922, 0.86)
+
+[node name="YouStrainFill" type="ColorRect" parent="EmotionHud/YouStrain" unique_id=761009178]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 28.0
+offset_top = 224.0
+offset_right = 57.0
+offset_bottom = 224.0
+mouse_filter = 2
+color = Color(0.851, 0.6902, 0.2902, 1)
+
+[node name="YouStrainLabel" type="Label" parent="EmotionHud/YouStrain" unique_id=597477818]
+unique_name_in_owner = true
+layout_mode = 1
+offset_right = 85.0
+offset_bottom = 52.0
+theme_override_colors/font_color = Color(0.9098, 0.9098, 0.9098, 1)
+theme_override_font_sizes/font_size = 10
+text = "ВЫ
+0/6
+СРЫВ 0%"
+horizontal_alignment = 1
+
+[node name="OppStrain" type="Control" parent="EmotionHud" unique_id=1297498042]
+layout_mode = 1
+anchors_preset = 0
+offset_left = 1047.0
+offset_top = 155.0
+offset_right = 1132.0
+offset_bottom = 400.0
+mouse_filter = 2
+
+[node name="OppStrainBg" type="ColorRect" parent="EmotionHud/OppStrain" unique_id=778280708]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 28.0
+offset_top = 58.0
+offset_right = 57.0
+offset_bottom = 224.0
+mouse_filter = 2
+color = Color(0.3333, 0.3529, 0.3922, 0.86)
+
+[node name="OppStrainFill" type="ColorRect" parent="EmotionHud/OppStrain" unique_id=194860879]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 28.0
+offset_top = 224.0
+offset_right = 57.0
+offset_bottom = 224.0
+mouse_filter = 2
+color = Color(0.851, 0.6902, 0.2902, 1)
+
+[node name="OppStrainLabel" type="Label" parent="EmotionHud/OppStrain" unique_id=931670124]
+unique_name_in_owner = true
+layout_mode = 1
+offset_right = 85.0
+offset_bottom = 52.0
+theme_override_colors/font_color = Color(0.9098, 0.9098, 0.9098, 1)
+theme_override_font_sizes/font_size = 10
+text = "ОПП
+0/6
+СРЫВ 0%"
+horizontal_alignment = 1
+
 [node name="Board" type="Control" parent="." unique_id=1265665614]
 clip_contents = true
 layout_mode = 1
@@ -128,42 +285,19 @@ offset_right = 875.0
 offset_bottom = 402.0
 mouse_filter = 2
 
-[node name="BoundaryTop" type="ColorRect" parent="Board" unique_id=1087059348]
-z_index = 40
+[node name="BoardDither" type="ColorRect" parent="Board" unique_id=1884211163]
+material = SubResource("ShaderMaterial_board_dither")
 layout_mode = 1
-offset_right = 600.0
-offset_bottom = 2.0
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 mouse_filter = 2
-color = Color(0.5412, 0.5765, 0.6392, 0.72)
-
-[node name="BoundaryBottom" type="ColorRect" parent="Board" unique_id=14614518]
-z_index = 40
-layout_mode = 1
-offset_top = 250.0
-offset_right = 600.0
-offset_bottom = 252.0
-mouse_filter = 2
-color = Color(0.5412, 0.5765, 0.6392, 0.72)
-
-[node name="BoundaryLeft" type="ColorRect" parent="Board" unique_id=2064272444]
-z_index = 40
-layout_mode = 1
-offset_right = 2.0
-offset_bottom = 252.0
-mouse_filter = 2
-color = Color(0.5412, 0.5765, 0.6392, 0.72)
-
-[node name="BoundaryRight" type="ColorRect" parent="Board" unique_id=55695833]
-z_index = 40
-layout_mode = 1
-offset_left = 598.0
-offset_right = 600.0
-offset_bottom = 252.0
-mouse_filter = 2
-color = Color(0.5412, 0.5765, 0.6392, 0.72)
 
 [node name="OppRow" type="Control" parent="Board" unique_id=467109647]
 unique_name_in_owner = true
+texture_filter = 4
 layout_mode = 1
 anchors_preset = 0
 offset_left = 8.0
@@ -173,6 +307,7 @@ offset_bottom = 118.0
 
 [node name="YouRow" type="Control" parent="Board" unique_id=1983522663]
 unique_name_in_owner = true
+texture_filter = 4
 layout_mode = 1
 anchors_preset = 0
 offset_left = 8.0
@@ -236,12 +371,29 @@ offset_right = 1132.0
 offset_bottom = 640.0
 mouse_filter = 2
 
-[node name="HandRow" type="HBoxContainer" parent="HandArea" unique_id=751381092]
+[node name="HandDither" type="ColorRect" parent="HandArea" unique_id=1249591870]
+# Рисуется после Stage, но до последующих детей HandArea: дизерная подложка
+# отделяет руку от локации, не затемняя сами карты и стопки.
+z_index = 0
+material = SubResource("ShaderMaterial_hand_dither")
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -20.0
+offset_top = -42.0
+offset_right = 20.0
+offset_bottom = 8.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="HandRow" type="Control" parent="HandArea" unique_id=751381092]
 unique_name_in_owner = true
 layout_mode = 1
-offset_right = 980.0
-offset_bottom = 186.0
-theme_override_constants/separation = 12
+anchors_preset = 0
+offset_right = 1112.0
+offset_bottom = 188.0
 
 [node name="DrawPileBg" type="ColorRect" parent="HandArea" unique_id=1150483101]
 layout_mode = 1

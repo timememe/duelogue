@@ -9,7 +9,7 @@ extends Node
 ## нарративный движок — для реплик (акт × регистр × зал × попадание), контроллер — для
 ## исходов (impact → stagger). Персонаж только РЕНДЕРИТ: скин = данные «стейт → портрет»
 ## (STATE_TEX) — новый персонаж = новый набор поз, ни строчки кода. Фолбэк по типу карты
-## (_portrait_for) держит совместимость, пока mood не передан.
+## (_portrait_for) подбирает актуальный стейт по типу карты, пока mood не передан.
 
 const RulesCore := preload("res://duelogue/core/rules/rules_core.gd")
 const TYPE_TEZIS := RulesCore.TYPE_TEZIS
@@ -17,11 +17,6 @@ const TYPE_RAZBOR := RulesCore.TYPE_RAZBOR
 const TYPE_USTANOVKA := RulesCore.TYPE_USTANOVKA
 
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
-const IDLE_TEX := preload("res://duelogue/assets/states_test/idle.png")
-const REACT_TEZIS := preload("res://duelogue/assets/char_react_tez.png")
-const REACT_RAZBOR := preload("res://duelogue/assets/char_react_raz.png")
-const REACT_KRAJA := preload("res://duelogue/assets/char_react_kra.png")
-const REACT_USTANOVKA := preload("res://duelogue/assets/char_react_ust.png")
 
 ## Тестовая пачка эмоций (assets/states_test, генерация 2026-07-05) — примапплена на стейты
 ## ниже. При финализации скина переехать в assets/characters/<skin>/ с именами стейтов.
@@ -108,17 +103,25 @@ func set_stage_sprite_texture(side: String, texture: Texture2D) -> void:
 	(_sprites[side] as Sprite2D).texture = texture
 
 
-## Портрет реакции по типу карты (+флаг steals — Кража это Разбор с card.steals=true,
+## Фолбэк-муд по типу карты (+флаг steals — Кража это Разбор с card.steals=true,
 ## см. narrative_engine.gd — тот же принцип: тип карты = манера, различает приёмы по флагу).
+## Использует только актуальные портреты из state map, без legacy-пиксельных реакций.
+func _fallback_mood_for_card(card_type: String, steals: bool) -> String:
+	match card_type:
+		TYPE_RAZBOR:
+			return "gotcha" if steals else "attack"
+		TYPE_TEZIS:
+			return "declare"
+		TYPE_USTANOVKA:
+			return "hold"
+	return "idle"
+
+
+## Портрет реакции по типу карты, если нарратив ещё не передал отдельный mood.
 ## "" (нет карты — пас/наррация) → нейтральный idle-портрет.
 func _portrait_for(side: String, card_type: String, steals: bool) -> Texture2D:
-	if side == "opp":
-		return OPP_IDLE
-	match card_type:
-		TYPE_RAZBOR: return REACT_KRAJA if steals else REACT_RAZBOR
-		TYPE_TEZIS: return REACT_TEZIS
-		TYPE_USTANOVKA: return REACT_USTANOVKA
-	return IDLE_TEX
+	var states: Dictionary = OPP_STATE_TEX if side == "opp" else YOU_STATE_TEX
+	return states.get(_fallback_mood_for_card(card_type, steals), states["idle"]) as Texture2D
 
 
 func _state_tex_for(side: String, mood: String, card_type: String, steals: bool) -> Texture2D:
@@ -142,9 +145,12 @@ func _on_utterance(side: String, text: String, meta: Dictionary) -> void:
 		return
 	var mood := String(meta.get("mood", ""))
 	var tex := _state_tex_for(side, mood, String(meta.get("card_type", "")), bool(meta.get("steals", false)))
+	var eyebrow := ""
+	if bool(meta.get("reaction", false)):
+		eyebrow = "ЭМОЦИОНАЛЬНЫЙ СРЫВ · %s" % String(meta.get("reaction_title", "Реакция"))
 	await get_tree().create_timer(ReadingPace.BOARD_BEAT).timeout
 	# Муд едет и в сцену: тот же стейт ведёт портрет И профиль живого фона (MOOD_FX).
-	_reaction.show_utterance(side, text, tex, mood, _portrait_flip_h_for(side))
+	_reaction.show_utterance(side, text, tex, mood, _portrait_flip_h_for(side), eyebrow)
 
 
 ## Яркий исход по стороне side — стейт «пошатнулся» (событийный, ставит контроллер).

@@ -8,15 +8,27 @@ const DebateScreen := preload("res://duelogue/ui/debate_screen.gd")
 
 func _ready() -> void:
 	var failures := 0
-	# Проверяем не только формулу: длинный текст не должен раздувать реальный Button шире
-	# CARD_W, иначе контейнер и визуал снова будут жить в разных геометриях.
+	var hidden_opening := DebateScreen.board_lines_for_mode([{"theses": 1}], "opening")
+	var shown_locked := DebateScreen.board_lines_for_mode([{"theses": 1}], "locked")
+	failures += _check(hidden_opening.is_empty() and shown_locked.size() == 1,
+		"стартовые Установки скрыты до выбора и появляются сразу после него")
+	# Проверяем не только формулу: большая исходная текстура иконки не должна раздувать
+	# реальный Button шире CARD_W, иначе контейнер и визуал снова живут в разных геометриях.
 	var view := DebateScreen.new()
-	var probe: Button = view._mkcard("РАМКА\n«очень длинное название рамки»", "ffd24a", false, false)
+	var probe: Button = view._mkcard({"type": "U", "steals": false}, "57a3e3", false, false)
 	add_child(probe)
 	await get_tree().process_frame
-	failures += _check(probe.get_combined_minimum_size().x <= 42.01 and probe.size.x <= 42.01,
-		"длинный текст не раздувает мини-карту шире 42 px")
+	failures += _check(probe.get_combined_minimum_size().x <= 42.01 and probe.size.x <= 42.01 and
+		probe.icon != null, "атласная иконка помещается в мини-карту шириной 42 px")
 	probe.queue_free()
+	var theft := view._mkcard({"type": "R", "steals": true}, "e5b84b", false, false)
+	var stolen_thesis := view._mkcard({"type": "T", "steals": false}, "e5b84b", false, false)
+	failures += _check(bool(theft.get_meta("board_visual_steals")) and
+		String(stolen_thesis.get_meta("board_visual_type")) == "T" and
+		not bool(stolen_thesis.get_meta("board_visual_steals")),
+		"Кража и украденный тезис сохраняют разные пиктограммы при общей золотой рамке")
+	theft.free()
+	stolen_thesis.free()
 
 	var counts := [8, 8, 8, 8]
 	var pads := [16.0, 46.0, 16.0, 16.0]
@@ -108,13 +120,13 @@ func _add_probe_group(view: Control, row: Control, x: float, thesis_count: int,
 	group.position.x = x
 	row.add_child(group)
 	var width := DebateScreen._group_width(thesis_count, 4.0)
-	var frame: Button = view._mkcard("РАМКА", "ffd24a", false, false)
+	var frame: Button = view._mkcard({"type": "U", "steals": false}, "57a3e3", false, false)
 	frame.position.x = DebateScreen.board_card_position_x(0.0, width, 16.0, reverse)
 	frame.set_meta("board_card", true)
 	frame.set_meta("board_role", "frame")
 	group.add_child(frame)
 	for i in thesis_count:
-		var thesis: Button = view._mkcard("тезис", "6fcf7f", false, false)
+		var thesis: Button = view._mkcard({"type": "T", "steals": false}, "43c59e", false, false)
 		var ltr_x := 46.0 + float(i) * 46.0
 		thesis.position.x = DebateScreen.board_card_position_x(ltr_x, width, 16.0, reverse)
 		thesis.set_meta("board_card", true)

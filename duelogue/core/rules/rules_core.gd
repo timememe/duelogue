@@ -565,7 +565,8 @@ func clinch_finalize(attacker: String, defender: String, line_index: int, t_adde
 
 # --- Клинч как явный СТЕЙТ (синхронный автомат; волю ведёт драйвер: контроллер/ai) ---
 ## Пусто = нет клинча. Активный: {attacker, defender, idx, t_added, r_count, atk_steals,
-## init_steals, phase}. phase: "await_defend" (ход защитника) | "await_attack" (атакующего).
+## init_steals, sequence, phase}. sequence хранит визуальную хронологию карт клинча;
+## расчёт исхода по-прежнему идёт по счётчикам. phase: "await_defend" | "await_attack".
 ## Заменяет корутинный клинч UI: переходы синхронны, async/пейсинг — забота драйвера.
 var clinch := {}
 
@@ -594,6 +595,8 @@ func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bo
 		"t_added": 0, "r_count": 1, "atk_steals": (1 if init_steals else 0),
 		"init_steals": init_steals, "phase": "await_defend",
 		"named": String(initc.get("named", "")),
+		"sequence": [{"type": TYPE_RAZBOR, "steals": init_steals,
+			"name": String(initc.get("name", ""))}],
 	}
 	return {"card": initc, "is_callback": bool(lines[idx].closed)}
 
@@ -635,7 +638,13 @@ func clinch_submit(decision: String, prefer_steal: bool = true, hand_index: int 
 		var line: Dictionary = sides[clinch.defender].lines[clinch.idx]
 		var dc: Dictionary = _remove_selected_card(clinch.defender, TYPE_TEZIS, hand_index)
 		line.theses = int(line.theses) + 1
+		if dc.get("stolen", false):
+			line.stolen = int(line.get("stolen", 0)) + 1
 		clinch.t_added = int(clinch.t_added) + 1
+		var sequence: Array = clinch.get("sequence", [])
+		sequence.append({"type": TYPE_TEZIS, "stolen": bool(dc.get("stolen", false)),
+			"name": String(dc.get("name", ""))})
+		clinch["sequence"] = sequence
 		if not clinch_freeze:
 			_refill(sides[clinch.defender])
 		clinch.phase = "await_attack"
@@ -650,6 +659,10 @@ func clinch_submit(decision: String, prefer_steal: bool = true, hand_index: int 
 		clinch.r_count = int(clinch.r_count) + 1
 		if ac.get("steals", false):
 			clinch.atk_steals = int(clinch.atk_steals) + 1
+		var sequence: Array = clinch.get("sequence", [])
+		sequence.append({"type": TYPE_RAZBOR, "steals": bool(ac.get("steals", false)),
+			"name": String(ac.get("name", ""))})
+		clinch["sequence"] = sequence
 		if not clinch_freeze:
 			_refill(sides[clinch.attacker])
 		clinch.phase = "await_defend"
@@ -665,6 +678,7 @@ func _finish_clinch() -> Dictionary:
 	var r_count: int = clinch.r_count
 	var atk_steals: int = clinch.atk_steals
 	var named: String = String(clinch.get("named", ""))
+	var sequence: Array = clinch.get("sequence", []).duplicate(true)
 	var info := {"side": attacker, "type": TYPE_RAZBOR}
 	clinch = {}   # очистить ДО finalize, чтобы рендер не считал рамку контестом
 	clinch_finalize(attacker, defender, idx, t_added, r_count, info, atk_steals)
@@ -675,7 +689,7 @@ func _finish_clinch() -> Dictionary:
 	return {
 		"event": "resolved", "info": info, "landed": r_count > t_added,
 		"attacker": attacker, "defender": defender, "idx": idx,
-		"t_added": t_added, "r_count": r_count,
+		"t_added": t_added, "r_count": r_count, "sequence": sequence,
 	}
 
 

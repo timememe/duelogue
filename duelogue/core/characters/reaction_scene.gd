@@ -17,8 +17,9 @@ signal scene_finished
 
 ## Фазы (FADE_IN/FADE_OUT/IMPACT_HOLD) — в ReadingPace: единые часы с пейсингом контроллера
 ## (scene_time/impact_time), чтобы автоход никогда не обрывал идущую сцену.
-const BUBBLE_MARGIN := 32.0  ## отступ бабла от края экрана — бабл держится СО СТОРОНЫ,
-                              ## противоположной портрету, чтобы не лечь на лицо/жест
+const BUBBLE_BOTTOM_MARGIN := 22.0
+const BUBBLE_YOU_COLOR := Color("6fd9a0")
+const BUBBLE_OPP_COLOR := Color("f1a064")
 
 ## Фон крупного плана — аниме-спидлайны (mood_bg.gdshader): длинные штрихи-«веретёна» летят
 ## по направлению эмоции, их края/хвосты РАССЫПАЮТСЯ ДИЗЕРОМ (зерно живёт в самих линиях,
@@ -65,6 +66,11 @@ const MOOD_FX := {
 @onready var _frame_you: Control = %PortraitFrameYou
 @onready var _frame_opp: Control = %PortraitFrameOpp
 @onready var _bubble: Control = $Bubble
+@onready var _bubble_frame: ColorRect = $Bubble/Frame
+@onready var _bubble_frame_mat: ShaderMaterial = _bubble_frame.material as ShaderMaterial
+@onready var _speaker_plate: ColorRect = %SpeakerPlate
+@onready var _speaker_label: Label = %SpeakerLabel
+@onready var _eyebrow: Label = $Bubble/Eyebrow
 @onready var _bubble_label: Label = $Bubble/Label
 
 var _gen := 0            ## генерация; новый show_* инвалидирует ожидающие await прошлого
@@ -145,20 +151,26 @@ func _layout_portrait(side: String, tex: Texture2D) -> void:
 		_portrait.position.x = frame.position.x + frame.size.x - w
 
 
-## Бабл держится со стороны, противоположной портрету, чтобы не перекрывать лицо/жест.
+## Реплика всегда внизу по центру: взгляд игрока остаётся на одной вертикальной оси,
+## а яркий портрет может менять сторону без скачка текста вправо-влево.
 func _layout_bubble(side: String) -> void:
-	var w := _bubble.size.x
-	if side == "you":
-		_bubble.position.x = 1152.0 - BUBBLE_MARGIN - w
-	else:
-		_bubble.position.x = BUBBLE_MARGIN
+	_bubble.position = Vector2(
+		roundf((size.x - _bubble.size.x) * 0.5),
+		size.y - _bubble.size.y - BUBBLE_BOTTOM_MARGIN
+	)
+	var speaker_color := BUBBLE_YOU_COLOR if side == "you" else BUBBLE_OPP_COLOR
+	_speaker_label.text = "ВЫ" if side == "you" else "ОППОНЕНТ"
+	_speaker_plate.color = speaker_color.darkened(0.58)
+	_speaker_label.add_theme_color_override("font_color", speaker_color.lightened(0.22))
+	_bubble_frame_mat.set_shader_parameter("border_color", speaker_color.lightened(0.12))
 
 
 ## Реакция-реплика: сторона side говорит text (реплика карты), портрет portrait_tex,
 ## mood — стейт говорящего (§16) — красит живой фон профилем эмоции (MOOD_FX).
 ## Длительность сцены НЕ фиксирована — определяется скоростью печати текста в бабле плюс
 ## паузой на дочитывание (см. ReadingPace — общая формула с пейсингом battle_controller).
-func show_utterance(side: String, text: String, portrait_tex: Texture2D, mood: String = "", portrait_flip_h: bool = false) -> void:
+func show_utterance(side: String, text: String, portrait_tex: Texture2D, mood: String = "",
+	portrait_flip_h: bool = false, eyebrow: String = "") -> void:
 	_gen += 1
 	var my_gen := _gen
 	_begin_modal_scene()
@@ -174,6 +186,9 @@ func show_utterance(side: String, text: String, portrait_tex: Texture2D, mood: S
 	_portrait.flip_h = portrait_flip_h
 	_layout_bubble(side)
 	_bubble.visible = true
+	_eyebrow.visible = eyebrow != ""
+	_eyebrow.text = eyebrow
+	_bubble_label.offset_top = 12.0
 	_bubble_label.text = text
 	_bubble_label.visible_ratio = 0.0
 	_bubble.scale = Vector2(0.7, 0.7)

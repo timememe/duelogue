@@ -1,72 +1,80 @@
 [gd_scene format=3 uid="uid://bd3duxmbsqulw"]
 
 [ext_resource type="Script" uid="uid://cd2ehqvjenrgm" path="res://duelogue/ui/card/card.gd" id="1"]
+[ext_resource type="Texture2D" uid="uid://v3latncxeffa" path="res://duelogue/assets/cards/card_clean_v1.png" id="2_template"]
 
 [sub_resource type="StyleBoxFlat" id="sb_normal"]
-bg_color = Color(0.1137, 0.1294, 0.1608, 1)
+bg_color = Color(0, 0, 0, 0)
 corner_radius_top_left = 7
 corner_radius_top_right = 7
 corner_radius_bottom_right = 7
 corner_radius_bottom_left = 7
 
 [sub_resource type="StyleBoxFlat" id="sb_pressed"]
-bg_color = Color(0.0824, 0.0941, 0.1216, 1)
+bg_color = Color(0, 0, 0, 0)
 corner_radius_top_left = 7
 corner_radius_top_right = 7
 corner_radius_bottom_right = 7
 corner_radius_bottom_left = 7
 
 [sub_resource type="StyleBoxFlat" id="sb_hover"]
-bg_color = Color(0.149, 0.1725, 0.2196, 1)
+bg_color = Color(0, 0, 0, 0)
 corner_radius_top_left = 7
 corner_radius_top_right = 7
 corner_radius_bottom_right = 7
 corner_radius_bottom_left = 7
 
 [sub_resource type="StyleBoxFlat" id="sb_disabled"]
-bg_color = Color(0.0941, 0.1059, 0.1294, 1)
+bg_color = Color(0, 0, 0, 0)
 corner_radius_top_left = 7
 corner_radius_top_right = 7
 corner_radius_bottom_right = 7
 corner_radius_bottom_left = 7
 
-[sub_resource type="StyleBoxFlat" id="sb_frame"]
-draw_center = false
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.1725, 0.2, 0.251, 1)
-corner_radius_top_left = 7
-corner_radius_top_right = 7
-corner_radius_bottom_right = 7
-corner_radius_bottom_left = 7
-
-[sub_resource type="StyleBoxFlat" id="sb_art"]
-bg_color = Color(0.0784, 0.0902, 0.1137, 1)
-border_width_left = 1
-border_width_top = 1
-border_width_right = 1
-border_width_bottom = 1
-border_color = Color(0.3373, 0.3765, 0.4392, 1)
-corner_radius_top_left = 3
-corner_radius_top_right = 3
-corner_radius_bottom_right = 3
-corner_radius_bottom_left = 3
+[sub_resource type="StyleBoxFlat" id="sb_focus"]
+bg_color = Color(0, 0, 0, 0)
 
 [node name="Card" type="Button" unique_id=1610214493]
 clip_contents = true
-custom_minimum_size = Vector2(124, 186)
-offset_right = 124.0
-offset_bottom = 186.0
+custom_minimum_size = Vector2(141, 188)
+offset_right = 141.0
+offset_bottom = 188.0
 theme_override_styles/normal = SubResource("sb_normal")
 theme_override_styles/pressed = SubResource("sb_pressed")
 theme_override_styles/hover = SubResource("sb_hover")
 theme_override_styles/disabled = SubResource("sb_disabled")
+theme_override_styles/focus = SubResource("sb_focus")
 script = ExtResource("1")
 
-[node name="Frame" type="Panel" parent="." unique_id=1619150121]
+[node name="TitleBackground" type="ColorRect" parent="." unique_id=451082290]
 unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 5.0
+offset_top = 5.0
+offset_right = -6.0
+offset_bottom = 23.0
+grow_horizontal = 2
+mouse_filter = 2
+color = Color(0.4353, 0.8118, 0.498, 1)
+
+[node name="ArtFrame" type="ColorRect" parent="." unique_id=492856180]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 7.0
+offset_top = 24.0
+offset_right = -7.0
+offset_bottom = 89.5
+grow_horizontal = 2
+mouse_filter = 2
+color = Color(0.0196, 0.0314, 0.0471, 1)
+
+[node name="ArtSlot" type="TextureRect" parent="ArtFrame" unique_id=2138458646]
+visible = false
+texture_filter = 4
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -74,99 +82,78 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-theme_override_styles/panel = SubResource("sb_frame")
+expand_mode = 1
+stretch_mode = 5
 
-[node name="TitlePlate" type="ColorRect" parent="." unique_id=119111587]
+[node name="CardTemplate" type="TextureRect" parent="." unique_id=119111587]
 unique_name_in_owner = true
+texture_filter = 4
 layout_mode = 1
-anchors_preset = 10
+anchors_preset = 15
 anchor_right = 1.0
-offset_left = 2.0
-offset_top = 2.0
-offset_right = -2.0
-offset_bottom = 26.0
+anchor_bottom = 1.0
 grow_horizontal = 2
+grow_vertical = 2
 mouse_filter = 2
-color = Color(0.4353, 0.8118, 0.498, 1)
+texture = ExtResource("2_template")
+expand_mode = 1
+
+[node name="TypeIcon" type="TextureRect" parent="." unique_id=1307421333]
+unique_name_in_owner = true
+texture_filter = 4
+layout_mode = 0
+offset_left = 9.0
+offset_top = 8.5
+offset_right = 22.0
+offset_bottom = 21.5
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
 
 [node name="Title" type="Label" parent="." unique_id=1176663477]
 unique_name_in_owner = true
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
-offset_left = 8.0
-offset_top = 4.0
-offset_right = -8.0
-offset_bottom = 24.0
+offset_left = 24.0
+offset_top = 7.0
+offset_right = -10.0
+offset_bottom = 23.0
 grow_horizontal = 2
-theme_override_colors/font_color = Color(0.0902, 0.102, 0.1294, 1)
-theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(0.0784, 0.0941, 0.1255, 1)
+theme_override_font_sizes/font_size = 10
 text = "Название"
 horizontal_alignment = 1
+vertical_alignment = 1
 clip_text = true
 
-[node name="ArtFrame" type="Panel" parent="." unique_id=492856180]
+[node name="TextArea" type="Control" parent="." unique_id=1757261429]
 unique_name_in_owner = true
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
-offset_left = 8.0
-offset_top = 31.0
-offset_right = -8.0
-offset_bottom = 91.0
+offset_left = 10.0
+offset_top = 92.0
+offset_right = -10.0
+offset_bottom = 180.0
 grow_horizontal = 2
 mouse_filter = 2
-theme_override_styles/panel = SubResource("sb_art")
 
-[node name="ArtSlot" type="TextureRect" parent="ArtFrame" unique_id=2138458646]
-visible = false
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = 1.0
-offset_top = 1.0
-offset_right = -1.0
-offset_bottom = -1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-expand_mode = 1
-stretch_mode = 6
-
-[node name="Body" type="Label" parent="." unique_id=1233515596]
+[node name="Body" type="Label" parent="TextArea" unique_id=1233515596]
 unique_name_in_owner = true
 clip_contents = true
+clip_text = true
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 9.0
-offset_top = 96.0
-offset_right = -9.0
-offset_bottom = -20.0
+offset_left = 2.0
+offset_top = 2.0
+offset_right = -2.0
+offset_bottom = -2.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_colors/font_color = Color(0.8039, 0.8314, 0.8745, 1)
+theme_override_colors/font_color = Color(0.1216, 0.1137, 0.1059, 1)
 theme_override_font_sizes/font_size = 10
 text = "Текст высказывания"
 autowrap_mode = 3
-
-[node name="NamedRibbon" type="Label" parent="." unique_id=177374796]
-unique_name_in_owner = true
-visible = false
-layout_mode = 1
-anchors_preset = 12
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = 8.0
-offset_top = -18.0
-offset_right = -8.0
-offset_bottom = -5.0
-grow_horizontal = 2
-grow_vertical = 0
-theme_override_colors/font_color = Color(1, 0.8235, 0.2902, 1)
-theme_override_font_sizes/font_size = 9
-text = "★ именной приём"
-horizontal_alignment = 2
