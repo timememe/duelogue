@@ -13,10 +13,11 @@ signal match_started(info: Dictionary)          ## новая партия: {the
 signal turn_changed(side: String)               ## начинается ход стороны ("you"/"opp")
 signal utterance(side: String, text: String, meta: Dictionary)  ## реплика стороны (meta: {tag, stance})
 signal narration(text: String, meta: Dictionary)                ## голос зала / ремарка
-## Накопительное психологическое состояние и непроизвольная реакция. v0.1 — только
-## презентация: подписчики не должны менять через эти сигналы правила боя.
+## Накопительное психологическое состояние, непроизвольная реакция и связь двух шкал.
+## Только презентация: подписчики не должны менять через эти сигналы правила боя.
 signal emotion_changed(side: String, state: Dictionary)
 signal emotion_reacted(side: String, reaction: Dictionary)
+signal emotion_linked(source_side: String, responder_side: String, result: Dictionary)
 signal clinch_started(attacker: String, defender: String, idx: int)  ## завязка клинча
 signal clinch_resolved(result: Dictionary)      ## клинч закрыт (JSONL-подобный итог)
 signal impact(side: String, kind: String)       ## яркий исход по стороне side (kind: "landed"/"removed")

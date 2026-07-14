@@ -1,7 +1,7 @@
 extends "res://duelogue/app/battle_controller.gd"
 
 ## Интеграционный smoke: BattleController действительно проводит реакционную реплику,
-## но эмоциональное ядро v0.1 ни на байт не меняет rules_core.
+## но эмоциональное ядро v0.2 ни на байт не меняет rules_core.
 
 var failures := 0
 var spoken: Array = []
@@ -22,8 +22,14 @@ func _run_smoke() -> void:
 	var turn_before: int = int(model.turn_count)
 	var zal_before: int = int(model.zal())
 	await _emotion_event(SIDE_YOU, "frame_lost", 3, {"target": "тестовая рамка"})
-	_check(spoken.size() == 1 and bool((spoken[0] as Dictionary).meta.get("reaction", false)),
+	_check(spoken.size() == 2 and bool((spoken[0] as Dictionary).meta.get("reaction", false)),
 		"контроллер подал отдельную реакционную реплику")
+	_check(String((spoken[1] as Dictionary).side) == SIDE_OPP and
+		String((spoken[1] as Dictionary).meta.get("reaction_kind", "")) == "parry",
+		"спокойный оппонент немедленно парирует срыв")
+	_check(int(emotion_state(SIDE_OPP).strain) == 0 and
+		int(emotion_state(SIDE_OPP).reactions) == 0,
+		"спокойная парировка не тратит шкалу или реакционную карту")
 	_check(int(emotion_state(SIDE_YOU).reactions) == 1,
 		"контроллер читает состояние эмоционального ядра")
 	_check(JSON.stringify(model.sides) == model_before and model.turn_count == turn_before and
@@ -31,6 +37,21 @@ func _run_smoke() -> void:
 		"реакция не меняет доску, руку, ход или зал")
 
 	start_match()
+	spoken.clear()
+	emotion.observe(SIDE_YOU, "argument_lost", 3, {}, 0.99)
+	emotion.observe(SIDE_OPP, "argument_lost", 5, {}, 0.99)
+	var chain_model_before := JSON.stringify(model.sides)
+	await _emotion_event(SIDE_YOU, "frame_lost", 3, {"target": "цепная рамка"})
+	_check(spoken.size() == 2 and
+		String((spoken[1] as Dictionary).meta.get("reaction_kind", "")) == "counter_burst",
+		"сторона на 5/6 отвечает собственной реакционной картой")
+	_check(int(emotion_state(SIDE_OPP).reactions) == 1,
+		"чужой срыв связал вторую шкалу с субколодой")
+	_check(JSON.stringify(model.sides) == chain_model_before,
+		"цепная эмоциональная реакция не меняет rules_core")
+
+	start_match()
+	spoken.clear()
 	var rally_model_before := JSON.stringify(model.sides)
 	await _emotion_clinch_round(SIDE_YOU, SIDE_OPP, "тестовая рамка")
 	_check(int(emotion_state(SIDE_YOU).strain) == 1 and

@@ -2,41 +2,7 @@
 
 [ext_resource type="Script" uid="uid://keyqp33rwswf" path="res://duelogue/ui/debate_screen.gd" id="1"]
 [ext_resource type="PackedScene" uid="uid://dwtmtf8q0p2r7" path="res://duelogue/core/stage/stage.tscn" id="2"]
-[ext_resource type="PackedScene" path="res://duelogue/core/characters/reaction_scene.tscn" id="3"]
-
-[sub_resource type="Shader" id="Shader_hand_dither"]
-code = "shader_type canvas_item;
-
-uniform vec4 shadow_color : source_color = vec4(0.018, 0.024, 0.040, 0.86);
-
-float bayer4(vec2 pixel) {
-	ivec2 p = ivec2(mod(floor(pixel), 4.0));
-	float value = 0.0;
-	if (p.y == 0) {
-		value = p.x == 0 ? 0.0 : (p.x == 1 ? 8.0 : (p.x == 2 ? 2.0 : 10.0));
-	} else if (p.y == 1) {
-		value = p.x == 0 ? 12.0 : (p.x == 1 ? 4.0 : (p.x == 2 ? 14.0 : 6.0));
-	} else if (p.y == 2) {
-		value = p.x == 0 ? 3.0 : (p.x == 1 ? 11.0 : (p.x == 2 ? 1.0 : 9.0));
-	} else {
-		value = p.x == 0 ? 15.0 : (p.x == 1 ? 7.0 : (p.x == 2 ? 13.0 : 5.0));
-	}
-	return (value + 0.5) / 16.0;
-}
-
-void fragment() {
-	float vertical = smoothstep(0.02, 0.78, UV.y);
-	float side = smoothstep(0.0, 0.09, UV.x) * smoothstep(0.0, 0.09, 1.0 - UV.x);
-	float coverage = clamp((0.06 + vertical * 0.9) * side, 0.0, 1.0);
-	float mask = step(bayer4(FRAGCOORD.xy / 2.0), coverage);
-	float alpha = shadow_color.a * mask * (0.32 + vertical * 0.68);
-	COLOR = vec4(shadow_color.rgb, alpha);
-}
-"
-
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_hand_dither"]
-shader = SubResource("Shader_hand_dither")
-shader_parameter/shadow_color = Color(0.018, 0.024, 0.04, 0.86)
+[ext_resource type="PackedScene" uid="uid://dswk2icr7etk1" path="res://duelogue/core/characters/reaction_scene.tscn" id="3"]
 
 [sub_resource type="Shader" id="Shader_board_dither"]
 code = "shader_type canvas_item;
@@ -71,6 +37,40 @@ void fragment() {
 shader = SubResource("Shader_board_dither")
 shader_parameter/fill_color = Color(0.11, 0.15, 0.22, 0.56)
 shader_parameter/edge_fade = 0.065
+
+[sub_resource type="Shader" id="Shader_hand_dither"]
+code = "shader_type canvas_item;
+
+uniform vec4 shadow_color : source_color = vec4(0.018, 0.024, 0.040, 0.86);
+
+float bayer4(vec2 pixel) {
+	ivec2 p = ivec2(mod(floor(pixel), 4.0));
+	float value = 0.0;
+	if (p.y == 0) {
+		value = p.x == 0 ? 0.0 : (p.x == 1 ? 8.0 : (p.x == 2 ? 2.0 : 10.0));
+	} else if (p.y == 1) {
+		value = p.x == 0 ? 12.0 : (p.x == 1 ? 4.0 : (p.x == 2 ? 14.0 : 6.0));
+	} else if (p.y == 2) {
+		value = p.x == 0 ? 3.0 : (p.x == 1 ? 11.0 : (p.x == 2 ? 1.0 : 9.0));
+	} else {
+		value = p.x == 0 ? 15.0 : (p.x == 1 ? 7.0 : (p.x == 2 ? 13.0 : 5.0));
+	}
+	return (value + 0.5) / 16.0;
+}
+
+void fragment() {
+	float vertical = smoothstep(0.02, 0.78, UV.y);
+	float side = smoothstep(0.0, 0.09, UV.x) * smoothstep(0.0, 0.09, 1.0 - UV.x);
+	float coverage = clamp((0.06 + vertical * 0.9) * side, 0.0, 1.0);
+	float mask = step(bayer4(FRAGCOORD.xy / 2.0), coverage);
+	float alpha = shadow_color.a * mask * (0.32 + vertical * 0.68);
+	COLOR = vec4(shadow_color.rgb, alpha);
+}
+"
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_hand_dither"]
+shader = SubResource("Shader_hand_dither")
+shader_parameter/shadow_color = Color(0.018, 0.024, 0.04, 0.86)
 
 [node name="DebateScreen" type="Control" unique_id=805132598]
 layout_mode = 3
@@ -372,9 +372,6 @@ offset_bottom = 640.0
 mouse_filter = 2
 
 [node name="HandDither" type="ColorRect" parent="HandArea" unique_id=1249591870]
-# Рисуется после Stage, но до последующих детей HandArea: дизерная подложка
-# отделяет руку от локации, не затемняя сами карты и стопки.
-z_index = 0
 material = SubResource("ShaderMaterial_hand_dither")
 layout_mode = 1
 anchors_preset = 15
@@ -538,8 +535,6 @@ text = "☰ Меню"
 
 [node name="ReactionScene" parent="." unique_id=104865197 instance=ExtResource("3")]
 layout_mode = 1
-grow_horizontal = 2
-grow_vertical = 2
 
 [node name="CardInfoBubble" type="Panel" parent="." unique_id=1778430210]
 unique_name_in_owner = true

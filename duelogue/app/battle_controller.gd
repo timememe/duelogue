@@ -64,6 +64,9 @@ const OPENING_APPEAL_BY_STYLE := {
 const NAMED_OPP := []
 const AI_DELAY := 0.55
 const CLINCH_STEP_DELAY := 0.45
+## Начальная реакция + максимум два звена ответа. Cooldown почти всегда гасит второе звено,
+## но жёсткий cap сохраняет безопасность при будущих архетипах с другой разрядкой.
+const MAX_REACTION_REPLIES := 2
 const LOG_PATH := "res://duelogue/tools/playtest_log.jsonl"
 const TX_PATH := "res://duelogue/tools/narrative_transcript.md"
 
@@ -203,7 +206,7 @@ func active_theme_id() -> String:
 
 
 ## Read-only снимок накопительного напряжения для view. Оно живёт рядом с rules/narrative,
-## но v0.1 не входит ни в один расчёт правил и не может изменить исход партии.
+## но v0.2 не входит ни в один расчёт правил и не может изменить исход партии.
 func emotion_state(side: String) -> Dictionary:
 	return emotion.state(side) if emotion != null else {}
 
@@ -729,8 +732,8 @@ func _narrate(text: String, tag: String = "") -> void:
 	_tx(tag, "· " + text)
 
 
-## Один stimulus → рост шкалы → возможно, одна непроизвольная реплика. Никаких мутаций
-## model: первая итерация доказывает только фановость, частоту и модульность субколоды.
+## Один stimulus → рост шкалы → возможно, одна непроизвольная реплика и ограниченный ответ
+## второй шкалы. Никаких мутаций model: вся цепочка остаётся presentation/fun-слоем.
 func _emotion_event(side: String, stimulus: String, intensity: int,
 	context: Dictionary = {}) -> Dictionary:
 	if emotion == null:
@@ -738,6 +741,15 @@ func _emotion_event(side: String, stimulus: String, intensity: int,
 	var result: Dictionary = emotion.observe(side, stimulus, intensity, context)
 	if result.is_empty():
 		return result
+	await _resolve_emotion_result(result, context, 0, "", "event")
+	return result
+
+
+func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_depth: int,
+	source_side: String, link_kind: String) -> void:
+	var my_epoch := _epoch
+	var side := String(result.side)
+	var stimulus := String(result.stimulus)
 	var reaction: Dictionary = result.get("reaction", {})
 	var ev := {
 		"ev": "emotion", "side": side, "stimulus": stimulus,
@@ -746,23 +758,62 @@ func _emotion_event(side: String, stimulus: String, intensity: int,
 		"roll": float(result.roll), "reaction": String(reaction.get("id", "")),
 		"reaction_title": String(reaction.get("title", "")),
 		"reaction_draw_left": int(result.draw_left),
+		"link_kind": link_kind, "source_side": source_side, "chain_depth": chain_depth,
 	}
 	ev.merge(_econ())
 	_emit(ev)
 	EventBus.emotion_changed.emit(side, emotion.state(side))
 	_changed()
 	if reaction.is_empty():
-		return result
+		return
 	EventBus.emotion_reacted.emit(side, reaction)
 	await _say(side, String(reaction.text), "    reaction %s %s %d→%d→%d" % [
 		side, String(reaction.id), int(result.before), int(result.peak), int(result.after)],
 		"", false, String(reaction.get("mood", "burst")), {
 			"reaction": true,
+			"reaction_kind": "counter_burst" if chain_depth > 0 else "burst",
 			"reaction_id": String(reaction.id),
 			"reaction_title": String(reaction.title),
+			"reaction_source": source_side,
+			"reaction_chain_depth": chain_depth,
 			"strain": int(result.after),
 		})
-	return result
+	if my_epoch != _epoch:
+		return
+	if chain_depth < MAX_REACTION_REPLIES:
+		await _answer_emotional_reaction(side, context, chain_depth + 1)
+
+
+func _answer_emotional_reaction(source_side: String, context: Dictionary,
+	chain_depth: int) -> void:
+	var responder: String = String(model.other(source_side))
+	var answer: Dictionary = emotion.answer_reaction(responder, context)
+	if answer.is_empty():
+		return
+	var kind := String(answer.get("kind", "none"))
+	EventBus.emotion_linked.emit(source_side, responder, answer)
+	if kind == "parry":
+		var parry: Dictionary = answer.get("parry", {})
+		var ev := {
+			"ev": "emotion_link", "kind": "parry", "source_side": source_side,
+			"side": responder, "before": int(answer.before), "after": int(answer.after),
+			"parry": String(parry.get("id", "")), "chain_depth": chain_depth,
+		}
+		ev.merge(_econ())
+		_emit(ev)
+		await _say(responder, String(parry.text), "    parry %s→%s %s" % [
+			source_side, responder, String(parry.id)], "", false,
+			String(parry.get("mood", "swagger")), {
+				"reaction_response": true,
+				"reaction_kind": "parry",
+				"reaction_id": String(parry.id),
+				"reaction_title": String(parry.title),
+				"reaction_source": source_side,
+				"reaction_chain_depth": chain_depth,
+			})
+		return  # спокойная парировка закрывает эмоциональный обмен
+	# absorb остаётся немым; trigger содержит полноценную карту и продолжит цепь.
+	await _resolve_emotion_result(answer, context, chain_depth, source_side, kind)
 
 
 ## Один завершённый раунд затянувшегося клинча: обоим +1. Последовательный вызов сохраняет

@@ -15,6 +15,7 @@ func _init() -> void:
 	_test_curve()
 	_test_deck_contract()
 	_test_state_and_reaction()
+	_test_reaction_relation()
 	_test_finite_independent_decks()
 	print("=== ИТОГ: %s ===" % ("OK" if failures == 0 else "FAIL (%d)" % failures))
 	quit(0 if failures == 0 else 1)
@@ -35,7 +36,17 @@ func _test_deck_contract() -> void:
 	var data := DefaultDeck.data()
 	var seen := {}
 	var stimuli := ["argument_lost", "frame_lost", "captured", "attack_stalled", "dirty_hit",
-		"clinch_pressure"]
+		"clinch_pressure", "reaction_received"]
+	var parry_seen := {}
+	_check(not (data.parries as Array).is_empty(), "архетип задаёт спокойные парировки")
+	for raw_parry in data.parries:
+		var parry: Dictionary = raw_parry
+		var parry_id := String(parry.get("id", ""))
+		_check(parry_id != "" and not parry_seen.has(parry_id),
+			"у парировки уникальный id: %s" % parry_id)
+		parry_seen[parry_id] = true
+		_check(String(parry.get("text", "")).length() <= 150,
+			"парировка %s помещается в микросцену" % parry_id)
 	for raw in data.cards:
 		var card: Dictionary = raw
 		var id := String(card.get("id", ""))
@@ -77,6 +88,49 @@ func _test_state_and_reaction() -> void:
 	_check(int(after_cooldown.peak) == EmotionCore.MAX_STRAIN and
 		not (after_cooldown.reaction as Dictionary).is_empty(),
 		"после разрядки достижение 6/6 снова гарантирует реакцию")
+
+
+func _test_reaction_relation() -> void:
+	var calm := EmotionCore.new()
+	calm.start(DefaultDeck.data(), 120, ["you", "opp"])
+	var calm_draw := int(calm.state("opp").draw_left)
+	var parry: Dictionary = calm.answer_reaction("opp", {"target": "проверочная рамка"}, 0.0)
+	_check(String(parry.kind) == "parry" and not (parry.parry as Dictionary).is_empty(),
+		"спокойная сторона парирует чужой срыв")
+	_check(int(calm.state("opp").strain) == 0 and int(calm.state("opp").draw_left) == calm_draw,
+		"парировка не нагревает шкалу и не тратит реакционную карту")
+	_check(int(calm.state("opp").parries) == 1,
+		"ядро считает спокойные ответы отдельно от срывов")
+	_check(String((parry.parry as Dictionary).text).find("{target}") < 0,
+		"парировка получает контекст цели")
+
+	var warm := EmotionCore.new()
+	warm.start(DefaultDeck.data(), 121, ["you", "opp"])
+	warm.observe("opp", "argument_lost", 2, {}, 0.99)
+	var pressure: Dictionary = warm.answer_reaction("opp", {}, 0.99)
+	_check(String(pressure.kind) == "absorb" and int(pressure.delta) == 0 and
+		int(pressure.after) == 2,
+		"середина шкалы выдерживает чужой срыв без самоподогрева")
+
+	var hot := EmotionCore.new()
+	hot.start(DefaultDeck.data(), 122, ["you", "opp"])
+	hot.observe("opp", "argument_lost", 4, {}, 0.99)
+	var triggered: Dictionary = hot.answer_reaction("opp", {"target": "проверочная рамка"}, 0.0)
+	_check(String(triggered.kind) == "trigger" and int(triggered.delta) == 1 and
+		int(triggered.peak) == 5,
+		"на 4/6 чужой срыв даёт вероятностный триггер")
+	_check(not (triggered.reaction as Dictionary).is_empty() and
+		String((triggered.reaction as Dictionary).stimulus) == "reaction_received",
+		"триггер вытаскивает контекстную карту ответа")
+	_check(int(hot.state("opp").linked_reactions) == 1,
+		"ядро считает ответные срывы отдельно")
+
+	var brink := EmotionCore.new()
+	brink.start(DefaultDeck.data(), 123, ["you", "opp"])
+	brink.observe("opp", "argument_lost", 5, {}, 0.99)
+	var guaranteed: Dictionary = brink.answer_reaction("opp", {}, 0.99)
+	_check(String(guaranteed.kind) == "trigger" and int(guaranteed.peak) == 6,
+		"на 5/6 чужой срыв гарантированно запускает ответ")
 
 
 func _test_finite_independent_decks() -> void:

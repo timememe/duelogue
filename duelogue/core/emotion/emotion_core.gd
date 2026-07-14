@@ -1,10 +1,10 @@
 extends RefCounted
 
-## DUELOGUE — ЧИСТОЕ ЯДРО ЭМОЦИОНАЛЬНОГО НАПРЯЖЕНИЯ v0.1.
+## DUELOGUE — ЧИСТОЕ ЯДРО ЭМОЦИОНАЛЬНОГО НАПРЯЖЕНИЯ v0.2.
 ##
 ## Вход: уже разрешённый боевой stimulus + интенсивность. Выход: новое состояние шкалы и,
 ## возможно, одна карта из конечной субколоды реакций. Ядро НЕ знает о теме, картах основной
-## колоды, зале, рамках, UI и async; v0.1 не имеет механических последствий для боя.
+## колоды, зале, рамках, UI и async; v0.2 не имеет механических последствий для боя.
 ##
 ## У каждой стороны своя шкала и своя копия одной data-колоды. Срыв вероятностный, но
 ## телеграфируемый шкалой; после реакции напряжение разряжается, карта уходит в сброс,
@@ -12,10 +12,13 @@ extends RefCounted
 
 const MAX_STRAIN := 6
 const CHANCE_BY_STRAIN := [0.0, 0.0, 0.05, 0.15, 0.30, 0.55, 1.0]
+const CALM_PARRY_MAX := 1
+const HOT_TRIGGER_MIN := 4
 
 var deck_id := ""
 var deck_label := ""
 var _deck_cards: Array = []
+var _parry_cards: Array = []
 var _states := {}
 var _rng := RandomNumberGenerator.new()
 
@@ -24,17 +27,24 @@ func start(deck_data: Dictionary, seed_value: int, sides: Array = ["you", "opp"]
 	deck_id = String(deck_data.get("id", "reactions"))
 	deck_label = String(deck_data.get("label", deck_id))
 	_deck_cards = (deck_data.get("cards", []) as Array).duplicate(true)
+	_parry_cards = (deck_data.get("parries", []) as Array).duplicate(true)
 	_states = {}
 	_rng.seed = seed_value
 	for side in sides:
 		var draw := _deck_cards.duplicate(true)
+		var parry_draw := _parry_cards.duplicate(true)
 		_shuffle(draw)
+		_shuffle(parry_draw)
 		_states[String(side)] = {
 			"strain": 0,
 			"draw": draw,
 			"discard": [],
 			"cooldown": 0,
 			"reactions": 0,
+			"linked_reactions": 0,
+			"parries": 0,
+			"parry_draw": parry_draw,
+			"parry_discard": [],
 		}
 
 
@@ -47,6 +57,8 @@ func state(side: String) -> Dictionary:
 		return {
 			"strain": 0, "max": MAX_STRAIN, "chance": 0.0,
 			"draw_left": 0, "discarded": 0, "cooldown": 0, "reactions": 0,
+			"linked_reactions": 0, "parries": 0,
+			"parries_left": 0,
 			"deck_id": deck_id, "deck_label": deck_label,
 		}
 	var s: Dictionary = _states[side]
@@ -58,9 +70,46 @@ func state(side: String) -> Dictionary:
 		"discarded": (s.discard as Array).size(),
 		"cooldown": int(s.cooldown),
 		"reactions": int(s.reactions),
+		"linked_reactions": int(s.linked_reactions),
+		"parries": int(s.parries),
+		"parries_left": (s.parry_draw as Array).size(),
 		"deck_id": deck_id,
 		"deck_label": deck_label,
 	}
+
+
+## Связать чужой срыв с текущим состоянием второй шкалы.
+## 0–1 без cooldown: бесплатная спокойная парировка, шкала и реакционная колода не меняются.
+## 2–3 или любая разрядка: сторона выдерживает вспышку без самоподогрева. Только 4–5 без
+## cooldown превращает чужой срыв в триггер +1 и запускает обычную политику observe:
+## на 4/6 ответ вероятностный (55%), на 5/6 — гарантированный.
+func answer_reaction(side: String, context: Dictionary = {},
+	roll_override: float = -1.0) -> Dictionary:
+	if not _states.has(side):
+		return {}
+	var s: Dictionary = _states[side]
+	var strain := int(s.strain)
+	if strain <= CALM_PARRY_MAX and int(s.cooldown) == 0:
+		var parry := _draw_parry(s, context)
+		return {
+			"kind": "parry" if not parry.is_empty() else "none",
+			"side": side, "stimulus": "reaction_received",
+			"before": strain, "peak": strain, "after": strain, "delta": 0,
+			"chance": 0.0, "roll": -1.0, "reaction": {}, "parry": parry,
+			"cooldown": int(s.cooldown), "draw_left": (s.draw as Array).size(),
+		}
+	if strain < HOT_TRIGGER_MIN or int(s.cooldown) > 0:
+		return {
+			"kind": "absorb", "side": side, "stimulus": "reaction_received",
+			"before": strain, "peak": strain, "after": strain, "delta": 0,
+			"chance": 0.0, "roll": -1.0, "reaction": {}, "parry": {},
+			"cooldown": int(s.cooldown), "draw_left": (s.draw as Array).size(),
+		}
+	var result := observe(side, "reaction_received", 1, context, roll_override)
+	result["kind"] = "trigger" if not (result.get("reaction", {}) as Dictionary).is_empty() \
+		else "absorb"
+	result["parry"] = {}
+	return result
 
 
 ## Зарегистрировать эмоциональный стимул. roll_override ∈ [0,1] позволяет симулятору
@@ -97,6 +146,8 @@ func observe(side: String, stimulus: String, intensity: int = 1,
 			s.strain = maxi(0, int(s.strain) - vent)
 			s.cooldown = 1
 			s.reactions = int(s.reactions) + 1
+			if stimulus == "reaction_received":
+				s.linked_reactions = int(s.linked_reactions) + 1
 	return {
 		"side": side,
 		"stimulus": stimulus,
@@ -141,6 +192,31 @@ func _realize(card: Dictionary, stimulus: String, context: Dictionary) -> Dictio
 		"mood": String(card.get("mood", "burst")),
 		"vent": int(card.get("vent", 3)),
 		"stimulus": stimulus,
+	}
+
+
+func _draw_parry(s: Dictionary, context: Dictionary) -> Dictionary:
+	var draw: Array = s.parry_draw
+	if draw.is_empty() and not (s.parry_discard as Array).is_empty():
+		draw = (s.parry_discard as Array).duplicate(true)
+		s.parry_discard = []
+		_shuffle(draw)
+		s.parry_draw = draw
+	if draw.is_empty():
+		return {}
+	var card: Dictionary = draw.pop_front()
+	(s.parry_discard as Array).append(card)
+	s.parries = int(s.parries) + 1
+	var text := String(card.get("text", ""))
+	var target := String(context.get("target", "эта позиция")).strip_edges()
+	if target == "":
+		target = "эта позиция"
+	text = text.replace("{target}", target)
+	return {
+		"id": String(card.get("id", "calm_parry")),
+		"title": String(card.get("title", "Холодная парировка")),
+		"text": text,
+		"mood": String(card.get("mood", "swagger")),
 	}
 
 

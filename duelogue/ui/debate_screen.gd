@@ -175,9 +175,19 @@ func _on_match_started(_info: Dictionary) -> void:
 func _on_utterance(side: String, text: String, meta: Dictionary) -> void:
 	var col := COL_YOU if side == ZalV3.SIDE_YOU else COL_OPP
 	var who := "Вы" if side == ZalV3.SIDE_YOU else "Оппонент"
-	var role := "РЕАКЦИЯ · %s" % String(meta.get("reaction_title", "срыв")) \
-		if meta.get("reaction", false) else String(meta.get("stance", ""))
-	var bolt := "⚡ " if meta.get("reaction", false) else ""
+	var kind := String(meta.get("reaction_kind", ""))
+	var role := String(meta.get("stance", ""))
+	var bolt := ""
+	match kind:
+		"parry":
+			role = "ПАРИРОВКА · %s" % String(meta.get("reaction_title", "холодный ответ"))
+			bolt = "↩ "
+		"counter_burst":
+			role = "ОТВЕТНЫЙ СРЫВ · %s" % String(meta.get("reaction_title", "реакция"))
+			bolt = "⚡↯ "
+		"burst":
+			role = "РЕАКЦИЯ · %s" % String(meta.get("reaction_title", "срыв"))
+			bolt = "⚡ "
 	_log("[color=#%s]— %s%s (%s):[/color] %s" % [col, bolt, who, role, text])
 	_log_rt.text = "\n".join(log_lines)
 

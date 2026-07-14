@@ -146,8 +146,13 @@ func _on_utterance(side: String, text: String, meta: Dictionary) -> void:
 	var mood := String(meta.get("mood", ""))
 	var tex := _state_tex_for(side, mood, String(meta.get("card_type", "")), bool(meta.get("steals", false)))
 	var eyebrow := ""
-	if bool(meta.get("reaction", false)):
-		eyebrow = "ЭМОЦИОНАЛЬНЫЙ СРЫВ · %s" % String(meta.get("reaction_title", "Реакция"))
+	match String(meta.get("reaction_kind", "")):
+		"parry":
+			eyebrow = "ХОЛОДНАЯ ПАРИРОВКА · %s" % String(meta.get("reaction_title", "Ответ"))
+		"counter_burst":
+			eyebrow = "ЦЕПНАЯ РЕАКЦИЯ · %s" % String(meta.get("reaction_title", "Срыв"))
+		"burst":
+			eyebrow = "ЭМОЦИОНАЛЬНЫЙ СРЫВ · %s" % String(meta.get("reaction_title", "Реакция"))
 	await get_tree().create_timer(ReadingPace.BOARD_BEAT).timeout
 	# Муд едет и в сцену: тот же стейт ведёт портрет И профиль живого фона (MOOD_FX).
 	_reaction.show_utterance(side, text, tex, mood, _portrait_flip_h_for(side), eyebrow)

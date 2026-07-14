@@ -14,6 +14,7 @@ const ShawarmaTheme := preload("res://duelogue/core/narrative/themes/theme_shawa
 const EvangelionTheme := preload("res://duelogue/core/narrative/themes/theme_evangelion.gd")
 
 const TX_PATH := "res://duelogue/tools/narrative_transcript_smoke.md"
+const MAX_REACTION_REPLIES := 2
 
 var model: RefCounted
 var nar: RefCounted
@@ -184,15 +185,33 @@ func _show_end() -> void:
 	var eo: Dictionary = emotion.state(ZalV3.SIDE_OPP)
 	_narrate("ЭМОЦИИ: вы %d/6, реакций %d · оппонент %d/6, реакций %d." % [
 		int(ey.strain), int(ey.reactions), int(eo.strain), int(eo.reactions)], "emotion summary")
+	_narrate("СВЯЗКИ: парировок %d · ответных срывов %d." % [
+		int(ey.parries) + int(eo.parries),
+		int(ey.linked_reactions) + int(eo.linked_reactions)], "emotion links")
 
 
 func _emotion_event(side: String, stimulus: String, intensity: int, target: String) -> void:
 	var result: Dictionary = emotion.observe(side, stimulus, intensity, {"target": target})
+	_emotion_result(result, target, 0)
+
+
+func _emotion_result(result: Dictionary, target: String, chain_depth: int) -> void:
 	var reaction: Dictionary = result.get("reaction", {})
 	if reaction.is_empty():
 		return
+	var side := String(result.side)
 	_say(side, String(reaction.text), "    reaction %s %s %d→%d→%d" % [
 		side, String(reaction.id), int(result.before), int(result.peak), int(result.after)])
+	if chain_depth >= MAX_REACTION_REPLIES:
+		return
+	var responder: String = String(model.other(side))
+	var answer: Dictionary = emotion.answer_reaction(responder, {"target": target})
+	if String(answer.get("kind", "")) == "parry":
+		var parry: Dictionary = answer.parry
+		_say(responder, String(parry.text), "    parry %s→%s %s" % [
+			side, responder, String(parry.id)])
+		return
+	_emotion_result(answer, target, chain_depth + 1)
 
 
 # --- helpers (зеркало zal_narr.gd) ---
