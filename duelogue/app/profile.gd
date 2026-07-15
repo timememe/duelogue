@@ -20,7 +20,10 @@ const CLASSIC := {"u": 3, "t": 8, "r": 9, "steals": 2, "named": []}
 const OPP_STYLES := ["smart", "balanced", "aggro", "tall", "wide"]
 
 var deck := {}
-var settings := {"opp_style": "smart", "chars_per_sec": 30.0, "cutscenes": true}
+var settings := {
+	"opp_style": "smart", "chars_per_sec": 30.0, "cutscenes": true,
+	"outcome_profile": "vector_reaction",
+}
 
 
 func _ready() -> void:

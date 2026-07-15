@@ -461,16 +461,269 @@ theme_override_font_sizes/font_size = 11
 text = "СБРОС"
 horizontal_alignment = 1
 
-[node name="Flash" type="Label" parent="." unique_id=745527229]
+[node name="FinalOverlay" type="Control" parent="."]
 unique_name_in_owner = true
-modulate = Color(1, 1, 1, 0)
+visible = false
+z_index = 120
 layout_mode = 1
-offset_top = 290.0
-offset_right = 1152.0
-offset_bottom = 370.0
-theme_override_font_sizes/font_size = 40
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+
+[node name="Dim" type="ColorRect" parent="FinalOverlay"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.025, 0.031, 0.045, 0.9)
+
+[node name="Panel" type="ColorRect" parent="FinalOverlay"]
+layout_mode = 1
+offset_left = 170.0
+offset_top = 58.0
+offset_right = 982.0
+offset_bottom = 590.0
+color = Color(0.072, 0.086, 0.118, 1)
+
+[node name="Accent" type="ColorRect" parent="FinalOverlay/Panel"]
+layout_mode = 1
+offset_right = 812.0
+offset_bottom = 4.0
+mouse_filter = 2
+color = Color(0.898, 0.722, 0.294, 1)
+
+[node name="FinalTitle" type="Label" parent="FinalOverlay/Panel"]
+layout_mode = 1
+offset_left = 24.0
+offset_top = 17.0
+offset_right = 788.0
+offset_bottom = 45.0
+theme_override_colors/font_color = Color(0.898, 0.722, 0.294, 1)
+theme_override_font_sizes/font_size = 19
+text = "ПРОТОКОЛ ДЕБАТОВ"
+horizontal_alignment = 1
+
+[node name="FinalProfile" type="Label" parent="FinalOverlay/Panel"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 24.0
+offset_top = 48.0
+offset_right = 788.0
+offset_bottom = 70.0
+theme_override_colors/font_color = Color(0.541, 0.576, 0.639, 1)
+theme_override_font_sizes/font_size = 11
+text = "ПРОФИЛЬ"
+horizontal_alignment = 1
+
+[node name="FinalWinner" type="Label" parent="FinalOverlay/Panel"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 24.0
+offset_top = 75.0
+offset_right = 788.0
+offset_bottom = 111.0
+theme_override_font_sizes/font_size = 26
+text = "ПОБЕДА"
+horizontal_alignment = 1
+
+[node name="FinalRule" type="Label" parent="FinalOverlay/Panel"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 24.0
+offset_top = 116.0
+offset_right = 788.0
+offset_bottom = 151.0
+theme_override_colors/font_color = Color(0.812, 0.839, 0.878, 1)
+theme_override_font_sizes/font_size = 12
+text = "Формула подсчёта"
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="BoardCard" type="ColorRect" parent="FinalOverlay/Panel"]
+layout_mode = 1
+offset_left = 24.0
+offset_top = 164.0
+offset_right = 268.0
+offset_bottom = 283.0
+color = Color(0.094, 0.118, 0.16, 1)
+
+[node name="Title" type="Label" parent="FinalOverlay/Panel/BoardCard"]
+layout_mode = 1
+offset_left = 12.0
+offset_top = 9.0
+offset_right = 232.0
+offset_bottom = 28.0
+theme_override_colors/font_color = Color(0.435, 0.812, 0.498, 1)
+theme_override_font_sizes/font_size = 11
+text = "ДОСКА · ЛОГИКА"
+
+[node name="FinalBoardScore" type="Label" parent="FinalOverlay/Panel/BoardCard"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 12.0
+offset_top = 34.0
+offset_right = 232.0
+offset_bottom = 66.0
+theme_override_font_sizes/font_size = 22
+text = "B  +0"
+
+[node name="FinalBoardDetail" type="Label" parent="FinalOverlay/Panel/BoardCard"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 12.0
+offset_top = 72.0
+offset_right = 232.0
+offset_bottom = 108.0
+theme_override_colors/font_color = Color(0.72, 0.76, 0.82, 1)
+theme_override_font_sizes/font_size = 11
+text = "Рамки 1:1\nТезисы 1:1"
+autowrap_mode = 3
+
+[node name="AudienceCard" type="ColorRect" parent="FinalOverlay/Panel"]
+layout_mode = 1
+offset_left = 284.0
+offset_top = 164.0
+offset_right = 528.0
+offset_bottom = 283.0
+color = Color(0.094, 0.118, 0.16, 1)
+
+[node name="Title" type="Label" parent="FinalOverlay/Panel/AudienceCard"]
+layout_mode = 1
+offset_left = 12.0
+offset_top = 9.0
+offset_right = 232.0
+offset_bottom = 28.0
+theme_override_colors/font_color = Color(0.898, 0.722, 0.294, 1)
+theme_override_font_sizes/font_size = 11
+text = "ЗАЛ · ВОВЛЕЧЕНИЕ"
+
+[node name="FinalAudienceScore" type="Label" parent="FinalOverlay/Panel/AudienceCard"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 12.0
+offset_top = 34.0
+offset_right = 232.0
+offset_bottom = 66.0
+theme_override_font_sizes/font_size = 22
+text = "LEAN  +0"
+
+[node name="FinalAudienceDetail" type="Label" parent="FinalOverlay/Panel/AudienceCard"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 12.0
+offset_top = 72.0
+offset_right = 232.0
+offset_bottom = 108.0
+theme_override_colors/font_color = Color(0.72, 0.76, 0.82, 1)
+theme_override_font_sizes/font_size = 11
+text = "Heat 0/3\nЗал нейтрален"
+autowrap_mode = 3
+
+[node name="EmotionCard" type="ColorRect" parent="FinalOverlay/Panel"]
+layout_mode = 1
+offset_left = 544.0
+offset_top = 164.0
+offset_right = 788.0
+offset_bottom = 283.0
+color = Color(0.094, 0.118, 0.16, 1)
+
+[node name="Title" type="Label" parent="FinalOverlay/Panel/EmotionCard"]
+layout_mode = 1
+offset_left = 12.0
+offset_top = 9.0
+offset_right = 232.0
+offset_bottom = 28.0
+theme_override_colors/font_color = Color(0.91, 0.357, 0.357, 1)
+theme_override_font_sizes/font_size = 11
+text = "РАЗДРАЖЕНИЕ · СОСТОЯНИЕ"
+
+[node name="FinalEmotionScore" type="Label" parent="FinalOverlay/Panel/EmotionCard"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 12.0
+offset_top = 34.0
+offset_right = 232.0
+offset_bottom = 66.0
+theme_override_font_sizes/font_size = 20
+text = "ВЫ 0  ·  ОПП 0"
+
+[node name="FinalEmotionDetail" type="Label" parent="FinalOverlay/Panel/EmotionCard"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 12.0
+offset_top = 72.0
+offset_right = 232.0
+offset_bottom = 108.0
+theme_override_colors/font_color = Color(0.72, 0.76, 0.82, 1)
+theme_override_font_sizes/font_size = 11
+text = "Финальное состояние\nВ счёт не входит"
+autowrap_mode = 3
+
+[node name="FinalSplit" type="Label" parent="FinalOverlay/Panel"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 24.0
+offset_top = 296.0
+offset_right = 788.0
+offset_bottom = 326.0
+theme_override_colors/font_color = Color(0.898, 0.722, 0.294, 1)
+theme_override_font_sizes/font_size = 14
+text = "ДОСКА И ЗАЛ СОГЛАСНЫ"
+horizontal_alignment = 1
+
+[node name="FinalVerdict" type="Label" parent="FinalOverlay/Panel"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 42.0
+offset_top = 334.0
+offset_right = 770.0
+offset_bottom = 395.0
+theme_override_colors/font_color = Color(0.91, 0.91, 0.91, 1)
+theme_override_font_sizes/font_size = 14
+text = "Итоговый вердикт"
 horizontal_alignment = 1
 vertical_alignment = 1
+autowrap_mode = 3
+
+[node name="FinalDescription" type="Label" parent="FinalOverlay/Panel"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 42.0
+offset_top = 400.0
+offset_right = 770.0
+offset_bottom = 440.0
+theme_override_colors/font_color = Color(0.541, 0.576, 0.639, 1)
+theme_override_font_sizes/font_size = 11
+text = "Описание активного экспериментального профиля."
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 3
+
+[node name="FinalReviewBtn" type="Button" parent="FinalOverlay/Panel"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 24.0
+offset_top = 462.0
+offset_right = 394.0
+offset_bottom = 510.0
+theme_override_font_sizes/font_size = 13
+text = "Остаться у доски"
+
+[node name="FinalRestartBtn" type="Button" parent="FinalOverlay/Panel"]
+unique_name_in_owner = true
+layout_mode = 1
+offset_left = 418.0
+offset_top = 462.0
+offset_right = 788.0
+offset_bottom = 510.0
+theme_override_font_sizes/font_size = 13
+text = "Новая партия"
 
 [node name="TranscriptDrawer" type="Control" parent="." unique_id=1979820596]
 unique_name_in_owner = true
@@ -577,3 +830,5 @@ autowrap_mode = 3
 [connection signal="pressed" from="ActionBar/ClinchBtn" to="." method="_on_clinch_pass"]
 [connection signal="pressed" from="TopButtons/TranscriptToggleBtn" to="." method="_toggle_drawer"]
 [connection signal="pressed" from="TopButtons/MenuBtn" to="." method="_open_menu"]
+[connection signal="pressed" from="FinalOverlay/Panel/FinalReviewBtn" to="." method="_close_final_overlay"]
+[connection signal="pressed" from="FinalOverlay/Panel/FinalRestartBtn" to="." method="_new_match"]

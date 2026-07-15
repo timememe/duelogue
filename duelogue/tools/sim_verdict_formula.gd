@@ -24,6 +24,9 @@ extends Node
 const Rules := preload("res://duelogue/core/rules/rules_core.gd")
 const Deck := preload("res://duelogue/core/cards/deck.gd")
 const Ai := preload("res://duelogue/core/ai/ai.gd")
+const EmotionCore := preload("res://duelogue/core/emotion/emotion_core.gd")
+const DefaultReactions := preload("res://duelogue/core/emotion/reaction_decks/volatile_default.gd")
+const ProductionOutcomeProfiles := preload("res://duelogue/core/outcome/outcome_profiles.gd")
 
 @export var mirror_matches: int = 1200
 @export var field_matches: int = 350
@@ -58,6 +61,64 @@ const CONFIGS := [
 	{"id": "sum311", "label": "формула 3Р+1Т+1З", "cap": 5, "wf": 3, "wt": 1, "wz": 1},
 ]
 
+# Цепочка «доска → напряжение → реакция → зал». Все варианты сохраняют 3Р+1Т,
+# независимый зал ±5 и один публичный расчёт после полного завершения клинча.
+const EMOTION_CONFIGS := [
+	{"id": "emotion_clean", "label": "только клинч", "cap": 5, "wf": 3, "wt": 1,
+		"wz": 1, "emotion_mode": "none", "hall_per_clinch": 1, "scene_cap": 2},
+	{"id": "emotion_punish", "label": "каждый срыв = штраф", "cap": 5, "wf": 3, "wt": 1,
+		"wz": 1, "emotion_mode": "punish", "hall_per_clinch": 1, "scene_cap": 2},
+	{"id": "emotion_cards", "label": "эффект напечатан на карте", "cap": 5, "wf": 3, "wt": 1,
+		"wz": 1, "emotion_mode": "cards", "hall_per_clinch": 1, "scene_cap": 2},
+	{"id": "emotion_only", "label": "только реакции", "cap": 5, "wf": 3, "wt": 1,
+		"wz": 1, "emotion_mode": "cards", "hall_per_clinch": 0, "scene_cap": 2},
+	{"id": "emotion_punish_vote", "label": "штраф, один голос/сцена", "cap": 5,
+		"wf": 3, "wt": 1, "wz": 1, "emotion_mode": "punish", "hall_per_clinch": 1,
+		"scene_cap": 1},
+	{"id": "emotion_cards_vote", "label": "карты, один голос/сцена", "cap": 5,
+		"wf": 3, "wt": 1, "wz": 1, "emotion_mode": "cards", "hall_per_clinch": 1,
+		"scene_cap": 1},
+	{"id": "emotion_observe", "label": "реакции видны, эффект 0", "cap": 5,
+		"wf": 3, "wt": 1, "wz": 1, "emotion_mode": "observe", "hall_per_clinch": 1,
+		"scene_cap": 2},
+]
+
+# Векторный исход: доска определяет логический результат, зал хранит отдельные Lean/Heat.
+# Во всех вариантах эмоциональный контракт одинаков; меняется только память аудитории.
+const CROWD_CONFIGS := [
+	{"id": "crowd_reaction_frame", "label": "emotion reframes spectacle", "cap": 5, "wf": 3, "wt": 1,
+		"wz": 1, "emotion_mode": "cards", "hall_per_clinch": 1, "scene_cap": 2,
+		"pressure_mode": "outcome_weighted", "crowd_mode": "pendulum", "verdict_mode": "board",
+		"crowd_valence_mode": "reaction_priority", "lean_friction": 0, "heat_amplifies": true,
+		"gate_x": 0, "gate_y": 0},
+	{"id": "crowd_spectacle", "label": "spectacle valence only", "cap": 5, "wf": 3, "wt": 1,
+		"wz": 1, "emotion_mode": "cards", "hall_per_clinch": 1, "scene_cap": 2,
+		"pressure_mode": "outcome_weighted", "crowd_mode": "pendulum", "verdict_mode": "board",
+		"crowd_valence_mode": "spectacle_only", "lean_friction": 0, "heat_amplifies": true,
+		"gate_x": 0, "gate_y": 0},
+	{"id": "crowd_spectacle_fade", "label": "spectacle valence + fade", "cap": 5, "wf": 3, "wt": 1,
+		"wz": 1, "emotion_mode": "cards", "hall_per_clinch": 1, "scene_cap": 2,
+		"pressure_mode": "outcome_weighted", "crowd_mode": "pendulum", "verdict_mode": "board",
+		"crowd_valence_mode": "spectacle_only", "lean_friction": 1, "heat_amplifies": true,
+		"gate_x": 0, "gate_y": 0},
+	{"id": "crowd_ledger", "label": "копилка Lean", "cap": 5, "wf": 3, "wt": 1,
+		"wz": 1, "emotion_mode": "cards", "hall_per_clinch": 1, "scene_cap": 2,
+		"pressure_mode": "outcome_weighted", "crowd_mode": "ledger", "verdict_mode": "board",
+		"gate_x": 0, "gate_y": 0},
+	{"id": "crowd_flat", "label": "маятник без Heat-усиления", "cap": 5, "wf": 3, "wt": 1,
+		"wz": 1, "emotion_mode": "cards", "hall_per_clinch": 1, "scene_cap": 2,
+		"pressure_mode": "outcome_weighted", "crowd_mode": "pendulum", "verdict_mode": "board",
+		"lean_friction": 1, "heat_amplifies": false, "gate_x": 0, "gate_y": 0},
+	{"id": "crowd_pendulum", "label": "маятник Lean×Heat", "cap": 5, "wf": 3, "wt": 1,
+		"wz": 1, "emotion_mode": "cards", "hall_per_clinch": 1, "scene_cap": 2,
+		"pressure_mode": "outcome_weighted", "crowd_mode": "pendulum", "verdict_mode": "board",
+		"lean_friction": 1, "heat_amplifies": true, "gate_x": 0, "gate_y": 0},
+	{"id": "crowd_sticky", "label": "маятник без трения", "cap": 5, "wf": 3, "wt": 1,
+		"wz": 1, "emotion_mode": "cards", "hall_per_clinch": 1, "scene_cap": 2,
+		"pressure_mode": "outcome_weighted", "crowd_mode": "pendulum", "verdict_mode": "board",
+		"lean_friction": 0, "heat_amplifies": true, "gate_x": 0, "gate_y": 0},
+]
+
 var _ai: RefCounted
 var _failures := 0
 
@@ -73,6 +134,76 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 	var final_hall := 0
 	var final_margin := 0             ## V
 	var old_decision_winner := ""     ## кто выиграл бы на ЭТОЙ доске по ширине→старому залу
+	var emotion_mode := "none"
+	var hall_per_clinch := 1
+	var scene_cap := 2
+	var pressure_mode := "each_pair"
+	var crowd_mode := "ledger"
+	var crowd_valence_mode := "every_scene"
+	var verdict_mode := "additive"
+	var heat := 0
+	var heat_max := 3
+	var lean_friction := 1
+	var heat_amplifies := true
+	var reaction_values := {}
+	var parry_value := 1
+	var emotion: RefCounted
+	var clean_hall := 0               ## контрфакт на той же доске: только голоса клинчей
+	var clean_heat := 0
+	var final_clean_hall := 0
+	var final_clean_margin := 0
+	var final_heat := 0
+	var final_mandate := 0
+	var fallback_margin := 0
+	var _pending_emotion_delta := 0   ## копится внутри сцены, применяется один раз после неё
+	var _pending_spectacle := 0
+	var _pressure_rounds := 0
+	var _last_crowd_sign := 0
+	var scenes := 0
+	var emotion_scenes := 0
+	var scene_cap_hits := 0
+	var reactions := 0
+	var parries := 0
+	var linked_reactions := 0
+	var reaction_rewards := 0
+	var reaction_penalties := 0
+	var reaction_neutral := 0
+	var base_hall_raw := 0
+	var emotion_hall_raw := 0
+	var emotion_hall_abs := 0
+	var emotion_aligns_winner := 0
+	var crowd_reversals := 0
+	var crowd_moves := 0
+
+	func configure_emotion(mode: String, seed_value: int, p_hall_per_clinch: int = 1,
+			p_scene_cap: int = 2, p_pressure_mode: String = "each_pair") -> void:
+		emotion_mode = mode
+		hall_per_clinch = p_hall_per_clinch
+		scene_cap = maxi(1, p_scene_cap)
+		pressure_mode = p_pressure_mode
+		clean_hall = hall
+		if emotion_mode == "none":
+			emotion = null
+			return
+		emotion = EmotionCore.new()
+		emotion.start(DefaultReactions.data(), seed_value, [SIDE_YOU, SIDE_OPP])
+
+	func configure_crowd(config: Dictionary) -> void:
+		crowd_mode = String(config.get("crowd_mode", "ledger"))
+		crowd_valence_mode = String(config.get("crowd_valence_mode", "every_scene"))
+		verdict_mode = String(config.get("verdict_mode", "additive"))
+		heat_max = maxi(1, int(config.get("heat_max", 3)))
+		lean_friction = maxi(0, int(config.get("lean_friction", 1)))
+		heat_amplifies = bool(config.get("heat_amplifies", true))
+		reaction_values = (config.get("reaction_values", {}) as Dictionary).duplicate(true)
+		parry_value = int(config.get("parry_value", 1))
+		heat = clampi(int(config.get("opening_heat", 0)), 0, heat_max)
+		clean_heat = heat
+
+	func emotion_state(side: String) -> Dictionary:
+		if emotion == null:
+			return {}
+		return emotion.state(side)
 
 	func zal() -> int:
 		if hall_cap <= 0:
@@ -81,6 +212,18 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 
 	func board_weight(side: String) -> int:
 		return frame_weight * score(side) + thesis_weight * shine(side)
+
+	func ai_margin(side: String) -> int:
+		var opp := other(side)
+		var board_for_side := board_weight(side) - board_weight(opp)
+		var lean_for_side := zal() if side == SIDE_YOU else -zal()
+		match verdict_mode:
+			"board":
+				return board_for_side
+			"mandate":
+				return board_for_side + signi(lean_for_side) * heat
+			_:
+				return board_for_side + hall_weight * lean_for_side
 
 	## Нет отдельного KO/TKO и нет автоматического redeploy. Если легальных глаголов нет,
 	## сторона пасует даже при картах в руке (например, остались лишь Тезисы без рамки).
@@ -101,21 +244,208 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 		s.passed = false
 		return "ok"
 
-	## Один завершённый публичный обмен = один пункт впечатления победителю обмена.
+	func play_action(side: String, type: String, target: int = -1,
+			hand_index: int = -1) -> Dictionary:
+		var result: Dictionary = super.play_action(side, type, target, hand_index)
+		# Обычная выкладка меняет только доску. Для маятника это тихая сцена: накал и
+		# старый крен постепенно затухают, но нового направления публика не получает.
+		if crowd_mode == "pendulum" and type != TYPE_RAZBOR and not result.is_empty():
+			_settle_pendulum(0, 0, false)
+			_settle_pendulum(0, 0, true)
+		return result
+
+	## Новая сцена начинает чистую транзакцию зала. Давление внутри клинча может породить
+	## реакции, но их публичный эффект применится только после полного исхода обмена.
+	func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bool,
+			hand_index: int = -1) -> Dictionary:
+		_pending_emotion_delta = 0
+		_pending_spectacle = 0
+		_pressure_rounds = 0
+		return super.begin_clinch(attacker, defender, idx, prefer_steal, hand_index)
+
+	func clinch_submit(decision: String, prefer_steal: bool = true,
+			hand_index: int = -1) -> Dictionary:
+		var attacker := String(clinch.get("attacker", ""))
+		var defender := String(clinch.get("defender", ""))
+		var was_press := decision == "play" and String(clinch.get("phase", "")) == "await_attack"
+		var result: Dictionary = super.clinch_submit(decision, prefer_steal, hand_index)
+		if was_press and String(result.get("event", "")) == "press":
+			if emotion != null and (pressure_mode == "each_pair" \
+					or pressure_mode == "once" and _pressure_rounds == 0):
+				# Полная пара «защита → новый нажим»: обеим сторонам +1 напряжения.
+				_observe_emotion(attacker, "clinch_pressure", 1)
+				_observe_emotion(defender, "clinch_pressure", 1)
+			_pressure_rounds += 1
+		return result
+
+	## Один завершённый публичный обмен = базовый голос победителю плюс видимые эффекты
+	## реакционных карт. Вся сцена коммитится в зал один раз, с публичным капом ±scene_cap.
 	func _finish_clinch() -> Dictionary:
 		var result: Dictionary = super._finish_clinch()
-		if String(result.get("event", "")) == "resolved" and hall_cap > 0:
-			var exchange_winner := String(result.attacker) if bool(result.landed) else String(result.defender)
-			var delta := 1 if exchange_winner == SIDE_YOU else -1
-			hall = clampi(hall + delta, -hall_cap, hall_cap)
+		if String(result.get("event", "")) != "resolved" or hall_cap <= 0:
+			return result
+		var exchange_winner := String(result.attacker) if bool(result.landed) else String(result.defender)
+		var loser := String(result.defender) if bool(result.landed) else String(result.attacker)
+		var winner_sign := 1 if exchange_winner == SIDE_YOU else -1
+		var base_delta := winner_sign * hall_per_clinch
+		var info: Dictionary = result.get("info", {})
+		var base_spectacle := 2 if bool(info.get("removed", false)) \
+				or bool(info.get("captured", false)) or _pressure_rounds > 0 else 1
+		var public_base_delta := base_delta
+		if crowd_mode == "pendulum" and crowd_valence_mode in ["spectacle_only", "reaction_priority"] \
+				and base_spectacle < 2:
+			public_base_delta = 0
+		if emotion != null:
+			var stimulus := "attack_stalled"
+			if bool(result.landed):
+				stimulus = "captured" if bool(info.get("captured", false)) else \
+					("frame_lost" if bool(info.get("removed", false)) else "argument_lost")
+			var intensity := 1 + int(bool(info.get("removed", false))) \
+				+ int(bool(info.get("captured", false)))
+			if pressure_mode == "outcome_weighted" and _pressure_rounds > 0:
+				intensity += 1
+			_observe_emotion(loser, stimulus, mini(3, intensity))
+
+		scenes += 1
+		base_hall_raw += public_base_delta
+		if _pending_emotion_delta != 0:
+			emotion_scenes += 1
+			if signi(_pending_emotion_delta) == winner_sign:
+				emotion_aligns_winner += 1
+		var raw_scene_delta := public_base_delta + _pending_emotion_delta
+		if crowd_mode == "pendulum" and crowd_valence_mode == "reaction_priority" \
+				and _pending_emotion_delta != 0:
+			raw_scene_delta = _pending_emotion_delta
+		if absi(raw_scene_delta) > scene_cap:
+			scene_cap_hits += 1
+		var scene_delta := clampi(raw_scene_delta, -scene_cap, scene_cap)
+		if crowd_mode == "pendulum":
+			_settle_pendulum(signi(public_base_delta), base_spectacle, true)
+			_settle_pendulum(signi(scene_delta), maxi(base_spectacle, _pending_spectacle), false)
+		else:
+			clean_hall = clampi(clean_hall + base_delta, -hall_cap, hall_cap)
+			hall = clampi(hall + scene_delta, -hall_cap, hall_cap)
+		_pending_emotion_delta = 0
+		_pending_spectacle = 0
 		return result
+
+	func _settle_pendulum(direction: int, spectacle: int, use_clean: bool) -> void:
+		var old_lean := clean_hall if use_clean else hall
+		var current_heat := clean_heat if use_clean else heat
+		current_heat = clampi(current_heat + spectacle - 1, 0, heat_max)
+		var relaxed := _toward_zero(old_lean, lean_friction)
+		var impulse := direction * (1 + current_heat if heat_amplifies else 1)
+		var next_lean := clampi(relaxed + impulse, -hall_cap, hall_cap)
+		if use_clean:
+			clean_hall = next_lean
+			clean_heat = current_heat
+			return
+		if next_lean != old_lean:
+			crowd_moves += 1
+		var next_sign := signi(next_lean)
+		if next_sign != 0 and _last_crowd_sign != 0 and next_sign != _last_crowd_sign:
+			crowd_reversals += 1
+		if next_sign != 0:
+			_last_crowd_sign = next_sign
+		hall = next_lean
+		heat = current_heat
+
+	func _toward_zero(value: int, step: int) -> int:
+		if value > 0:
+			return maxi(0, value - step)
+		if value < 0:
+			return mini(0, value + step)
+		return 0
+
+	func _observe_emotion(side: String, stimulus: String, intensity: int) -> void:
+		if emotion == null or side == "":
+			return
+		var result: Dictionary = emotion.observe(side, stimulus, intensity, {})
+		_consume_reaction(result, 0)
+
+	func _consume_reaction(result: Dictionary, depth: int) -> void:
+		var reaction: Dictionary = result.get("reaction", {})
+		if reaction.is_empty():
+			return
+		var reactor := String(result.get("side", ""))
+		_pending_spectacle = maxi(_pending_spectacle,
+			_reaction_spectacle(String(reaction.get("id", ""))))
+		reactions += 1
+		if depth > 0:
+			linked_reactions += 1
+		var relative_effect := _reaction_effect(String(reaction.get("id", "")))
+		if relative_effect > 0:
+			reaction_rewards += 1
+		elif relative_effect < 0:
+			reaction_penalties += 1
+		else:
+			reaction_neutral += 1
+		_add_emotion_hall(_signed_for_side(reactor, relative_effect))
+		if depth >= 2:
+			return
+		var responder := other(reactor)
+		var answer: Dictionary = emotion.answer_reaction(responder, {})
+		match String(answer.get("kind", "none")):
+			"parry":
+				parries += 1
+				_pending_spectacle = maxi(_pending_spectacle, 1)
+				_add_emotion_hall(_signed_for_side(responder, _parry_effect()))
+			"trigger":
+				_consume_reaction(answer, depth + 1)
+
+	func _reaction_effect(reaction_id: String) -> int:
+		if emotion_mode == "punish":
+			return -1
+		if emotion_mode != "cards":
+			return 0
+		if reaction_values.has(reaction_id):
+			return int(reaction_values[reaction_id])
+		match reaction_id:
+			"audience_check", "snap":
+				return 1
+			"personal_jab", "crack":
+				return -1
+			_:
+				return 0
+
+	func _reaction_spectacle(reaction_id: String) -> int:
+		match reaction_id:
+			"audience_check", "snap", "personal_jab", "crack":
+				return 2
+			_:
+				return 1
+
+	func _parry_effect() -> int:
+		return 0 if emotion_mode == "observe" else parry_value
+
+	func _signed_for_side(side: String, relative_effect: int) -> int:
+		return relative_effect if side == SIDE_YOU else -relative_effect
+
+	func _add_emotion_hall(delta: int) -> void:
+		_pending_emotion_delta += delta
+		emotion_hall_raw += delta
+		emotion_hall_abs += absi(delta)
 
 	## ЕДИНСТВЕННЫЙ вердикт: знак (вес доски + независимый зал).
 	func _end_by_decision() -> void:
 		game_over = true
 		final_board_diff = board_weight(SIDE_YOU) - board_weight(SIDE_OPP)
 		final_hall = zal()
-		final_margin = final_board_diff + hall_weight * final_hall
+		final_heat = heat
+		final_mandate = signi(final_hall) * final_heat
+		fallback_margin = final_board_diff + final_mandate
+		final_clean_hall = clampi(clean_hall + zal_bias, -hall_cap, hall_cap)
+		var clean_mandate := signi(final_clean_hall) * clean_heat
+		match verdict_mode:
+			"board":
+				final_margin = final_board_diff
+				final_clean_margin = final_board_diff
+			"mandate":
+				final_margin = fallback_margin
+				final_clean_margin = final_board_diff + clean_mandate
+			_:
+				final_margin = final_board_diff + hall_weight * final_hall
+				final_clean_margin = final_board_diff + hall_weight * final_clean_hall
 		old_decision_winner = _old_winner_on_this_board()
 		if final_margin > 0:
 			winner = SIDE_YOU
@@ -149,6 +479,7 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 	const STYLE_VERDICT_5 := "verdict5"
 	const STYLE_VERDICT_9 := "verdict9"
 	const STYLE_VERDICT_CALM := "verdict_calm"
+	const STYLE_VERDICT_PROVOKE := "verdict_provoke"
 	const W_FRAME := 3
 
 	func pick(r: RefCounted, side: String, style: String) -> Dictionary:
@@ -171,6 +502,13 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 				return {"type": TYPE_USTANOVKA}
 			if legal.has(TYPE_RAZBOR):
 				return {"type": TYPE_RAZBOR, "target": _verdict_target(r, side)}
+
+		# Контрольный эксплойт: если оппонент уже близок к срыву, провокатор предпочитает
+		# открыть клинч. Если это стабильно сильнее обычной verdict-политики, эмоция стала
+		# скрытой второй атакой, а не рискованным социальным слоем.
+		if style == STYLE_VERDICT_PROVOKE and legal.has(TYPE_RAZBOR) \
+				and _v_strain(r, opp) >= 4:
+			return {"type": TYPE_RAZBOR, "target": _verdict_target(r, side)}
 
 		# Максимальная конверсия: доступный захват Кражей. K2 фиксированы системно, бот
 		# холдит их до этого окна (atk_prefer_steal ниже).
@@ -228,6 +566,9 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 			return false
 		if int(line.theses) <= 1:
 			return true
+		if String(style_of.get(attacker, "")) == STYLE_VERDICT_PROVOKE \
+				and _v_strain(r, r.other(attacker)) >= 4:
+			return true
 		# Активная Кража и досягаемая рамка оправдывают дожим даже последней атакой.
 		if int(r.clinch.get("atk_steals", 0)) > 0 \
 				and int(line.theses) <= int(r.capture_threshold(attacker)):
@@ -246,6 +587,8 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 		return int(lines[idx].theses) <= int(r.capture_threshold(attacker))
 
 	func _v_margin(r: RefCounted, side: String) -> int:
+		if r.has_method("ai_margin"):
+			return int(r.ai_margin(side))
 		var opp: String = String(r.other(side))
 		var raw := W_FRAME * (int(r.score(side)) - int(r.score(opp))) \
 			+ int(r.shine(side)) - int(r.shine(opp))
@@ -300,9 +643,14 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 				return true
 		return false
 
+	func _v_strain(r: RefCounted, side: String) -> int:
+		if not r.has_method("emotion_state"):
+			return 0
+		return int(r.emotion_state(side).get("strain", 0))
+
 	func _is_verdict_style(style: String) -> bool:
 		return style == STYLE_VERDICT or style == STYLE_VERDICT_5 or style == STYLE_VERDICT_9 \
-			or style == STYLE_VERDICT_CALM
+			or style == STYLE_VERDICT_CALM or style == STYLE_VERDICT_PROVOKE
 
 	func _deficit_attack(style: String, margin: int) -> bool:
 		match style:
@@ -312,6 +660,8 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 				return margin <= -5
 			STYLE_VERDICT_9:
 				return margin <= -9
+			STYLE_VERDICT_PROVOKE:
+				return margin < 0
 			_:
 				return false
 
@@ -320,6 +670,34 @@ func _ready() -> void:
 	_ai = VerdictAi.new()
 	await get_tree().process_frame
 	var t0 := Time.get_ticks_msec()
+	if OS.get_cmdline_user_args().has("--emotion-candidate"):
+		print("\n=== ЕДИНЫЙ ВЕРДИКТ · КАНДИДАТ ЭМОЦИОНАЛЬНОГО ЗАЛА ===")
+		_emotion_candidate_suite()
+		print("\nПроверки инвариантов: %s" % ("OK" if _failures == 0 else "ОШИБОК: %d" % _failures))
+		print("=== КОНЕЦ (%.1f c) ===\n" % ((Time.get_ticks_msec() - t0) / 1000.0))
+		get_tree().quit(0 if _failures == 0 else 1)
+		return
+	if OS.get_cmdline_user_args().has("--crowd-pendulum"):
+		print("\n=== ЕДИНЫЙ ВЕРДИКТ · ДОСКА И ЗАЛ КАК РАЗНЫЕ ИСХОДЫ ===")
+		_crowd_pendulum_suite()
+		print("\nПроверки инвариантов: %s" % ("OK" if _failures == 0 else "ОШИБОК: %d" % _failures))
+		print("=== КОНЕЦ (%.1f c) ===\n" % ((Time.get_ticks_msec() - t0) / 1000.0))
+		get_tree().quit(0 if _failures == 0 else 1)
+		return
+	if OS.get_cmdline_user_args().has("--emotion-pressure"):
+		print("\n=== ЕДИНЫЙ ВЕРДИКТ · ЧАСТОТА ЭМОЦИОНАЛЬНОГО ДАВЛЕНИЯ ===")
+		_emotion_pressure_suite()
+		print("\nПроверки инвариантов: %s" % ("OK" if _failures == 0 else "ОШИБОК: %d" % _failures))
+		print("=== КОНЕЦ (%.1f c) ===\n" % ((Time.get_ticks_msec() - t0) / 1000.0))
+		get_tree().quit(0 if _failures == 0 else 1)
+		return
+	if OS.get_cmdline_user_args().has("--emotion-chain"):
+		print("\n=== ЕДИНЫЙ ВЕРДИКТ · ДОСКА → ЭМОЦИЯ → ЗАЛ ===")
+		_emotion_chain_suite()
+		print("\nПроверки инвариантов: %s" % ("OK" if _failures == 0 else "ОШИБОК: %d" % _failures))
+		print("=== КОНЕЦ (%.1f c) ===\n" % ((Time.get_ticks_msec() - t0) / 1000.0))
+		get_tree().quit(0 if _failures == 0 else 1)
+		return
 	if OS.get_cmdline_user_args().has("--policy-threshold"):
 		print("\n=== ЕДИНЫЙ ВЕРДИКТ · ПОРОГ РЕАКТИВНОГО TEARDOWN ===")
 		_policy_threshold_suite()
@@ -373,7 +751,8 @@ func _ready() -> void:
 
 # ----------------------------------------------------------------- создание ---
 
-func _new_match(config: Dictionary, first: String, deck_you: Dictionary = {}, deck_opp: Dictionary = {}) -> RefCounted:
+func _new_match(config: Dictionary, first: String, deck_you: Dictionary = {},
+		deck_opp: Dictionary = {}, emotion_seed: int = 0) -> RefCounted:
 	var m: RefCounted
 	if String(config.id) == "old":
 		m = Rules.new()
@@ -389,9 +768,14 @@ func _new_match(config: Dictionary, first: String, deck_you: Dictionary = {}, de
 		var gate_y := int(config.get("gate_y", GATE_Y))
 		fm.reset(first, U, T, R, HAND, BASE, KOMI, STEAL, FORT,
 			CLINCH, FREEZE, CAPTURE, gate_x, gate_y, SW, LOOT, 0, 1)
+		fm.configure_emotion(String(config.get("emotion_mode", "none")), emotion_seed,
+			int(config.get("hall_per_clinch", 1)), int(config.get("scene_cap", 2)),
+			String(config.get("pressure_mode", "each_pair")))
+		fm.configure_crowd(config)
 		var opening_hall := int(config.get("opening_hall", 0))
 		if opening_hall != 0:
 			fm.hall = opening_hall if first == Rules.SIDE_YOU else -opening_hall
+			fm.clean_hall = fm.hall
 		m = fm
 	if not deck_you.is_empty():
 		m.sides[Rules.SIDE_YOU] = _build_side(deck_you)
@@ -406,7 +790,11 @@ func _build_side(comp: Dictionary) -> Dictionary:
 
 
 func _seed_for(i: int, salt: int) -> void:
-	seed(BASE_SEED + i * 104729 + salt * 1009)
+	seed(_seed_value(i, salt))
+
+
+func _seed_value(i: int, salt: int) -> int:
+	return BASE_SEED + i * 104729 + salt * 1009
 
 
 # ------------------------------------------------------------------ метрики ---
@@ -418,6 +806,17 @@ func _blank_metrics() -> Dictionary:
 		"board_diff_abs": 0, "hall_abs": 0, "margin_abs": 0, "hall_sum": 0,
 		"hall_saturated": 0, "old_disagree": 0, "tall_wins": 0, "wide_wins": 0,
 		"hall_overturns": 0, "hall_breaks_board_tie": 0, "zero_frame_wins": 0,
+		"clean_hall_abs": 0, "emotion_terminal_flips": 0,
+		"scenes": 0, "emotion_scenes": 0, "scene_cap_hits": 0,
+		"reactions": 0, "parries": 0, "linked_reactions": 0,
+		"reaction_rewards": 0, "reaction_penalties": 0, "reaction_neutral": 0,
+		"emotion_hall_raw": 0, "emotion_hall_abs": 0, "emotion_aligns_winner": 0,
+		"heat_sum": 0, "heat_high": 0, "crowd_reversals": 0, "crowd_moves": 0,
+		"logic_aligned": 0, "logic_split": 0, "crowd_neutral": 0, "logic_draw": 0,
+		"mandate_reclass": 0,
+		"corr_n": 0, "corr_x": 0.0, "corr_y": 0.0,
+		"corr_x2": 0.0, "corr_y2": 0.0, "corr_xy": 0.0,
+		"board_counts": {}, "crowd_states_by_board": {},
 	}
 
 
@@ -427,7 +826,8 @@ func _run_cell(config: Dictionary, style_you: String, style_opp: String, matches
 	for i in matches:
 		_seed_for(i, salt)
 		var first := Rules.SIDE_YOU if i % 2 == 0 else Rules.SIDE_OPP
-		var m := _new_match(config, first, deck_you, deck_opp)
+		var m := _new_match(config, first, deck_you, deck_opp,
+			_seed_value(i, salt) ^ 0x5EEDC0DE)
 		var res: Dictionary = _ai.simulate(m, style_you, style_opp)
 		var win := String(res.winner)
 		if win == Rules.SIDE_YOU:
@@ -458,6 +858,49 @@ func _collect_formula_metrics(out: Dictionary, m: RefCounted) -> void:
 	out.hall_abs += absi(hall)
 	out.margin_abs += absi(margin)
 	out.hall_sum += hall
+	out.clean_hall_abs += absi(int(m.final_clean_hall))
+	out.scenes += int(m.scenes)
+	out.emotion_scenes += int(m.emotion_scenes)
+	out.scene_cap_hits += int(m.scene_cap_hits)
+	out.reactions += int(m.reactions)
+	out.parries += int(m.parries)
+	out.linked_reactions += int(m.linked_reactions)
+	out.reaction_rewards += int(m.reaction_rewards)
+	out.reaction_penalties += int(m.reaction_penalties)
+	out.reaction_neutral += int(m.reaction_neutral)
+	out.emotion_hall_raw += int(m.emotion_hall_raw)
+	out.emotion_hall_abs += int(m.emotion_hall_abs)
+	out.emotion_aligns_winner += int(m.emotion_aligns_winner)
+	out.heat_sum += int(m.final_heat)
+	out.heat_high += int(int(m.final_heat) >= 2)
+	out.crowd_reversals += int(m.crowd_reversals)
+	out.crowd_moves += int(m.crowd_moves)
+	var logic_sign := signi(board_diff)
+	var crowd_sign := signi(hall)
+	if logic_sign == 0:
+		out.logic_draw += 1
+	elif crowd_sign == 0:
+		out.crowd_neutral += 1
+	elif logic_sign == crowd_sign:
+		out.logic_aligned += 1
+	else:
+		out.logic_split += 1
+	if logic_sign != 0 and signi(int(m.fallback_margin)) != logic_sign:
+		out.mandate_reclass += 1
+	out.corr_n += 1
+	out.corr_x += float(board_diff)
+	out.corr_y += float(hall)
+	out.corr_x2 += float(board_diff * board_diff)
+	out.corr_y2 += float(hall * hall)
+	out.corr_xy += float(board_diff * hall)
+	var board_key := str(board_diff)
+	out.board_counts[board_key] = int(out.board_counts.get(board_key, 0)) + 1
+	var state_key := "%d/%d" % [hall, int(m.final_heat)]
+	var states: Dictionary = out.crowd_states_by_board.get(board_key, {})
+	states[state_key] = true
+	out.crowd_states_by_board[board_key] = states
+	if signi(int(m.final_clean_margin)) != signi(margin):
+		out.emotion_terminal_flips += 1
 	if int(m.hall_cap) > 0 and absi(hall) >= int(m.hall_cap):
 		out.hall_saturated += 1
 	if win != String(m.old_decision_winner):
@@ -479,12 +922,28 @@ func _collect_formula_metrics(out: Dictionary, m: RefCounted) -> void:
 			out.zero_frame_wins += 1
 
 	# Инварианты самой формулы.
-	if margin != board_diff + int(m.hall_weight) * hall:
+	var expected_margin := board_diff + int(m.hall_weight) * hall
+	var expected_clean_margin := board_diff + int(m.hall_weight) * int(m.final_clean_hall)
+	match String(m.verdict_mode):
+		"board":
+			expected_margin = board_diff
+			expected_clean_margin = board_diff
+		"mandate":
+			expected_margin = board_diff + signi(hall) * int(m.final_heat)
+			expected_clean_margin = board_diff + signi(int(m.final_clean_hall)) * int(m.clean_heat)
+	if margin != expected_margin:
 		_failures += 1
 	if (margin > 0 and win != Rules.SIDE_YOU) or (margin < 0 and win != Rules.SIDE_OPP) \
 			or (margin == 0 and win != ""):
 		_failures += 1
 	if int(m.hall_cap) >= 0 and absi(hall) > int(m.hall_cap):
+		_failures += 1
+	if int(m.reactions) != int(m.reaction_rewards) + int(m.reaction_penalties) \
+			+ int(m.reaction_neutral):
+		_failures += 1
+	if int(m.final_clean_margin) != expected_clean_margin:
+		_failures += 1
+	if int(m.final_heat) < 0 or int(m.final_heat) > int(m.heat_max):
 		_failures += 1
 	if String(m.end_reason) == "knockout" or String(m.end_reason) == "crowd":
 		_failures += 1
@@ -496,6 +955,28 @@ func _pct(n: int, d: int) -> float:
 
 func _winrate(m: Dictionary) -> float:
 	return float(m.wins_you) / float(maxi(1, int(m.decisive)))
+
+
+func _correlation(m: Dictionary) -> float:
+	var n := float(m.corr_n)
+	var denominator := sqrt(maxf(0.0,
+		(n * float(m.corr_x2) - float(m.corr_x) * float(m.corr_x))
+		* (n * float(m.corr_y2) - float(m.corr_y) * float(m.corr_y))))
+	if denominator <= 0.000001:
+		return 0.0
+	return (n * float(m.corr_xy) - float(m.corr_x) * float(m.corr_y)) / denominator
+
+
+func _modal_board_diversity(m: Dictionary) -> Dictionary:
+	var best_key := ""
+	var best_count := -1
+	for key in m.board_counts:
+		var count := int(m.board_counts[key])
+		if count > best_count:
+			best_count = count
+			best_key = String(key)
+	var states: Dictionary = m.crowd_states_by_board.get(best_key, {})
+	return {"board": best_key, "matches": maxi(0, best_count), "states": states.size()}
 
 
 # --------------------------------------------------------------- зеркало ------
@@ -763,3 +1244,270 @@ func _policy_threshold_suite() -> void:
 	print("Сторож: ищем одновременно 45–55%% первого хода, преимущество над старым smart и")
 	print("wide не ниже 40%%. Если коридоры несовместимы, простой heuristic-bot не даёт ответа")
 	print("о балансе формулы — нужен lookahead/MCTS или ручной парный плейтест.\n")
+
+
+# ---------------------------------------------- доска → эмоция → независимый зал ---
+
+func _emotion_chain_suite() -> void:
+	var n := mirror_matches
+	print("Условия: fixed K2, verdict-aware бот, содержание 3Р+1Т, независимый зал ±5,")
+	print("один коммит зала после всей сцены; сравниваются пределы ±2 и один голос ±1.")
+	print("%d матчей/ячейку." % n)
+	print("Карточная индексация: Поиск свидетелей/Вспышка +1 реактору;")
+	print("Переход на личности/Трещина −1; прочие реакции 0; холодная парировка +1.\n")
+
+	print("--- A. ЗЕРКАЛО: сколько победы реально несут эмоции ---")
+	print("%-28s | 1-й ход ничьи ходы капч | |H| реакц парир | Eсцен Eflip Scap | + / − / 0" % "индексация")
+	for ci in EMOTION_CONFIGS.size():
+		var config: Dictionary = EMOTION_CONFIGS[ci]
+		var m := _run_cell(config, "verdict", "verdict", n, {}, {}, 1200 + ci)
+		var reactions_n := int(m.reactions)
+		print("%-28s | %7.1f%% %4.1f%% %4.1f %4.2f | %3.1f %5.2f %5.2f | %5.1f%% %5.1f%% %4.1f%% | %2.0f/%2.0f/%2.0f" % [
+			String(config.label), _pct(int(m.first_wins), int(m.decisive)),
+			_pct(int(m.draws), n), float(m.turns) / n, float(m.captures) / n,
+			float(m.hall_abs) / n, float(reactions_n) / n, float(m.parries) / n,
+			_pct(int(m.emotion_scenes), int(m.scenes)),
+			_pct(int(m.emotion_terminal_flips), n), _pct(int(m.scene_cap_hits), int(m.scenes)),
+			_pct(int(m.reaction_rewards), reactions_n), _pct(int(m.reaction_penalties), reactions_n),
+			_pct(int(m.reaction_neutral), reactions_n)])
+	print("Eсцен — сцены с ненулевым эмоциональным вкладом; Eflip — знак финального V")
+	print("отличается от контрфакта на той же доске с одним лишь голосом за клинч;")
+	print("Scap — сырой итог сцены пришлось срезать заданным публичным капом ±1/±2.\n")
+
+	print("--- B. СТОРОЖ ПРОВОКАЦИИ: сознательно дожимать нагретого оппонента ---")
+	print("%-28s | provoke vs normal | реакции/матч | парировки/матч | эмоц. вклад/матч" % "индексация")
+	for ci in EMOTION_CONFIGS.size():
+		var config: Dictionary = EMOTION_CONFIGS[ci]
+		var a := _run_cell(config, "verdict_provoke", "verdict", n, {}, {}, 1250 + ci)
+		var b := _run_cell(config, "verdict", "verdict_provoke", n, {}, {}, 1250 + ci)
+		var provoke_wr := (_winrate(a) + (1.0 - _winrate(b))) * 50.0
+		print("%-28s | %16.1f%% | %12.2f | %14.2f | %15.2f" % [
+			String(config.label), provoke_wr,
+			float(int(a.reactions) + int(b.reactions)) / float(2 * n),
+			float(int(a.parries) + int(b.parries)) / float(2 * n),
+			float(int(a.emotion_hall_abs) + int(b.emotion_hall_abs)) / float(2 * n)])
+	print("Абсолютные >55% сами по себе не доказывают вторую атаку: шкала может быть полезным")
+	print("информационным сигналом. Чистый механический эффект изолирует --emotion-pressure.\n")
+
+	print("--- C. ОБРАТНАЯ СВЯЗЬ ЗАЛ → ДОСКА: comeback-гейт ---")
+	print("%-10s | 1-й ход | ничьи | захваты | |H| | Eflip | Scap" % "гейт")
+	for gate in [[0, 0], [2, 4]]:
+		var config: Dictionary = EMOTION_CONFIGS[5].duplicate(true)
+		config["gate_x"] = int(gate[0])
+		config["gate_y"] = int(gate[1])
+		var m := _run_cell(config, "verdict", "verdict", n, {}, {}, 1300)
+		var label := "выкл" if int(gate[0]) == 0 else "2/4"
+		print("%-10s | %7.1f%% | %5.1f%% | %7.2f | %3.1f | %5.1f%% | %4.1f%%" % [
+			label, _pct(int(m.first_wins), int(m.decisive)), _pct(int(m.draws), n),
+			float(m.captures) / n, float(m.hall_abs) / n,
+			_pct(int(m.emotion_terminal_flips), n), _pct(int(m.scene_cap_hits), int(m.scenes))])
+	print("Сторож: гейт не должен сам создавать инициативу вне 45–55% или резко поднимать")
+	print("частоту эмоциональной переклассификации исхода.\n")
+
+	var decks := [
+		{"label": "канон 3/8/9", "u": 3, "t": 8, "r": 9, "steals": 2},
+		{"label": "глубина 2/12/6", "u": 2, "t": 12, "r": 6, "steals": 2},
+		{"label": "ширина 5/7/8", "u": 5, "t": 7, "r": 8, "steals": 2},
+		{"label": "разбор 2/6/12", "u": 2, "t": 6, "r": 12, "steals": 2},
+		{"label": "смешанная 4/9/7", "u": 4, "t": 9, "r": 7, "steals": 2},
+	]
+	print("--- D. АРХЕТИПЫ: карточная индексация, verdict vs verdict ---")
+	print("%-22s | винрейт против канона | реакции | Eflip" % "обойма YOU")
+	for di in decks.size():
+		var comp: Dictionary = decks[di]
+		var m := _run_cell(EMOTION_CONFIGS[5], "verdict", "verdict", deck_matches,
+			comp, {}, 1350 + di)
+		print("%-22s | %20.1f%% | %7.2f | %5.1f%%" % [String(comp.label),
+			_winrate(m) * 100.0, float(m.reactions) / deck_matches,
+			_pct(int(m.emotion_terminal_flips), deck_matches)])
+	print("Сторож: эмоции не должны вытолкнуть конструктивный архетип за 40–60%; если wide")
+	print("остаётся ниже, это прежний блокер захвата/инициативы, а не повод крутить эмоции.\n")
+
+
+func _emotion_pressure_suite() -> void:
+	var n := mirror_matches * 3 if OS.get_cmdline_user_args().has("--long") else mirror_matches
+	var modes := [
+		{"id": "each_pair", "label": "каждая полная пара"},
+		{"id": "once", "label": "только первая пара"},
+		{"id": "outcome", "label": "только итог клинча"},
+		{"id": "outcome_weighted", "label": "затяжной итог +1"},
+	]
+	print("Условия: карточная индексация, предел сцены ±2, остальное фиксировано;")
+	print("%d матчей/ячейку на одинаковых сериях сидов.\n" % n)
+	print("%-22s | реакц | Eflip | 1-й ход | provoke cards | provoke effect0 | Δмеханики" % "нагрев")
+	for mi in modes.size():
+		var mode: Dictionary = modes[mi]
+		var config: Dictionary = EMOTION_CONFIGS[2].duplicate(true)
+		config["pressure_mode"] = String(mode.id)
+		var mirror := _run_cell(config, "verdict", "verdict", n, {}, {}, 1400 + mi)
+		var a := _run_cell(config, "verdict_provoke", "verdict", n, {}, {}, 1420 + mi)
+		var b := _run_cell(config, "verdict", "verdict_provoke", n, {}, {}, 1420 + mi)
+		var provoke_wr := (_winrate(a) + (1.0 - _winrate(b))) * 50.0
+		var control: Dictionary = EMOTION_CONFIGS[6].duplicate(true)
+		control["pressure_mode"] = String(mode.id)
+		var ca := _run_cell(control, "verdict_provoke", "verdict", n, {}, {}, 1420 + mi)
+		var cb := _run_cell(control, "verdict", "verdict_provoke", n, {}, {}, 1420 + mi)
+		var control_wr := (_winrate(ca) + (1.0 - _winrate(cb))) * 50.0
+		print("%-22s | %5.2f | %5.1f%% | %7.1f%% | %13.1f%% | %14.1f%% | %+8.1f пп" % [
+			String(mode.label), float(mirror.reactions) / n,
+			_pct(int(mirror.emotion_terminal_flips), n),
+			_pct(int(mirror.first_wins), int(mirror.decisive)), provoke_wr, control_wr,
+			provoke_wr - control_wr])
+	print("Сторож темпа: ориентир 4–6 реакций за матч; Eflip должен оставаться заметным, но")
+	print("не становиться главной формулой победы. Δмеханики сравнивает карточный эффект с")
+	print("теми же публичными шкалами и provoke-политикой, но нулевым эффектом реакций на зал.\n")
+
+
+func _crowd_config(config_id: String) -> Dictionary:
+	if config_id == "crowd_reaction_frame":
+		return _production_crowd_config("vector_reaction")
+	for config in CROWD_CONFIGS:
+		if String(config.id) == config_id:
+			return config.duplicate(true)
+	return CROWD_CONFIGS[0].duplicate(true)
+
+
+## Адаптер production-профиля к старому плоскому формату сим-полигона. Калибровочные числа
+## живут в одном реестре; сим остаётся свободен добавлять контрольные модели рядом.
+func _production_crowd_config(profile_id: String) -> Dictionary:
+	var profile: Dictionary = ProductionOutcomeProfiles.get_profile(profile_id)
+	var board: Dictionary = profile.get("board", {})
+	var audience_config: Dictionary = profile.get("audience", {})
+	var links: Dictionary = profile.get("links", {})
+	var victory: Dictionary = profile.get("victory", {})
+	return {
+		"id": "crowd_reaction_frame", "label": "prod: эмоция меняет сцену",
+		"cap": int(audience_config.get("lean_cap", 5)),
+		"wf": int(board.get("frame_weight", 3)),
+		"wt": int(board.get("thesis_weight", 1)), "wz": 1,
+		"emotion_mode": "cards", "hall_per_clinch": 1, "scene_cap": 2,
+		"pressure_mode": "outcome_weighted", "crowd_mode": "pendulum",
+		"verdict_mode": String(victory.get("mode", "board")),
+		"crowd_valence_mode": String(audience_config.get("valence_mode", "reaction_priority")),
+		"lean_friction": int(audience_config.get("lean_friction", 0)),
+		"heat_max": int(audience_config.get("heat_max", 3)),
+		"heat_amplifies": bool(audience_config.get("heat_amplifies", true)),
+		"reaction_values": (audience_config.get("reaction_values", {}) as Dictionary).duplicate(true),
+		"parry_value": int(audience_config.get("parry_value", 1)),
+		"gate_x": int(links.get("gate_x", 0)), "gate_y": int(links.get("gate_y", 0)),
+	}
+
+
+func _crowd_pendulum_suite() -> void:
+	var n := mirror_matches * 3 if OS.get_cmdline_user_args().has("--long") else mirror_matches
+	print("Контракт: Logic = 3·Δрамки + Δтезисы. Он один определяет победителя дебатов.")
+	print("Audience = (Lean −5…+5, Heat 0…3). Обычный ход остужает зал; публичная сцена")
+	print("двигает Lean, а зрелищная сцена сначала повышает Heat и тем самым усиливает рывок.\n")
+
+	print("--- A. НАКОПИТЕЛЬ ПРОТИВ МАЯТНИКА, %d ОДИНАКОВЫХ СИДОВ ---" % n)
+	print("%-29s | |Lean| | Heat | H≥2 | развор. | corr(B,L) | вместе | раскол | нейтр. | fallback | B*:сост." % "модель зала")
+	var reference: Dictionary = {}
+	var selected: Dictionary = {}
+	var configs_to_test: Array = CROWD_CONFIGS
+	if OS.get_cmdline_user_args().has("--selected-only"):
+		configs_to_test = [_crowd_config("crowd_reaction_frame")]
+	for ci in configs_to_test.size():
+		var raw_config: Dictionary = configs_to_test[ci]
+		var config: Dictionary = _production_crowd_config("vector_reaction") \
+			if String(raw_config.id) == "crowd_reaction_frame" else raw_config
+		var m := _run_cell(config, "verdict", "verdict", n, {}, {}, 1600)
+		var diversity := _modal_board_diversity(m)
+		var logic_decisive := n - int(m.logic_draw)
+		print("%-29s | %6.2f | %4.2f | %4.1f%% | %7.2f | %+9.3f | %5.1f%% | %5.1f%% | %5.1f%% | %7.1f%% | %s:%d" % [
+			String(config.label), float(m.hall_abs) / n, float(m.heat_sum) / n,
+			_pct(int(m.heat_high), n), float(m.crowd_reversals) / n, _correlation(m),
+			_pct(int(m.logic_aligned), logic_decisive), _pct(int(m.logic_split), logic_decisive),
+			_pct(int(m.crowd_neutral), logic_decisive), _pct(int(m.mandate_reclass), logic_decisive),
+			String(diversity.board), int(diversity.states)])
+		if reference.is_empty():
+			reference = m
+		elif m.board_counts != reference.board_counts or int(m.turns) != int(reference.turns) \
+				or int(m.captures) != int(reference.captures):
+			_failures += 1
+		if String(config.id) == "crowd_reaction_frame":
+			selected = m
+	print("B*:сост. — число разных финальных Lean/Heat при самом частом одинаковом счёте доски.")
+	print("fallback — сколько логических исходов изменил бы диагностический счёт B + sign(Lean)·Heat.")
+	print("Инвариант A: при выключенном гейте все модели оставляют доску и длину партий идентичными.\n")
+
+	print("--- B. ОБРАТНАЯ СВЯЗЬ ЗАЛ → ДОСКА ---")
+	print("%-10s | 1-й ход | ничьи B | захваты | |Lean| | Heat | раскол | corr(B,L)" % "гейт")
+	for gate in [[0, 0], [2, 4]]:
+		var config: Dictionary = _crowd_config("crowd_reaction_frame")
+		config["gate_x"] = int(gate[0])
+		config["gate_y"] = int(gate[1])
+		var m := _run_cell(config, "verdict", "verdict", n, {}, {}, 1650)
+		var logic_decisive := n - int(m.logic_draw)
+		var label := "выкл" if int(gate[0]) == 0 else "2/4"
+		print("%-10s | %7.1f%% | %7.1f%% | %7.2f | %6.2f | %4.2f | %5.1f%% | %+9.3f" % [
+			label, _pct(int(m.first_wins), int(m.decisive)), _pct(int(m.logic_draw), n),
+			float(m.captures) / n, float(m.hall_abs) / n, float(m.heat_sum) / n,
+			_pct(int(m.logic_split), logic_decisive), _correlation(m)])
+	print("Здесь победителя всё ещё определяет только B; гейт проверяет лишь косвенное влияние зала на доступность захвата.\n")
+
+	print("--- C. ПРОВОКАЦИЯ: ЛОГИЧЕСКИЙ И ПУБЛИЧНЫЙ РЕЗУЛЬТАТ ---")
+	print("%-21s | победы в дебатах | Lean к провокатору | Heat | реакции" % "индексация реакций")
+	for mode in ["cards", "observe"]:
+		var config: Dictionary = _crowd_config("crowd_reaction_frame")
+		config["emotion_mode"] = mode
+		var a := _run_cell(config, "verdict_provoke", "verdict", n, {}, {}, 1700)
+		var b := _run_cell(config, "verdict", "verdict_provoke", n, {}, {}, 1700)
+		var provoke_board_wr := (_winrate(a) + (1.0 - _winrate(b))) * 50.0
+		var provoke_lean := float(int(a.hall_sum) - int(b.hall_sum)) / float(2 * n)
+		var avg_heat := float(int(a.heat_sum) + int(b.heat_sum)) / float(2 * n)
+		var avg_reactions := float(int(a.reactions) + int(b.reactions)) / float(2 * n)
+		var label := "эффект карт −1/0/+1" if mode == "cards" else "эффект карт = 0"
+		print("%-21s | %15.1f%% | %+16.2f | %4.2f | %7.2f" % [
+			label, provoke_board_wr, provoke_lean, avg_heat, avg_reactions])
+	print("Разность строк изолирует публичную цену/выгоду напечатанных реакций: доска при этом остаётся самостоятельным исходом.\n")
+
+	if not selected.is_empty():
+		var resolved := int(selected.logic_aligned) + int(selected.logic_split) + int(selected.crowd_neutral)
+		print("Сводка выбранного маятника: %.1f%% согласованных, %.1f%% расколотых, %.1f%% нейтральных" % [
+			_pct(int(selected.logic_aligned), resolved), _pct(int(selected.logic_split), resolved),
+			_pct(int(selected.crowd_neutral), resolved)])
+		print("среди партий с логическим победителем; %.2f разворота зала за матч, corr(B,Lean)=%+.3f." % [
+			float(selected.crowd_reversals) / n, _correlation(selected)])
+
+
+func _emotion_candidate_suite() -> void:
+	var config: Dictionary = EMOTION_CONFIGS[2].duplicate(true)
+	config["pressure_mode"] = "outcome_weighted"
+	var n := mirror_matches
+	print("Кандидат: 3Р+1Т+H; H ±5; победитель клинча даёт базовый ±1; карточный")
+	print("эмоэффект −1/0/+1; сцена максимум ±2; длинное поражение получает +1 интенсивности.\n")
+
+	print("--- A. ГЕЙТ ---")
+	print("%-10s | 1-й ход | ничьи | реакции | захваты | |H| | Eflip" % "гейт")
+	for gate in [[0, 0], [2, 4]]:
+		var cell_config: Dictionary = config.duplicate(true)
+		cell_config["gate_x"] = int(gate[0])
+		cell_config["gate_y"] = int(gate[1])
+		var m := _run_cell(cell_config, "verdict", "verdict", n, {}, {}, 1500)
+		var label := "выкл" if int(gate[0]) == 0 else "2/4"
+		print("%-10s | %7.1f%% | %5.1f%% | %7.2f | %7.2f | %3.1f | %5.1f%%" % [
+			label, _pct(int(m.first_wins), int(m.decisive)), _pct(int(m.draws), n),
+			float(m.reactions) / n, float(m.captures) / n, float(m.hall_abs) / n,
+			_pct(int(m.emotion_terminal_flips), n)])
+
+	var decks := [
+		{"label": "канон 3/8/9", "u": 3, "t": 8, "r": 9, "steals": 2},
+		{"label": "глубина 2/12/6", "u": 2, "t": 12, "r": 6, "steals": 2},
+		{"label": "ширина 5/7/8", "u": 5, "t": 7, "r": 8, "steals": 2},
+		{"label": "разбор 2/6/12", "u": 2, "t": 6, "r": 12, "steals": 2},
+		{"label": "смешанная 4/9/7", "u": 4, "t": 9, "r": 7, "steals": 2},
+	]
+	print("\n--- B. АРХЕТИПЫ ПРОТИВ КАНОНА ---")
+	print("%-22s | без эмоций | кандидат | Δэмоций | реакции | Eflip" % "обойма YOU")
+	for di in decks.size():
+		var comp: Dictionary = decks[di]
+		var clean := _run_cell(EMOTION_CONFIGS[0], "verdict", "verdict", deck_matches,
+			comp, {}, 1520 + di)
+		var m := _run_cell(config, "verdict", "verdict", deck_matches, comp, {}, 1520 + di)
+		var clean_wr := _winrate(clean) * 100.0
+		var candidate_wr := _winrate(m) * 100.0
+		print("%-22s | %9.1f%% | %8.1f%% | %+8.1f пп | %7.2f | %5.1f%%" % [String(comp.label),
+			clean_wr, candidate_wr, candidate_wr - clean_wr, float(m.reactions) / deck_matches,
+			_pct(int(m.emotion_terminal_flips), deck_matches)])
+	print("Сторож кандидата: важна Δэмоций; абсолютные initiative/wide — прежние отдельные")
+	print("блокеры формулы/захвата, которые этот слой не обязан и не должен маскировать.\n")

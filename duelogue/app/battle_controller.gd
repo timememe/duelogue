@@ -16,6 +16,9 @@ const NarEngine := preload("res://duelogue/core/narrative/narrative_engine.gd")
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 const EmotionCore := preload("res://duelogue/core/emotion/emotion_core.gd")
 const DefaultReactions := preload("res://duelogue/core/emotion/reaction_decks/volatile_default.gd")
+const AudienceCore := preload("res://duelogue/core/audience/audience_core.gd")
+const OutcomeProfiles := preload("res://duelogue/core/outcome/outcome_profiles.gd")
+const OutcomeEvaluator := preload("res://duelogue/core/outcome/outcome_evaluator.gd")
 const PineappleTheme := preload("res://duelogue/core/narrative/themes/theme_pineapple.gd")
 const ShawarmaTheme := preload("res://duelogue/core/narrative/themes/theme_shawarma.gd")
 const EvangelionTheme := preload("res://duelogue/core/narrative/themes/theme_evangelion.gd")
@@ -76,7 +79,10 @@ var model: RefCounted
 var nar: RefCounted
 var ai: RefCounted
 var emotion: RefCounted
+var audience: RefCounted
+var outcome: RefCounted
 var match_id := 0
+var logging_enabled := true     ## smoke/preview могут выключить файловые побочные эффекты
 var _epoch := 0          ## поколение матча; протухшие await прошлой партии выходят по нему
 var _theme_data: Dictionary
 var _mode := "locked"    ## ввод: locked | opening | move | target | clinch_defend | clinch_attack
@@ -94,6 +100,9 @@ var _say_until := 0.0
 ## Стартовый суммарный добор обеих сторон — для фазы дебатов (израсходованная доля = таймер).
 var _draw0 := 1
 var _first_side := SIDE_YOU
+var _outcome_profile: Dictionary = {}
+var _audience_emotion_delta := 0
+var _audience_reaction_seen := false
 
 
 func _ready() -> void:
@@ -101,7 +110,10 @@ func _ready() -> void:
 	nar = NarEngine.new()
 	ai = Ai.new()
 	emotion = EmotionCore.new()
+	audience = AudienceCore.new()
+	outcome = OutcomeEvaluator.new()
 	_theme_data = ACTIVE_THEME.data()
+	_outcome_profile = OutcomeProfiles.get_profile(_profile_outcome_id())
 
 
 ## Обойма игрока из профиля (autoload Profile; редактор колоды). Fallback — канон констант.
@@ -117,6 +129,13 @@ func _profile_opp_style() -> String:
 	if prof != null:
 		return String(prof.settings.get("opp_style", OPP_STYLE))
 	return OPP_STYLE
+
+
+func _profile_outcome_id() -> String:
+	var prof := get_node_or_null("/root/Profile")
+	if prof != null:
+		return String(prof.settings.get("outcome_profile", OutcomeProfiles.DEFAULT_ID))
+	return OutcomeProfiles.DEFAULT_ID
 
 
 # --- состояние для view (read-only) ---
@@ -205,10 +224,61 @@ func active_theme_id() -> String:
 	return String(_theme_data.get("id", ""))
 
 
-## Read-only снимок накопительного напряжения для view. Оно живёт рядом с rules/narrative,
-## но v0.2 не входит ни в один расчёт правил и не может изменить исход партии.
+## Read-only снимок накопительного напряжения для view. Само значение strain не входит в
+## счёт; только случившаяся реакция может стать отдельным событием AudienceCore по профилю.
 func emotion_state(side: String) -> Dictionary:
 	return emotion.state(side) if emotion != null else {}
+
+
+func audience_state() -> Dictionary:
+	if model == null or audience == null:
+		return {}
+	var config: Dictionary = _outcome_profile.get("audience", {})
+	if String(config.get("mode", "derived")) == "derived":
+		return {
+			"mode": "derived", "lean": int(model.zal()), "raw_lean": int(model.zal()),
+			"bias": 0, "lean_cap": int(config.get("lean_cap", RulesCore.ZAL_MAX)),
+			"heat": 0, "heat_max": 0, "moves": 0, "reversals": 0,
+		}
+	return audience.snapshot(int(model.zal_bias))
+
+
+func outcome_profile_list() -> Array:
+	var out: Array = []
+	for profile in OutcomeProfiles.all():
+		out.append({
+			"id": String(profile.id), "label": String(profile.label),
+			"description": String(profile.description),
+		})
+	return out
+
+
+func active_outcome_profile_id() -> String:
+	return String(_outcome_profile.get("id", OutcomeProfiles.DEFAULT_ID))
+
+
+func active_outcome_profile() -> Dictionary:
+	return _outcome_profile.duplicate(true)
+
+
+## Чистый снимок для тестов, debug-UI и финального окна. Можно вызывать до конца матча.
+func outcome_report() -> Dictionary:
+	if model == null or outcome == null:
+		return {}
+	return outcome.evaluate(model, audience_state(), {
+		SIDE_YOU: emotion_state(SIDE_YOU), SIDE_OPP: emotion_state(SIDE_OPP),
+	}, _outcome_profile)
+
+
+## Профиль — контракт целого матча, поэтому переключение сразу начинает новую партию.
+func select_outcome_profile(profile_id: String) -> void:
+	if not OutcomeProfiles.has_profile(profile_id):
+		return
+	_outcome_profile = OutcomeProfiles.get_profile(profile_id)
+	var prof := get_node_or_null("/root/Profile")
+	if prof != null:
+		prof.set_setting("outcome_profile", profile_id)
+	start_match()
 
 
 ## Три смысловые рамки для opening-фазы. Это не карты руки и не расход действия.
@@ -235,8 +305,21 @@ func start_match() -> void:
 	hint_text = ""
 	# Разбудить зависший _ask_clinch прошлого матча — выйдет по epoch-guard, не тронув модель.
 	_clinch_decided.emit({"act": "pass"})
+	_outcome_profile = OutcomeProfiles.get_profile(_profile_outcome_id())
+	var links: Dictionary = _outcome_profile.get("links", {})
+	var terminal: Dictionary = _outcome_profile.get("terminal", {})
+	var audience_config: Dictionary = _outcome_profile.get("audience", {})
 	_first_side = SIDE_YOU if randf() < 0.5 else SIDE_OPP
-	model.reset(_first_side, DECK_U, DECK_T, DECK_R, HAND, BASE_THESES, KOMI, STEAL_CARDS, FORTIFY, CLINCH, CLINCH_FREEZE, CAPTURE, GATE_X, GATE_Y, 0, CAPTURE_LOOT, ZAL_KO, ZAL_HOLD)
+	model.reset(_first_side, DECK_U, DECK_T, DECK_R, HAND, BASE_THESES, KOMI, STEAL_CARDS,
+		FORTIFY, CLINCH, CLINCH_FREEZE, CAPTURE, int(links.get("gate_x", 0)),
+		int(links.get("gate_y", 0)), 0, CAPTURE_LOOT, int(links.get("crowd_ko", 0)),
+		int(links.get("crowd_hold", 1)), bool(terminal.get("board_ko", true)))
+	audience.reset(audience_config)
+	var independent_audience := String(audience_config.get("mode", "derived")) == "pendulum"
+	model.set_external_zal(int(audience.lean), independent_audience,
+		int(audience_config.get("lean_cap", RulesCore.ZAL_MAX)))
+	_audience_emotion_delta = 0
+	_audience_reaction_seen = false
 	# Сторона игрока пересобирается из ПРОФИЛЯ (редактор колоды): счётчики + именные
 	# заменой. Оппонент остаётся каноном констант (асимметрия — сознательный полигон).
 	var d := _player_deck()
@@ -257,11 +340,13 @@ func start_match() -> void:
 		"theme": nar.theme.id,
 		"first": "you" if _first_side == SIDE_YOU else "opp",
 		"match_id": match_id,
+		"outcome_profile": active_outcome_profile(),
 	})
+	EventBus.audience_changed.emit(audience_state())
 	_emit({
 		"ev": "start", "ts": match_id,
 		"first": "you" if _first_side == SIDE_YOU else "opp",
-		"ruleset": {"base": BASE_THESES, "steal_cards": int(d.steals), "deck": "U%d T%d R%d" % [int(d.u), int(d.t), int(d.r)], "named": ", ".join(d.get("named", [])), "opp_style": _opp_style, "freeze": CLINCH_FREEZE, "gate": "%d/%d" % [GATE_X, GATE_Y], "loot": CAPTURE_LOOT, "zal_ko": "%d/%d" % [ZAL_KO, ZAL_HOLD]},
+		"ruleset": {"base": BASE_THESES, "steal_cards": int(d.steals), "deck": "U%d T%d R%d" % [int(d.u), int(d.t), int(d.r)], "named": ", ".join(d.get("named", [])), "opp_style": _opp_style, "freeze": CLINCH_FREEZE, "gate": "%d/%d" % [int(links.get("gate_x", 0)), int(links.get("gate_y", 0))], "loot": CAPTURE_LOOT, "zal_ko": "%d/%d" % [int(links.get("crowd_ko", 0)), int(links.get("crowd_hold", 1))], "outcome_profile": active_outcome_profile_id()},
 		"theme": nar.theme.id,
 	})
 	_tx_header(_first_side)
@@ -503,6 +588,7 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	var my_epoch := _epoch
 	if idx < 0 or idx >= model.sides[defender].lines.size():
 		return
+	_begin_audience_scene()
 	var ctx: Dictionary = model.begin_clinch(attacker, defender, idx, prefer_steal, named_index)
 	if ctx.is_empty():
 		return
@@ -642,6 +728,10 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	if info.get("captured", false):
 		intensity += 1
 	await _emotion_event(strained_side, stimulus, mini(3, intensity), {"target": target_claim})
+	var public_side := attacker if landed else defender
+	var spectacle := 2 if info.get("removed", false) or info.get("captured", false) \
+		or t_added > 0 or r_count > 1 or _audience_reaction_seen else 1
+	_settle_audience_scene(public_side, spectacle)
 
 
 func _ask_clinch(mode: String) -> Dictionary:
@@ -667,16 +757,29 @@ func _show_end() -> void:
 	await _wait_pace(0.0)
 	if my_epoch != _epoch:
 		return
-	var reason := String(model.end_reason)
-	var winner_s := "you" if model.winner == SIDE_YOU else ("opp" if model.winner == SIDE_OPP else "draw")
-	var ev := {"ev": "end", "winner": winner_s, "reason": reason}
+	var report: Dictionary = outcome_report()
+	var winner_s := String(report.get("winner", "draw"))
+	var reason := String(report.get("reason", "draw"))
+	model.winner = winner_s if winner_s in [SIDE_YOU, SIDE_OPP] else ""
+	model.end_reason = reason
+	var verdict: String
+	if String(report.get("mode", "")) == "legacy":
+		verdict = nar.verdict_text(
+			("you" if model.winner == SIDE_YOU else ("opp" if model.winner == SIDE_OPP else "")),
+			reason, nar.stance_label(SIDE_YOU), nar.stance_label(SIDE_OPP))
+	else:
+		verdict = outcome.verdict_text(report, nar.stance_label(SIDE_YOU),
+			nar.stance_label(SIDE_OPP))
+	report["verdict"] = verdict
+	var ev := {"ev": "end", "winner": winner_s, "reason": reason,
+		"outcome_profile": active_outcome_profile_id(), "report": report}
 	ev.merge(_econ())
 	_emit(ev)
-	var verdict: String = nar.verdict_text(
-		("you" if model.winner == SIDE_YOU else ("opp" if model.winner == SIDE_OPP else "")),
-		reason, nar.stance_label(SIDE_YOU), nar.stance_label(SIDE_OPP))
-	_narrate("⚖ " + verdict, "END %s winner=%s рамки %d:%d zal=%+d" % [
-		reason, winner_s, model.score(SIDE_YOU), model.score(SIDE_OPP), model.zal()])
+	_narrate("⚖ " + verdict, "END %s winner=%s B=%+d Lean=%+d Heat=%d profile=%s" % [
+		reason, winner_s, int((report.board as Dictionary).score),
+		int((report.audience as Dictionary).lean), int((report.audience as Dictionary).heat),
+		active_outcome_profile_id()])
+	EventBus.match_reported.emit(report)
 	EventBus.match_ended.emit(winner_s, reason, verdict)
 
 
@@ -733,7 +836,8 @@ func _narrate(text: String, tag: String = "") -> void:
 
 
 ## Один stimulus → рост шкалы → возможно, одна непроизвольная реплика и ограниченный ответ
-## второй шкалы. Никаких мутаций model: вся цепочка остаётся presentation/fun-слоем.
+## второй шкалы. Внутри цепочки model не мутируется; после всей сцены контроллер одним
+## коммитом может передать её публичную валентность независимому AudienceCore.
 func _emotion_event(side: String, stimulus: String, intensity: int,
 	context: Dictionary = {}) -> Dictionary:
 	if emotion == null:
@@ -766,6 +870,7 @@ func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_dept
 	_changed()
 	if reaction.is_empty():
 		return
+	_record_audience_reaction(side, String(reaction.get("id", "")))
 	EventBus.emotion_reacted.emit(side, reaction)
 	await _say(side, String(reaction.text), "    reaction %s %s %d→%d→%d" % [
 		side, String(reaction.id), int(result.before), int(result.peak), int(result.after)],
@@ -794,6 +899,7 @@ func _answer_emotional_reaction(source_side: String, context: Dictionary,
 	EventBus.emotion_linked.emit(source_side, responder, answer)
 	if kind == "parry":
 		var parry: Dictionary = answer.get("parry", {})
+		_record_audience_parry(responder)
 		var ev := {
 			"ev": "emotion_link", "kind": "parry", "source_side": source_side,
 			"side": responder, "before": int(answer.before), "after": int(answer.after),
@@ -821,6 +927,52 @@ func _answer_emotional_reaction(source_side: String, context: Dictionary,
 func _emotion_clinch_round(attacker: String, defender: String, target: String) -> void:
 	await _emotion_event(attacker, "clinch_pressure", 1, {"target": target})
 	await _emotion_event(defender, "clinch_pressure", 1, {"target": target})
+
+
+# ------------------------------------------------------ audience / outcome ---
+
+func _begin_audience_scene() -> void:
+	_audience_emotion_delta = 0
+	_audience_reaction_seen = false
+
+
+func _record_audience_reaction(side: String, reaction_id: String) -> void:
+	if audience == null:
+		return
+	_audience_reaction_seen = true
+	_audience_emotion_delta += int(audience.signed_reaction(side, reaction_id))
+
+
+func _record_audience_parry(side: String) -> void:
+	if audience == null:
+		return
+	_audience_reaction_seen = true
+	_audience_emotion_delta += int(audience.signed_parry(side))
+
+
+func _settle_audience_scene(public_side: String, spectacle: int) -> void:
+	if audience == null:
+		return
+	audience.resolve_scene(public_side, spectacle, _audience_emotion_delta,
+		_audience_reaction_seen)
+	_sync_audience()
+	_begin_audience_scene()
+
+
+func _audience_quiet() -> void:
+	if audience == null:
+		return
+	audience.observe_quiet()
+	_sync_audience()
+
+
+func _sync_audience() -> void:
+	var config: Dictionary = _outcome_profile.get("audience", {})
+	if model != null and String(config.get("mode", "derived")) == "pendulum":
+		model.set_external_zal(int(audience.lean), true,
+			int(config.get("lean_cap", RulesCore.ZAL_MAX)))
+	EventBus.audience_changed.emit(audience_state())
+	_changed()
 
 
 func _changed() -> void:
@@ -907,6 +1059,8 @@ func _log_action(info: Dictionary) -> void:
 			await _say(side, nar.open_line(side, claim, "open"), "t%d %s установка→рамка" % [model.turn_count, side], TYPE_USTANOVKA, false, nar.last_mood())
 		TYPE_RAZBOR:
 			pass  # атаки идут через клинч
+	if String(info.type) in [TYPE_TEZIS, TYPE_USTANOVKA]:
+		_audience_quiet()
 
 
 ## Розыгрыш ИМЕННОГО приёма игроком (не-клинчевые твисты; сократик идёт через _run_clinch).
@@ -934,6 +1088,7 @@ func _play_named_move(hand_index: int, target: int) -> void:
 ## Наррация и лог именного хода. Реплики приёмов пока служебные (голос ремарки, не темы) —
 ## тематические реплики твистов появятся отдельной итерацией нарратива.
 func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
+	_begin_audience_scene()
 	var ev := {"ev": "named", "side": side, "id": String(info.get("named", "")),
 		"name": String(card.get("name", "")), "removed": info.get("removed", false),
 		"captured": info.get("captured", false)}
@@ -975,6 +1130,9 @@ func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
 		await _emotion_event(model.other(side), stimulus, intensity, {
 			"target": String(info.get("target_name", "эта позиция")),
 		})
+	var spectacular := bool(info.get("removed", false)) or bool(info.get("captured", false)) \
+		or _audience_reaction_seen
+	_settle_audience_scene(side if spectacular else "", 2 if spectacular else 0)
 
 
 func _count_razbor(side: String) -> int:
@@ -1040,6 +1198,8 @@ func _tx(tag: String, body: String) -> void:
 
 
 func _tx_write(s: String) -> void:
+	if not logging_enabled:
+		return
 	var f: FileAccess
 	if FileAccess.file_exists(TX_PATH):
 		f = FileAccess.open(TX_PATH, FileAccess.READ_WRITE)
@@ -1069,6 +1229,8 @@ func _econ() -> Dictionary:
 
 
 func _emit(d: Dictionary) -> void:
+	if not logging_enabled:
+		return
 	d["m"] = match_id
 	var f: FileAccess
 	if FileAccess.file_exists(LOG_PATH):

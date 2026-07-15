@@ -50,6 +50,8 @@ const CLINCH_STACK_PITCH := 18.0
 ## защитной зоне. Row уже имеет 8 px отступа от видимого контура Board.
 const BOARD_EDGE_APPROACH := 12.0
 
+@export var playtest_logging_enabled := true
+
 var _drawer_closed_x := 0.0  ## закрытое (за правым краем) положение ящика — из ширины экрана
 var _drawer_open_x := 0.0    ## открытое положение — из ширины экрана И ширины самого ящика
                               ## (считаются в _ready из реальных нод, не задублированы числом)
@@ -80,7 +82,6 @@ var _cutscene_active := false
 @onready var _hand_row: Control = %HandRow
 @onready var _draw_count: Label = %DrawCount
 @onready var _log_rt: RichTextLabel = %Log
-@onready var _flash: Label = %Flash
 @onready var _restart_btn: Button = %RestartBtn
 @onready var _cancel_btn: Button = %CancelBtn
 @onready var _clinch_btn: Button = %ClinchBtn
@@ -96,11 +97,25 @@ var _cutscene_active := false
 @onready var _opp_strain_bg: ColorRect = %OppStrainBg
 @onready var _opp_strain_fill: ColorRect = %OppStrainFill
 @onready var _opp_strain_label: Label = %OppStrainLabel
+@onready var _final_overlay: Control = %FinalOverlay
+@onready var _final_profile: Label = %FinalProfile
+@onready var _final_winner: Label = %FinalWinner
+@onready var _final_rule: Label = %FinalRule
+@onready var _final_board_score: Label = %FinalBoardScore
+@onready var _final_board_detail: Label = %FinalBoardDetail
+@onready var _final_audience_score: Label = %FinalAudienceScore
+@onready var _final_audience_detail: Label = %FinalAudienceDetail
+@onready var _final_emotion_score: Label = %FinalEmotionScore
+@onready var _final_emotion_detail: Label = %FinalEmotionDetail
+@onready var _final_split: Label = %FinalSplit
+@onready var _final_verdict: Label = %FinalVerdict
+@onready var _final_description: Label = %FinalDescription
 
 
 func _ready() -> void:
 	controller = BattleController.new()
 	add_child(controller)  # _ready контроллера создаёт model/nar/ai
+	controller.logging_enabled = playtest_logging_enabled
 	model = controller.model
 	nar = controller.nar
 	# Ядро персонажей кладёт актёров в слой сцены и режиссирует мини-сцену реакции.
@@ -123,7 +138,7 @@ func _ready() -> void:
 	EventBus.utterance.connect(_on_utterance)
 	EventBus.narration.connect(_on_narration)
 	EventBus.board_changed.connect(_on_board_changed)
-	EventBus.match_ended.connect(_on_match_ended)
+	EventBus.match_reported.connect(_on_match_reported)
 	controller.start_match()
 
 
@@ -150,6 +165,7 @@ func _on_opening_pressed(headline_id: String) -> void:
 
 
 func _new_match() -> void:
+	_final_overlay.visible = false
 	controller.restart()
 
 
@@ -167,7 +183,7 @@ func _toggle_drawer() -> void:
 func _on_match_started(_info: Dictionary) -> void:
 	log_lines = []
 	_restart_btn.visible = false
-	_flash.modulate.a = 0.0
+	_final_overlay.visible = false
 	_log_rt.text = ""
 	_refresh()
 
@@ -201,17 +217,66 @@ func _on_board_changed() -> void:
 	_refresh()
 
 
-func _on_match_ended(winner: String, reason: String, _verdict: String) -> void:
+func _on_match_reported(report: Dictionary) -> void:
 	_restart_btn.visible = true
-	if winner == "you":
-		_show_flash("ЗАЛ УНЕСЁН — ОВАЦИЯ!" if reason == "crowd" else "ЗАЛ ВАШ — ПОБЕДА",
-			Color.html("#" + COL_YOU))
-	elif winner == "opp":
-		_show_flash("ЗАЛ УШЁЛ С ОППОНЕНТОМ" if reason == "crowd" else "ЗАЛ ЗА ОППОНЕНТОМ",
-			Color.html("#" + COL_OPP))
+	var profile: Dictionary = report.get("profile", {})
+	var board: Dictionary = report.get("board", {})
+	var audience: Dictionary = report.get("audience", {})
+	var emotion: Dictionary = report.get("emotion", {})
+	var you_emotion: Dictionary = emotion.get(ZalV3.SIDE_YOU, {})
+	var opp_emotion: Dictionary = emotion.get(ZalV3.SIDE_OPP, {})
+	var winner := String(report.get("winner", "draw"))
+	_final_profile.text = "ПРОФИЛЬ · %s" % String(profile.get("label", "эксперимент"))
+	_final_rule.text = String(report.get("formula", ""))
+	match winner:
+		"you":
+			_final_winner.text = "ВЫ ПОБЕДИЛИ"
+			_final_winner.add_theme_color_override("font_color", Color.html("#" + COL_YOU))
+		"opp":
+			_final_winner.text = "ПОБЕДИЛ ОППОНЕНТ"
+			_final_winner.add_theme_color_override("font_color", Color.html("#" + COL_OPP))
+		_:
+			_final_winner.text = "НИЧЬЯ"
+			_final_winner.add_theme_color_override("font_color", Color.html("#" + COL_DIM))
+	_final_board_score.text = "B  %+d" % int(board.get("score", 0))
+	_final_board_detail.text = "Рамки  ВЫ %d : %d ОПП  →  %+d\nТезисы ВЫ %d : %d ОПП  →  %+d" % [
+		int(board.get("you_frames", 0)), int(board.get("opp_frames", 0)),
+		int(board.get("frame_diff", 0)) * int(board.get("frame_weight", 1)),
+		int(board.get("you_theses", 0)), int(board.get("opp_theses", 0)),
+		int(board.get("thesis_diff", 0)) * int(board.get("thesis_weight", 1))]
+	var lean := int(audience.get("lean", 0))
+	var heat := int(audience.get("heat", 0))
+	_final_audience_score.text = "LEAN  %+d" % lean
+	var lean_text := "зал нейтрален"
+	if lean > 0:
+		lean_text = "зал склоняется к вам"
+	elif lean < 0:
+		lean_text = "зал склоняется к оппоненту"
+	_final_audience_detail.text = "Heat %d/%d\n%s" % [
+		heat, int(audience.get("heat_max", 0)), lean_text]
+	var you_strain := int(you_emotion.get("strain", 0))
+	var opp_strain := int(opp_emotion.get("strain", 0))
+	_final_emotion_score.text = "ВЫ %d  ·  ОПП %d" % [you_strain, opp_strain]
+	_final_emotion_detail.text = "Пределы %d/%d и %d/%d\nФинальное состояние · в счёт не входит" % [
+		you_strain, int(you_emotion.get("max", 6)), opp_strain,
+		int(opp_emotion.get("max", 6))]
+	if bool(report.get("split", false)):
+		_final_split.text = "РАСКОЛ: ДОСКА И ЗАЛ ВЫБРАЛИ РАЗНЫХ ОРАТОРОВ"
+		_final_split.add_theme_color_override("font_color", Color.html("#" + COL_GOLD))
+	elif String(report.get("crowd_winner", "draw")) == "draw":
+		_final_split.text = "ЗАЛ НЕ ВЫБРАЛ СТОРОНУ"
+		_final_split.add_theme_color_override("font_color", Color.html("#" + COL_DIM))
 	else:
-		_show_flash("НИЧЬЯ", Color.html("#" + COL_DIM))
+		_final_split.text = "ДОСКА И ЗАЛ СОГЛАСНЫ"
+		_final_split.add_theme_color_override("font_color", Color.html("#" + COL_YOU))
+	_final_verdict.text = String(report.get("verdict", ""))
+	_final_description.text = String(profile.get("description", ""))
+	_final_overlay.visible = true
 	_refresh()
+
+
+func _close_final_overlay() -> void:
+	_final_overlay.visible = false
 
 
 func _log(s: String) -> void:
@@ -227,8 +292,13 @@ func _refresh() -> void:
 		return
 	var you_n: int = model.score(ZalV3.SIDE_YOU)
 	var opp_n: int = model.score(ZalV3.SIDE_OPP)
-	_score_label.text = "ШИРИНА — оппонент: %d   ·   вы: %d" % [opp_n, you_n]
-	var z: int = model.zal()
+	var live_report: Dictionary = controller.outcome_report()
+	var live_board: Dictionary = live_report.get("board", {})
+	_score_label.text = "ДОСКА B %+d  ·  рамки %d:%d  ·  тезисы %d:%d  (опп:вы)" % [
+		int(live_board.get("score", 0)), opp_n, you_n,
+		int(live_board.get("opp_theses", 0)), int(live_board.get("you_theses", 0))]
+	var audience: Dictionary = controller.audience_state()
+	var z: int = int(audience.get("lean", model.zal()))
 	# Зал-гейт: фаворит зала — под прицелом (его тонкие рамки захватываемы целиком).
 	var my_reach: int = model.capture_threshold(ZalV3.SIDE_YOU)   # моя сила захвата
 	var opp_reach: int = model.capture_threshold(ZalV3.SIDE_OPP)  # его сила захвата
@@ -245,7 +315,11 @@ func _refresh() -> void:
 			gate_note = "  ·  ЗАЛ СКАНДИРУЕТ ЗА ВАС: %d/%d" % [sy, int(model.zal_hold)]
 		elif so > 0:
 			gate_note = "  ·  ЗАЛ СКАНДИРУЕТ: %d/%d — ВЕРНИТЕ ЗАЛ!" % [so, int(model.zal_hold)]
-	_zal_label.text = "ЗАЛ: %+d  (рамки + сила)%s" % [z, gate_note]
+	if String(audience.get("mode", "derived")) == "derived":
+		_zal_label.text = "ЗАЛ: %+d  (legacy: рамки + сила)%s" % [z, gate_note]
+	else:
+		_zal_label.text = "ЗАЛ: Lean %+d  ·  Heat %d/%d%s" % [z,
+			int(audience.get("heat", 0)), int(audience.get("heat_max", 0)), gate_note]
 	_update_bar(z)
 	_update_emotion_hud()
 	var input_mode := String(controller.input_mode())
@@ -312,7 +386,8 @@ func _update_bar(z: int) -> void:
 	var bar_w := _bar_bg.size.x
 	var bar_h := _bar_bg.size.y
 	# Шкала бара = черта зал-нокаута (край достижим и означает TKO); без TKO — ZAL_MAX.
-	var zmax := int(model.zal_ko) if int(model.zal_ko) > 0 else ZalV3.ZAL_MAX
+	var audience: Dictionary = controller.audience_state()
+	var zmax := maxi(1, int(audience.get("lean_cap", ZalV3.ZAL_MAX)))
 	var t := clampf(float(z) / float(zmax), -1.0, 1.0)
 	var center := bar_x + bar_w / 2.0
 	var mx := center + t * (bar_w / 2.0)
@@ -931,12 +1006,6 @@ func _card_style(bg: Color, border: Color, w: int) -> StyleBoxFlat:
 	return sb
 
 
-func _show_flash(txt: String, col: Color) -> void:
-	_flash.text = txt
-	_flash.add_theme_color_override("font_color", col)
-	_flash.modulate.a = 1.0
-
-
 # ------------------------------------------------------ меню паузы (оверлей, код)
 
 ## Оверлей паузы: продолжить / новая партия / выбор колоды. Перекрывает доску (блокирует клики).
@@ -996,13 +1065,23 @@ func _select_theme(i: int) -> void:
 	_close_menu()
 
 
+func _select_outcome_profile(i: int) -> void:
+	var profiles: Array = controller.outcome_profile_list()
+	if i < 0 or i >= profiles.size():
+		return
+	_close_menu()
+	controller.select_outcome_profile(String((profiles[i] as Dictionary).id))
+
+
 ## Содержимое оверлея (без самого Control) — для перестройки отметки активной колоды.
 func _build_menu_contents() -> void:
 	var themes: Array = controller.theme_list()
-	# Панель растёт по высоте вместе со списком колод + блоком настроек снизу.
+	# Панель растёт по высоте вместе со списком колод, профилем исхода и настройками.
 	var themes_bottom := 298.0 + float(themes.size()) * 38.0
-	var settings_top := themes_bottom + 16.0
-	var panel_h := settings_top + 170.0 - 130.0
+	var outcome_top := themes_bottom + 10.0
+	var settings_top := outcome_top + 72.0
+	var panel_y := 90.0
+	var panel_h := settings_top + 150.0 - panel_y
 
 	var dim := ColorRect.new()
 	dim.color = Color(0.06, 0.07, 0.09, 0.82)
@@ -1011,7 +1090,7 @@ func _build_menu_contents() -> void:
 	_menu_overlay.add_child(dim)
 	var panel := ColorRect.new()
 	panel.color = Color.html("#1b1f27")
-	panel.position = Vector2(356, 130)
+	panel.position = Vector2(356, panel_y)
 	panel.size = Vector2(440, panel_h)
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_menu_overlay.add_child(panel)
@@ -1024,6 +1103,24 @@ func _build_menu_contents() -> void:
 		var td: Dictionary = themes[i]
 		var mark := "● " if String(td.id) == active else "   "
 		_menu_btn(mark + String(td.topic), 376, 298.0 + float(i) * 38.0, 400, 32, _select_theme.bind(i))
+
+	# --- ПРОФИЛЬ ИСХОДА: единый переключатель для ручной калибровки. ---
+	_menu_label("УСЛОВИЯ ПОБЕДЫ", 376, outcome_top, 13, COL_DIM, 400)
+	var profile_select := OptionButton.new()
+	var outcome_profiles: Array = controller.outcome_profile_list()
+	var active_profile := String(controller.active_outcome_profile_id())
+	var active_index := 0
+	for i in outcome_profiles.size():
+		var profile: Dictionary = outcome_profiles[i]
+		profile_select.add_item(String(profile.label))
+		if String(profile.id) == active_profile:
+			active_index = i
+	profile_select.select(active_index)
+	profile_select.position = Vector2(376, outcome_top + 24.0)
+	profile_select.size = Vector2(400, 32)
+	profile_select.add_theme_font_size_override("font_size", 12)
+	profile_select.item_selected.connect(_select_outcome_profile)
+	_menu_overlay.add_child(profile_select)
 
 	# --- НАСТРОЙКИ ---
 	_menu_label("НАСТРОЙКИ", 376, settings_top, 13, COL_DIM, 400)

@@ -76,6 +76,14 @@ var crowd_streak := {}
 ## Смещение стрелки зала (+ в пользу you): стартовый крен run-слоя (§3.1 zal_run) и цена
 ## грязных именных приёмов (Ad hominem, §4). 0 = ваниль; двигается снаружи/твистами.
 var zal_bias := 0
+## Экспериментальный шов: по умолчанию zal() остаётся старой производной доски. Профиль
+## может передать независимый Lean из AudienceCore; гейт/TKO читают тот же публичный API.
+var external_zal_enabled := false
+var external_zal := 0
+var external_zal_cap := ZAL_MAX
+## Векторные профили доводят матч до общего вердикта даже после потери последней рамки.
+## Legacy сохраняет немедленный нокаут. Саму формулу вердикта RulesCore не знает.
+var board_ko_enabled := true
 ## Розыгрыши именных приёмов за партию по сторонам (диагностика сима/плейтеста).
 var named_played := {}
 
@@ -86,7 +94,8 @@ func reset(
 	p_steal_cards: int = 0, p_fortify: int = 0,
 	p_clinch: bool = false, p_clinch_freeze: bool = true,
 	p_capture: int = 0, p_gate_x: int = 0, p_gate_y: int = 0, p_second_wind: int = 0,
-	p_capture_loot: int = 0, p_zal_ko: int = 0, p_zal_hold: int = 1
+	p_capture_loot: int = 0, p_zal_ko: int = 0, p_zal_hold: int = 1,
+	p_board_ko_enabled: bool = true
 ) -> void:
 	hand_size = p_hand_size
 	steal_cards = p_steal_cards
@@ -100,8 +109,12 @@ func reset(
 	capture_loot = p_capture_loot
 	zal_ko = p_zal_ko
 	zal_hold = maxi(1, p_zal_hold)
+	board_ko_enabled = p_board_ko_enabled
 	crowd_streak = {SIDE_YOU: 0, SIDE_OPP: 0}
 	zal_bias = 0
+	external_zal_enabled = false
+	external_zal = 0
+	external_zal_cap = ZAL_MAX
 	named_played = {SIDE_YOU: 0, SIDE_OPP: 0}
 	captures = 0
 	capture_theses = 0
@@ -247,9 +260,23 @@ func shine(side: String) -> int:
 ## Зал — производная стрелка: крен по числу установок И их силе (тезисам) + смещение
 ## zal_bias (стартовый крен забега / цена грязных приёмов). Плюс — в сторону игрока.
 func zal() -> int:
+	if external_zal_enabled:
+		return clampi(external_zal + zal_bias, -external_zal_cap, external_zal_cap)
 	var you_w := score(SIDE_YOU) + shine(SIDE_YOU)
 	var opp_w := score(SIDE_OPP) + shine(SIDE_OPP)
 	return clampi(you_w - opp_w + zal_bias, -ZAL_MAX, ZAL_MAX)
+
+
+func set_external_zal(value: int, enabled: bool = true, cap: int = ZAL_MAX) -> void:
+	external_zal_cap = clampi(cap, 1, ZAL_MAX)
+	external_zal = clampi(value, -external_zal_cap, external_zal_cap)
+	external_zal_enabled = enabled
+
+
+func clear_external_zal() -> void:
+	external_zal = 0
+	external_zal_cap = ZAL_MAX
+	external_zal_enabled = false
 
 
 func legal_types(side: String) -> Array:
@@ -289,8 +316,9 @@ func begin_turn(side: String) -> String:
 			play_action(side, TYPE_USTANOVKA)
 			s.passed = false
 			return "redeploy"
-		_finish(other(side), "knockout")
-		return "ko"
+		if board_ko_enabled:
+			_finish(other(side), "knockout")
+			return "ko"
 	# Зал-нокаут: крен в пользу ходящего дожил до начала его хода zal_hold раз подряд —
 	# оппонент имел ход(ы) на спасение (поимка/захват) и не вернул стрелку. Зал уведён.
 	if zal_ko > 0:
@@ -306,7 +334,7 @@ func begin_turn(side: String) -> String:
 	# карта, вытянутая заранее), но ДО проверки паса: сброс может вернуть сторону в игру.
 	_try_second_wind(s)
 	# Может ли ходить?
-	if s.hand.is_empty():
+	if s.hand.is_empty() or (not board_ko_enabled and legal_types(side).is_empty()):
 		s.passed = true
 		if sides[other(side)].passed:
 			_end_by_decision()
