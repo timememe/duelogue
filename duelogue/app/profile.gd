@@ -22,7 +22,7 @@ const OPP_STYLES := ["smart", "balanced", "aggro", "tall", "wide"]
 var deck := {}
 var settings := {
 	"opp_style": "smart", "chars_per_sec": 30.0, "cutscenes": true,
-	"outcome_profile": "vector_reaction",
+	"outcome_profile": "vector_conduct", "outcome_contract_version": 2,
 }
 
 
@@ -88,8 +88,16 @@ func load_profile() -> void:
 			deck[k] = loaded[k]
 	if d.get("settings") is Dictionary:
 		var ls: Dictionary = d.settings
+		var old_contract := int(ls.get("outcome_contract_version", 0)) < 2
 		for k in ls:
 			settings[k] = ls[k]
+		# Одноразово переводим только прежний дефолт. После этой отметки пользователь может
+		# вручную выбрать vector_reaction — следующий запуск уже не переопределит его выбор.
+		if old_contract:
+			if String(settings.get("outcome_profile", "")) == "vector_reaction":
+				settings["outcome_profile"] = "vector_conduct"
+			settings["outcome_contract_version"] = 2
+			save_profile()
 
 
 ## Настройки презентации — в статики ReadingPace (единые часы сцен и пейсинга).

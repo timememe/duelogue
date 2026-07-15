@@ -14,25 +14,64 @@ func _ready() -> void:
 
 
 func _run() -> void:
-	var vector := OutcomeProfiles.get_profile("vector_reaction")
-	_check(String(vector.id) == "vector_reaction" and OutcomeProfiles.all().size() >= 5,
+	var vector := OutcomeProfiles.get_profile(OutcomeProfiles.DEFAULT_ID)
+	_check(String(vector.id) == "vector_conduct" and OutcomeProfiles.all().size() >= 6 and
+		String(OutcomeProfiles.get_profile("missing_profile").id) == "vector_conduct",
 		"профили — данные и доступны тестам")
 	_check(String((vector.victory as Dictionary).mode) == "board" and
-		String((vector.audience as Dictionary).mode) == "pendulum",
+		String((vector.audience as Dictionary).valence_mode) == "content_plus_conduct" and
+		int((vector.audience as Dictionary).decision_threshold) == 1,
 		"векторный профиль разделяет победу и аудиторию")
+	var old_vector := OutcomeProfiles.get_profile("vector_reaction")
+	_check(String((old_vector.audience as Dictionary).valence_mode) == "reaction_priority" and
+		int((old_vector.audience as Dictionary).decision_threshold) == 1,
+		"прежний реакционный маятник сохранён отдельным сравнительным профилем")
 
 	var audience := AudienceCore.new()
 	audience.reset(vector.audience)
-	audience.resolve_scene("you", 2, 0, false)
-	_check(int(audience.lean) == 2 and int(audience.heat) == 1,
-		"зрелище сначала нагревает и усиливает Lean")
+	var cold_scene := audience.resolve_scene("you", 1, 0, 1, false)
+	var cold_breakdown: Dictionary = cold_scene.last_scene
+	_check(int(audience.lean) == 1 and int(audience.heat) == 1 and
+		int(cold_breakdown.heat_before) == 0 and int(cold_breakdown.amplitude) == 1,
+		"холодная содержательная сцена сдвигает Lean на один и греет только следующую")
 	audience.observe_quiet()
-	_check(int(audience.lean) == 2 and int(audience.heat) == 0,
-		"тихий ход остужает Heat, не переписывая Lean")
+	_check(int(audience.lean) == 1 and int(audience.heat) == 1,
+		"одно тихое действие ещё не выдаёт охлаждение за полный раунд")
+	audience.observe_quiet()
+	_check(int(audience.lean) == 1 and int(audience.heat) == 0,
+		"два тихих действия остужают Heat, не переписывая Lean")
 	audience.reset(vector.audience)
-	audience.resolve_scene("you", 2, -1, true)
-	_check(int(audience.lean) == -2,
-		"ненейтральная реакция переосмысляет логический исход сцены")
+	var cancelled := audience.resolve_scene("opp", 1, 1, 1, true)
+	_check(int(audience.lean) == 0 and int(cancelled.last_scene.total) == 0 and
+		int(cancelled.last_scene.impulse) == 0,
+		"хорошее поведение проигравшего отменяет публичный ущерб, но не крадёт сцену")
+	_check(audience.reaction_value("audience_check", "argument_lost") == 0 and
+		audience.reaction_value("audience_check", "dirty_hit") == 1 and
+		audience.signed_reaction("opp", "audience_check", "captured") == -1 and
+		audience.reaction_value("cold_laugh", "captured") == 0,
+		"реакции читают stimulus/default, а не получают универсальный авторский знак")
+	var hot_config: Dictionary = (vector.audience as Dictionary).duplicate(true)
+	hot_config["opening_heat"] = 3
+	audience.reset(hot_config)
+	var hot_content_only := audience.resolve_scene("you", 1, 0, 1, false)
+	_check(int(audience.lean) == 1 and int(audience.heat) == 3 and
+		not bool(hot_content_only.last_scene.surged),
+		"полный Heat не удваивает один содержательный голос без поддержки поведения")
+	audience.reset(hot_config)
+	var hot_conduct_only := audience.resolve_scene("", 0, 2, 1, true)
+	_check(int(audience.lean) == 1 and int(audience.heat) == 3 and
+		not bool(hot_conduct_only.last_scene.surged),
+		"полный Heat не удваивает один голос поведения без содержательного исхода")
+	audience.reset(hot_config)
+	var surged := audience.resolve_scene("you", 1, 1, 1, true)
+	_check(int(audience.lean) == 2 and int(audience.heat) == 1 and
+		bool(surged.last_scene.votes_aligned) and bool(surged.last_scene.surged) and
+		int(surged.last_scene.amplitude) == 2,
+		"полный Heat усиливает только согласованную сцену и после всплеска сбрасывается")
+	audience.reset(old_vector.audience)
+	audience.resolve_scene("you", 1, 0, 1, false)
+	_check(int(audience.lean) == 2 and int(audience.heat) == 1,
+		"сравнительный профиль сохраняет самоусиление прежнего маятника")
 
 	var model := RulesCore.new()
 	model.reset(RulesCore.SIDE_YOU, 3, 8, 9, 5, 1, 0, 2, 0, true, true, 1,
@@ -52,12 +91,25 @@ func _run() -> void:
 		"you": {"strain": 5, "max": 6},
 		"opp": {"strain": 1, "max": 6},
 	}
-	var crowd := {"lean": -4, "lean_cap": 5, "heat": 3, "heat_max": 3}
+	var crowd := {
+		"lean": -4, "lean_cap": 5, "decision_threshold": 1,
+		"heat": 3, "heat_max": 3,
+	}
 	var report := evaluator.evaluate(model, crowd, emotions, vector)
 	_check(int((report.board as Dictionary).score) == 4 and String(report.winner) == "you",
 		"победителя векторного профиля определяет только B=3ΔР+ΔТ")
 	_check(bool(report.split) and String(report.crowd_winner) == "opp",
 		"противоположный зал сохраняется отдельным расколотым итогом")
+	var mild_crowd := crowd.duplicate(true)
+	mild_crowd["lean"] = -1
+	var mild_split := evaluator.evaluate(model, mild_crowd, emotions, vector)
+	_check(String(mild_split.crowd_winner) == "opp" and bool(mild_split.split),
+		"любой ненулевой крен сохраняет матрицу четырёх исходов")
+	var undecided_crowd := crowd.duplicate(true)
+	undecided_crowd["lean"] = 0
+	var undecided := evaluator.evaluate(model, undecided_crowd, emotions, vector)
+	_check(String(undecided.crowd_winner) == "draw" and not bool(undecided.split),
+		"только ровный Lean 0 оставляет зал без стороны")
 	_check(int((report.emotion as Dictionary).strain_diff) == 4,
 		"финал регистрирует обе шкалы раздражения, не теряя их состояния")
 	var legacy := evaluator.evaluate(model, crowd, emotions,
@@ -100,7 +152,7 @@ func _run() -> void:
 	_check(bool(ui.get_node("%FinalOverlay").visible), "финальный протокол открывается")
 	_check("B  +4" in String(ui.get_node("%FinalBoardScore").text),
 		"финальное окно показывает прозрачный счёт доски")
-	_check("LEAN  -4" in String(ui.get_node("%FinalAudienceScore").text),
+	_check("КРЕН  -4" in String(ui.get_node("%FinalAudienceScore").text),
 		"финальное окно не смешивает зал с доской")
 	var screenshot_args := OS.get_cmdline_user_args()
 	if screenshot_args.has("--menu-screenshot"):
@@ -115,6 +167,13 @@ func _run() -> void:
 		if viewport_texture != null:
 			viewport_texture.get_image().save_png(preview_path)
 			print("PREVIEW: %s" % ProjectSettings.globalize_path(preview_path))
+	# start_match будит старый await клинча. Его continuation не должен затереть новый
+	# opening-режим уже после рестарта/смены профиля.
+	ui.controller._ask_clinch("defend")
+	ui.controller.start_match()
+	await get_tree().process_frame
+	_check(String(ui.controller.input_mode()) == "opening",
+		"протухший await клинча не блокирует ввод новой партии")
 	ui.queue_free()
 
 	print("=== OUTCOME ARCHITECTURE: %s ===" % ("OK" if failures == 0 else "FAIL (%d)" % failures))

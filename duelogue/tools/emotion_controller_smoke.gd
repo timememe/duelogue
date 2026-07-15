@@ -3,8 +3,20 @@ extends "res://duelogue/app/battle_controller.gd"
 ## Интеграционный smoke: BattleController действительно проводит реакционную реплику,
 ## но эмоциональное ядро v0.2 ни на байт не меняет rules_core.
 
+class ScriptedClinchAi:
+	extends RefCounted
+	func atk_will_clinch(_model: RefCounted, _side: String, _line: Dictionary) -> bool:
+		return true
+
+	func atk_prefer_steal(_model: RefCounted, _side: String, _defender: String,
+		_target: int) -> bool:
+		return false
+
+
 var failures := 0
 var spoken: Array = []
+var emotion_event_calls: Array = []
+var clinch_decisions: Array = []
 
 
 func _ready() -> void:
@@ -52,13 +64,28 @@ func _run_smoke() -> void:
 
 	start_match()
 	spoken.clear()
-	var rally_model_before := JSON.stringify(model.sides)
-	await _emotion_clinch_round(SIDE_YOU, SIDE_OPP, "тестовая рамка")
-	_check(int(emotion_state(SIDE_YOU).strain) == 1 and
-		int(emotion_state(SIDE_OPP).strain) == 1,
-		"завершённый раунд клинча нагревает обе стороны")
-	_check(JSON.stringify(model.sides) == rally_model_before,
-		"эмоциональное давление клинча не меняет rules_core")
+	emotion_event_calls.clear()
+	# Настоящий затяжной клинч: игрок один раз защищается, AI один раз дожимает, затем
+	# защита кончается. Даже после полной пары только проигравший получает одну проверку
+	# уже закрытого исхода; mid-rally проверки сразу сделают этот счётчик > 1.
+	model.sides[SIDE_YOU].hand = [
+		{"type": TYPE_TEZIS, "name": "защита"},
+	]
+	model.sides[SIDE_OPP].hand = [
+		{"type": TYPE_RAZBOR, "name": "удар 1", "steals": false},
+		{"type": TYPE_RAZBOR, "name": "удар 2", "steals": false},
+	]
+	clinch_decisions = [{"act": "play", "steals": false, "hand_index": 0}]
+	var regular_ai := ai
+	ai = ScriptedClinchAi.new()
+	await _run_clinch(SIDE_OPP, SIDE_YOU, 0, false)
+	ai = regular_ai
+	_check(emotion_event_calls.size() == 1 and
+		String((emotion_event_calls[0] as Dictionary).side) == SIDE_YOU,
+		"затяжной клинч проверяет один раз только проигравшего после исхода")
+	_check(String((emotion_event_calls[0] as Dictionary).stimulus) in [
+		"argument_lost", "frame_lost", "captured", "attack_stalled"],
+		"проверка получает уже разрешённый исход, а не шум ралли")
 
 	start_match()
 	_check(int(emotion_state(SIDE_YOU).strain) == 0 and
@@ -71,6 +98,18 @@ func _say(side: String, text: String, tag: String = "", card_type: String = "",
 	steals: bool = false, mood: String = "", extra_meta: Dictionary = {}) -> void:
 	spoken.append({"side": side, "text": text, "tag": tag, "card_type": card_type,
 		"steals": steals, "mood": mood, "meta": extra_meta.duplicate(true)})
+
+
+func _emotion_event(side: String, stimulus: String, intensity: int,
+	context: Dictionary = {}) -> Dictionary:
+	emotion_event_calls.append({"side": side, "stimulus": stimulus, "intensity": intensity})
+	return await super._emotion_event(side, stimulus, intensity, context)
+
+
+func _ask_clinch(_mode_name: String) -> Dictionary:
+	if clinch_decisions.is_empty():
+		return {"act": "pass"}
+	return clinch_decisions.pop_front()
 
 
 func _emit(_data: Dictionary) -> void:

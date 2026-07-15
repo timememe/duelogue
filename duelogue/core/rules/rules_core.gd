@@ -493,8 +493,9 @@ func _named_gish(attacker: String, target: int, info: Dictionary) -> void:
 			info["target_name"] = sub.get("target_name", "")
 
 
-## Ad hominem: снимает 2 тезиса с рамки (пала после первого — второй удар пропал),
-## цена — крен зала −1 против играющего (грязный приём, §4).
+## Ad hominem: снимает 2 тезиса с рамки (пала после первого — второй удар пропал).
+## Публичная цена возвращается относительным audience_conduct: векторный зал применит её
+## через AudienceCore вместе со всей сценой; legacy по-прежнему хранит цену в zal_bias.
 func _named_ad_hominem(attacker: String, target: int, info: Dictionary) -> void:
 	var opp := other(attacker)
 	var lines: Array = sides[opp].lines
@@ -503,7 +504,9 @@ func _named_ad_hominem(attacker: String, target: int, info: Dictionary) -> void:
 	_named_chip(opp, target, info)
 	if not info.get("removed", false):
 		_named_chip(opp, target, info)
-	zal_bias += -1 if attacker == SIDE_YOU else 1
+	info["audience_conduct"] = -1
+	if not external_zal_enabled:
+		zal_bias += -1 if attacker == SIDE_YOU else 1
 	info["dirty"] = true
 
 

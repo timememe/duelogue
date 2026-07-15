@@ -33,6 +33,9 @@ func evaluate(model: RefCounted, audience: Dictionary, emotions: Dictionary,
 	var mode := String(victory.get("mode", "board"))
 	var lean := int(audience.get("lean", 0))
 	var heat := int(audience.get("heat", 0))
+	var audience_config: Dictionary = profile.get("audience", {})
+	var decision_threshold := maxi(1, int(audience.get("decision_threshold",
+		audience_config.get("decision_threshold", 1))))
 	var board_score := int(board.score)
 	var audience_component := 0
 	var margin := board_score
@@ -68,7 +71,13 @@ func evaluate(model: RefCounted, audience: Dictionary, emotions: Dictionary,
 		decisive_source = "board" if mode == "board" else "combined"
 
 	var board_winner := _winner_from_margin(board_score)
-	var crowd_winner := _winner_from_margin(lean)
+	if mode == "legacy":
+		# Старый rules_core решает сначала по ширине; производный зал работает только как
+		# тай-брейк. Additive score профиля нужен отчёту, но не определяет эту ось.
+		board_winner = _winner_from_margin(int(board.frame_diff))
+	var crowd_winner := _winner_from_margin(lean, decision_threshold)
+	var audience_report := audience.duplicate(true)
+	audience_report["decision_threshold"] = decision_threshold
 	var you_emotion: Dictionary = emotions.get(SIDE_YOU, {})
 	var opp_emotion: Dictionary = emotions.get(SIDE_OPP, {})
 	return {
@@ -84,7 +93,7 @@ func evaluate(model: RefCounted, audience: Dictionary, emotions: Dictionary,
 		"formula": formula,
 		"margin": margin,
 		"board": board,
-		"audience": audience.duplicate(true),
+		"audience": audience_report,
 		"audience_component": audience_component,
 		"emotion": {
 			SIDE_YOU: you_emotion.duplicate(true),
@@ -103,22 +112,29 @@ func verdict_text(report: Dictionary, you_label: String, opp_label: String) -> S
 	var audience: Dictionary = report.get("audience", {})
 	var lean := int(audience.get("lean", 0))
 	var heat := int(audience.get("heat", 0))
-	var audience_tail := "зал остался нейтрален"
-	if lean > 0:
+	var decision_threshold := maxi(1, int(audience.get("decision_threshold", 1)))
+	var audience_tail := "зал пока не выбрал сторону"
+	if lean == 1:
+		audience_tail = "зал слегка склоняется к вам"
+	elif lean == -1:
+		audience_tail = "зал слегка склоняется к оппоненту"
+	elif lean >= decision_threshold:
 		audience_tail = "зал склоняется к вам"
-	elif lean < 0:
+	elif lean <= -decision_threshold:
 		audience_tail = "зал склоняется к оппоненту"
 	audience_tail += ", накал %d/%d" % [heat, int(audience.get("heat_max", 0))]
 	if winner == "draw":
-		return "Логический счёт равен (%+d); %s." % [int(board.get("score", 0)), audience_tail]
+		return "Позиционный счёт равен (%+d); %s." % [int(board.get("score", 0)), audience_tail]
 	var label := you_label if winner == SIDE_YOU else opp_label
 	var split_note := " Итог расколот." if bool(report.get("split", false)) else ""
 	return "Побеждает «%s» при итоговом перевесе %+d; %s.%s" % [
 		label, int(report.get("margin", 0)), audience_tail, split_note]
 
 
-func _winner_from_margin(margin: int) -> String:
-	return SIDE_YOU if margin > 0 else (SIDE_OPP if margin < 0 else "draw")
+func _winner_from_margin(margin: int, threshold: int = 1) -> String:
+	var resolved_threshold := maxi(1, threshold)
+	return SIDE_YOU if margin >= resolved_threshold else \
+		(SIDE_OPP if margin <= -resolved_threshold else "draw")
 
 
 func _public_winner(core_winner: String) -> String:

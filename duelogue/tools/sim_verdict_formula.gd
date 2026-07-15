@@ -86,7 +86,7 @@ const EMOTION_CONFIGS := [
 # Векторный исход: доска определяет логический результат, зал хранит отдельные Lean/Heat.
 # Во всех вариантах эмоциональный контракт одинаков; меняется только память аудитории.
 const CROWD_CONFIGS := [
-	{"id": "crowd_reaction_frame", "label": "emotion reframes spectacle", "cap": 5, "wf": 3, "wt": 1,
+	{"id": "crowd_reaction_priority_control", "label": "control: emotion reframes spectacle", "cap": 5, "wf": 3, "wt": 1,
 		"wz": 1, "emotion_mode": "cards", "hall_per_clinch": 1, "scene_cap": 2,
 		"pressure_mode": "outcome_weighted", "crowd_mode": "pendulum", "verdict_mode": "board",
 		"crowd_valence_mode": "reaction_priority", "lean_friction": 0, "heat_amplifies": true,
@@ -147,6 +147,14 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 	var heat_amplifies := true
 	var reaction_values := {}
 	var parry_value := 1
+	var decision_threshold := 1
+	var conduct_cap := 2
+	var surge_threshold := 3
+	var surge_alignment_min := 2
+	var surge_amplitude := 2
+	var surge_reset := 1
+	var quiet_actions_required := 0
+	var quiet_cool := 0
 	var emotion: RefCounted
 	var clean_hall := 0               ## контрфакт на той же доске: только голоса клинчей
 	var clean_heat := 0
@@ -159,6 +167,8 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 	var _pending_spectacle := 0
 	var _pressure_rounds := 0
 	var _last_crowd_sign := 0
+	var _quiet_actions_seen := 0
+	var _clean_quiet_actions_seen := 0
 	var scenes := 0
 	var emotion_scenes := 0
 	var scene_cap_hits := 0
@@ -197,6 +207,14 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 		heat_amplifies = bool(config.get("heat_amplifies", true))
 		reaction_values = (config.get("reaction_values", {}) as Dictionary).duplicate(true)
 		parry_value = int(config.get("parry_value", 1))
+		decision_threshold = maxi(1, int(config.get("decision_threshold", 1)))
+		conduct_cap = maxi(0, int(config.get("conduct_cap", 2)))
+		surge_threshold = clampi(int(config.get("surge_threshold", heat_max)), 0, heat_max)
+		surge_alignment_min = maxi(1, int(config.get("surge_alignment_min", 2)))
+		surge_amplitude = maxi(1, int(config.get("surge_amplitude", 2)))
+		surge_reset = clampi(int(config.get("surge_reset", 1)), 0, heat_max)
+		quiet_actions_required = maxi(0, int(config.get("quiet_actions", 0)))
+		quiet_cool = maxi(0, int(config.get("quiet_cool", 0)))
 		heat = clampi(int(config.get("opening_heat", 0)), 0, heat_max)
 		clean_heat = heat
 
@@ -250,8 +268,12 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 		# Обычная выкладка меняет только доску. Для маятника это тихая сцена: накал и
 		# старый крен постепенно затухают, но нового направления публика не получает.
 		if crowd_mode == "pendulum" and type != TYPE_RAZBOR and not result.is_empty():
-			_settle_pendulum(0, 0, false)
-			_settle_pendulum(0, 0, true)
+			if crowd_valence_mode == "content_plus_conduct":
+				_observe_quiet_action(false)
+				_observe_quiet_action(true)
+			else:
+				_settle_pendulum(0, 0, false)
+				_settle_pendulum(0, 0, true)
 		return result
 
 	## Новая сцена начинает чистую транзакцию зала. Давление внутри клинча может породить
@@ -289,12 +311,16 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 		var winner_sign := 1 if exchange_winner == SIDE_YOU else -1
 		var base_delta := winner_sign * hall_per_clinch
 		var info: Dictionary = result.get("info", {})
-		var base_spectacle := 2 if bool(info.get("removed", false)) \
-				or bool(info.get("captured", false)) or _pressure_rounds > 0 else 1
+		var content_scene := bool(info.get("removed", false)) \
+				or bool(info.get("captured", false)) or _pressure_rounds > 0
+		var base_spectacle := 2 if content_scene else 1
 		var public_base_delta := base_delta
-		if crowd_mode == "pendulum" and crowd_valence_mode in ["spectacle_only", "reaction_priority"] \
-				and base_spectacle < 2:
-			public_base_delta = 0
+		if crowd_mode == "pendulum":
+			if crowd_valence_mode == "content_plus_conduct":
+				public_base_delta = base_delta if content_scene else 0
+			elif crowd_valence_mode in ["spectacle_only", "reaction_priority"] \
+					and base_spectacle < 2:
+				public_base_delta = 0
 		if emotion != null:
 			var stimulus := "attack_stalled"
 			if bool(result.landed):
@@ -313,21 +339,87 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 			if signi(_pending_emotion_delta) == winner_sign:
 				emotion_aligns_winner += 1
 		var raw_scene_delta := public_base_delta + _pending_emotion_delta
-		if crowd_mode == "pendulum" and crowd_valence_mode == "reaction_priority" \
-				and _pending_emotion_delta != 0:
-			raw_scene_delta = _pending_emotion_delta
-		if absi(raw_scene_delta) > scene_cap:
-			scene_cap_hits += 1
-		var scene_delta := clampi(raw_scene_delta, -scene_cap, scene_cap)
+		var scene_delta := raw_scene_delta
+		var conduct_vote := _pending_emotion_delta
+		if crowd_mode == "pendulum" and crowd_valence_mode == "content_plus_conduct":
+			if absi(_pending_emotion_delta) > conduct_cap:
+				scene_cap_hits += 1
+			conduct_vote = clampi(_pending_emotion_delta, -conduct_cap, conduct_cap)
+			scene_delta = public_base_delta + conduct_vote
+		else:
+			if crowd_mode == "pendulum" and crowd_valence_mode == "reaction_priority" \
+					and _pending_emotion_delta != 0:
+				raw_scene_delta = _pending_emotion_delta
+			if absi(raw_scene_delta) > scene_cap:
+				scene_cap_hits += 1
+			scene_delta = clampi(raw_scene_delta, -scene_cap, scene_cap)
 		if crowd_mode == "pendulum":
-			_settle_pendulum(signi(public_base_delta), base_spectacle, true)
-			_settle_pendulum(signi(scene_delta), maxi(base_spectacle, _pending_spectacle), false)
+			if crowd_valence_mode == "content_plus_conduct":
+				_settle_content_plus_conduct(public_base_delta, 0,
+					int(content_scene), true)
+				var reaction_event := _pending_spectacle > 0
+				_settle_content_plus_conduct(public_base_delta, conduct_vote,
+					int(content_scene or reaction_event), false)
+			else:
+				_settle_pendulum(signi(public_base_delta), base_spectacle, true)
+				_settle_pendulum(signi(scene_delta), maxi(base_spectacle, _pending_spectacle), false)
 		else:
 			clean_hall = clampi(clean_hall + base_delta, -hall_cap, hall_cap)
 			hall = clampi(hall + scene_delta, -hall_cap, hall_cap)
 		_pending_emotion_delta = 0
 		_pending_spectacle = 0
 		return result
+
+	## Production crowd contract: content and conduct cast separate votes. The current
+	## event reads pre-event Heat; only two non-zero, co-directed votes surge by two.
+	func _settle_content_plus_conduct(content_vote: int, conduct_vote: int, heat_gain: int,
+			use_clean: bool) -> void:
+		var old_lean := clean_hall if use_clean else hall
+		var current_heat := clean_heat if use_clean else heat
+		var scene_score := content_vote + conduct_vote
+		var votes_aligned := content_vote != 0 and conduct_vote != 0 \
+			and signi(content_vote) == signi(conduct_vote)
+		var surged := current_heat >= surge_threshold \
+			and votes_aligned and absi(scene_score) >= surge_alignment_min
+		var amplitude := surge_amplitude if surged else 1
+		var relaxed := _toward_zero(old_lean, lean_friction)
+		var next_lean := clampi(relaxed + signi(scene_score) * amplitude,
+			-hall_cap, hall_cap)
+		var next_heat := surge_reset if surged else \
+			clampi(current_heat + maxi(0, heat_gain), 0, heat_max)
+		if use_clean:
+			clean_hall = next_lean
+			clean_heat = next_heat
+			_clean_quiet_actions_seen = 0
+			return
+		if next_lean != old_lean:
+			crowd_moves += 1
+		var next_sign := signi(next_lean)
+		if next_sign != 0 and _last_crowd_sign != 0 and next_sign != _last_crowd_sign:
+			crowd_reversals += 1
+		if next_sign != 0:
+			_last_crowd_sign = next_sign
+		hall = next_lean
+		heat = next_heat
+		_quiet_actions_seen = 0
+
+	func _observe_quiet_action(use_clean: bool) -> void:
+		if quiet_actions_required <= 0 or quiet_cool <= 0:
+			return
+		var seen := _clean_quiet_actions_seen if use_clean else _quiet_actions_seen
+		seen += 1
+		if seen < quiet_actions_required:
+			if use_clean:
+				_clean_quiet_actions_seen = seen
+			else:
+				_quiet_actions_seen = seen
+			return
+		if use_clean:
+			clean_heat = maxi(0, clean_heat - quiet_cool)
+			_clean_quiet_actions_seen = 0
+		else:
+			heat = maxi(0, heat - quiet_cool)
+			_quiet_actions_seen = 0
 
 	func _settle_pendulum(direction: int, spectacle: int, use_clean: bool) -> void:
 		var old_lean := clean_hall if use_clean else hall
@@ -373,7 +465,8 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 		reactions += 1
 		if depth > 0:
 			linked_reactions += 1
-		var relative_effect := _reaction_effect(String(reaction.get("id", "")))
+		var stimulus := String(result.get("stimulus", reaction.get("stimulus", "")))
+		var relative_effect := _reaction_effect(String(reaction.get("id", "")), stimulus)
 		if relative_effect > 0:
 			reaction_rewards += 1
 		elif relative_effect < 0:
@@ -393,13 +486,24 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 			"trigger":
 				_consume_reaction(answer, depth + 1)
 
-	func _reaction_effect(reaction_id: String) -> int:
+	func _reaction_effect(reaction_id: String, stimulus: String = "") -> int:
 		if emotion_mode == "punish":
 			return -1
 		if emotion_mode != "cards":
 			return 0
-		if reaction_values.has(reaction_id):
-			return int(reaction_values[reaction_id])
+		if reaction_values.has(reaction_id) or reaction_values.has("default"):
+			var configured: Variant = reaction_values.get(reaction_id,
+				reaction_values.get("default", 0))
+			if configured is Dictionary:
+				var values := configured as Dictionary
+				if stimulus != "" and values.has(stimulus):
+					return int(values[stimulus])
+				var stimulus_values: Variant = values.get("stimulus", {})
+				if stimulus_values is Dictionary and stimulus != "" \
+						and (stimulus_values as Dictionary).has(stimulus):
+					return int((stimulus_values as Dictionary)[stimulus])
+				return int(values.get("default", 0))
+			return int(configured)
 		match reaction_id:
 			"audience_check", "snap":
 				return 1
@@ -813,6 +917,7 @@ func _blank_metrics() -> Dictionary:
 		"emotion_hall_raw": 0, "emotion_hall_abs": 0, "emotion_aligns_winner": 0,
 		"heat_sum": 0, "heat_high": 0, "crowd_reversals": 0, "crowd_moves": 0,
 		"logic_aligned": 0, "logic_split": 0, "crowd_neutral": 0, "logic_draw": 0,
+		"strict_aligned": 0, "strict_split": 0, "strict_neutral": 0,
 		"mandate_reclass": 0,
 		"corr_n": 0, "corr_x": 0.0, "corr_y": 0.0,
 		"corr_x2": 0.0, "corr_y2": 0.0, "corr_xy": 0.0,
@@ -876,15 +981,23 @@ func _collect_formula_metrics(out: Dictionary, m: RefCounted) -> void:
 	out.crowd_reversals += int(m.crowd_reversals)
 	out.crowd_moves += int(m.crowd_moves)
 	var logic_sign := signi(board_diff)
-	var crowd_sign := signi(hall)
+	var crowd_sign := signi(hall) if absi(hall) >= int(m.decision_threshold) else 0
 	if logic_sign == 0:
 		out.logic_draw += 1
-	elif crowd_sign == 0:
-		out.crowd_neutral += 1
-	elif logic_sign == crowd_sign:
-		out.logic_aligned += 1
 	else:
-		out.logic_split += 1
+		var strict_crowd_sign := signi(hall) if absi(hall) >= 2 else 0
+		if strict_crowd_sign == 0:
+			out.strict_neutral += 1
+		elif logic_sign == strict_crowd_sign:
+			out.strict_aligned += 1
+		else:
+			out.strict_split += 1
+		if crowd_sign == 0:
+			out.crowd_neutral += 1
+		elif logic_sign == crowd_sign:
+			out.logic_aligned += 1
+		else:
+			out.logic_split += 1
 	if logic_sign != 0 and signi(int(m.fallback_margin)) != logic_sign:
 		out.mandate_reclass += 1
 	out.corr_n += 1
@@ -1360,7 +1473,7 @@ func _emotion_pressure_suite() -> void:
 
 func _crowd_config(config_id: String) -> Dictionary:
 	if config_id == "crowd_reaction_frame":
-		return _production_crowd_config("vector_reaction")
+		return _production_crowd_config()
 	for config in CROWD_CONFIGS:
 		if String(config.id) == config_id:
 			return config.duplicate(true)
@@ -1369,24 +1482,42 @@ func _crowd_config(config_id: String) -> Dictionary:
 
 ## Адаптер production-профиля к старому плоскому формату сим-полигона. Калибровочные числа
 ## живут в одном реестре; сим остаётся свободен добавлять контрольные модели рядом.
-func _production_crowd_config(profile_id: String) -> Dictionary:
-	var profile: Dictionary = ProductionOutcomeProfiles.get_profile(profile_id)
+func _production_crowd_config(profile_id: String = "") -> Dictionary:
+	var selected_profile_id := profile_id.strip_edges()
+	if selected_profile_id == "":
+		selected_profile_id = String(ProductionOutcomeProfiles.DEFAULT_ID)
+	var profile: Dictionary = ProductionOutcomeProfiles.get_profile(selected_profile_id)
 	var board: Dictionary = profile.get("board", {})
 	var audience_config: Dictionary = profile.get("audience", {})
 	var links: Dictionary = profile.get("links", {})
 	var victory: Dictionary = profile.get("victory", {})
 	return {
-		"id": "crowd_reaction_frame", "label": "prod: эмоция меняет сцену",
+		"id": "crowd_reaction_frame",
+		"profile_id": String(profile.get("id", selected_profile_id)),
+		"selected_production": true,
+		"label": "prod: %s" % String(profile.get("label", selected_profile_id)),
 		"cap": int(audience_config.get("lean_cap", 5)),
 		"wf": int(board.get("frame_weight", 3)),
 		"wt": int(board.get("thesis_weight", 1)), "wz": 1,
-		"emotion_mode": "cards", "hall_per_clinch": 1, "scene_cap": 2,
-		"pressure_mode": "outcome_weighted", "crowd_mode": "pendulum",
+		"emotion_mode": "cards", "hall_per_clinch": 1,
+		"scene_cap": int(audience_config.get("conduct_cap", 2)),
+		"pressure_mode": "outcome_weighted",
+		"crowd_mode": String(audience_config.get("mode", "pendulum")),
 		"verdict_mode": String(victory.get("mode", "board")),
-		"crowd_valence_mode": String(audience_config.get("valence_mode", "reaction_priority")),
+		"crowd_valence_mode": String(audience_config.get("valence_mode", "content_plus_conduct")),
+		"decision_threshold": int(audience_config.get("decision_threshold", 1)),
+		"conduct_cap": int(audience_config.get("conduct_cap", 2)),
+		"surge_threshold": int(audience_config.get("surge_threshold",
+			audience_config.get("heat_max", 3))),
+		"surge_alignment_min": int(audience_config.get("surge_alignment_min", 2)),
+		"surge_amplitude": int(audience_config.get("surge_amplitude", 2)),
+		"surge_reset": int(audience_config.get("surge_reset", 1)),
+		"quiet_actions": int(audience_config.get("quiet_actions", 2)),
+		"quiet_cool": int(audience_config.get("quiet_cool", 1)),
 		"lean_friction": int(audience_config.get("lean_friction", 0)),
 		"heat_max": int(audience_config.get("heat_max", 3)),
 		"heat_amplifies": bool(audience_config.get("heat_amplifies", true)),
+		"opening_heat": int(audience_config.get("opening_heat", 0)),
 		"reaction_values": (audience_config.get("reaction_values", {}) as Dictionary).duplicate(true),
 		"parry_value": int(audience_config.get("parry_value", 1)),
 		"gate_x": int(links.get("gate_x", 0)), "gate_y": int(links.get("gate_y", 0)),
@@ -1395,21 +1526,25 @@ func _production_crowd_config(profile_id: String) -> Dictionary:
 
 func _crowd_pendulum_suite() -> void:
 	var n := mirror_matches * 3 if OS.get_cmdline_user_args().has("--long") else mirror_matches
-	print("Контракт: Logic = 3·Δрамки + Δтезисы. Он один определяет победителя дебатов.")
-	print("Audience = (Lean −5…+5, Heat 0…3). Обычный ход остужает зал; публичная сцена")
-	print("двигает Lean, а зрелищная сцена сначала повышает Heat и тем самым усиливает рывок.\n")
+	var production_config := _production_crowd_config()
+	var production_threshold := maxi(1, int(production_config.get("decision_threshold", 1)))
+	print("Контракт: Board B = 3·Δрамки + Δтезисы. Он один определяет победителя дебатов.")
+	print("Audience scene = content + conduct (conduct cap ±2); content votes only on removed/captured/extended.")
+	print("Lean normally moves 1. Only pre-event Heat=3 plus aligned non-zero content and conduct moves 2, then resets Heat to 1;")
+	var neutral_rule := "only Lean=0 is neutral" if production_threshold == 1 else \
+		"|Lean|<%d is neutral" % production_threshold
+	print("otherwise the public event adds Heat after its move. Two quiet actions cool 1; %s.\n" % neutral_rule)
 
 	print("--- A. НАКОПИТЕЛЬ ПРОТИВ МАЯТНИКА, %d ОДИНАКОВЫХ СИДОВ ---" % n)
 	print("%-29s | |Lean| | Heat | H≥2 | развор. | corr(B,L) | вместе | раскол | нейтр. | fallback | B*:сост." % "модель зала")
 	var reference: Dictionary = {}
 	var selected: Dictionary = {}
-	var configs_to_test: Array = CROWD_CONFIGS
-	if OS.get_cmdline_user_args().has("--selected-only"):
-		configs_to_test = [_crowd_config("crowd_reaction_frame")]
+	var configs_to_test: Array = [production_config]
+	if not OS.get_cmdline_user_args().has("--selected-only"):
+		configs_to_test.append_array(CROWD_CONFIGS)
 	for ci in configs_to_test.size():
 		var raw_config: Dictionary = configs_to_test[ci]
-		var config: Dictionary = _production_crowd_config("vector_reaction") \
-			if String(raw_config.id) == "crowd_reaction_frame" else raw_config
+		var config: Dictionary = raw_config.duplicate(true)
 		var m := _run_cell(config, "verdict", "verdict", n, {}, {}, 1600)
 		var diversity := _modal_board_diversity(m)
 		var logic_decisive := n - int(m.logic_draw)
@@ -1424,7 +1559,7 @@ func _crowd_pendulum_suite() -> void:
 		elif m.board_counts != reference.board_counts or int(m.turns) != int(reference.turns) \
 				or int(m.captures) != int(reference.captures):
 			_failures += 1
-		if String(config.id) == "crowd_reaction_frame":
+		if bool(config.get("selected_production", false)):
 			selected = m
 	print("B*:сост. — число разных финальных Lean/Heat при самом частом одинаковом счёте доски.")
 	print("fallback — сколько логических исходов изменил бы диагностический счёт B + sign(Lean)·Heat.")
@@ -1466,6 +1601,11 @@ func _crowd_pendulum_suite() -> void:
 		print("Сводка выбранного маятника: %.1f%% согласованных, %.1f%% расколотых, %.1f%% нейтральных" % [
 			_pct(int(selected.logic_aligned), resolved), _pct(int(selected.logic_split), resolved),
 			_pct(int(selected.crowd_neutral), resolved)])
+		var strict_resolved := int(selected.strict_aligned) + int(selected.strict_split) \
+			+ int(selected.strict_neutral)
+		print("Для сравнения при пороге 2: %.1f%% согласованных, %.1f%% расколотых, %.1f%% нейтральных" % [
+			_pct(int(selected.strict_aligned), strict_resolved), _pct(int(selected.strict_split), strict_resolved),
+			_pct(int(selected.strict_neutral), strict_resolved)])
 		print("среди партий с логическим победителем; %.2f разворота зала за матч, corr(B,Lean)=%+.3f." % [
 			float(selected.crowd_reversals) / n, _correlation(selected)])
 

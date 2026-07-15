@@ -101,7 +101,10 @@ var _say_until := 0.0
 var _draw0 := 1
 var _first_side := SIDE_YOU
 var _outcome_profile: Dictionary = {}
-var _audience_emotion_delta := 0
+## Публичный эффект поведения уже ориентирован на YOU: плюс работает на игрока, минус —
+## на оппонента. Он копится внутри одной законченной сцены и коммитится вместе с её
+## содержательным результатом, поэтому реакция не может сама назначить победителя клинча.
+var _audience_conduct_delta := 0
 var _audience_reaction_seen := false
 
 
@@ -238,6 +241,7 @@ func audience_state() -> Dictionary:
 		return {
 			"mode": "derived", "lean": int(model.zal()), "raw_lean": int(model.zal()),
 			"bias": 0, "lean_cap": int(config.get("lean_cap", RulesCore.ZAL_MAX)),
+			"decision_threshold": maxi(1, int(config.get("decision_threshold", 1))),
 			"heat": 0, "heat_max": 0, "moves": 0, "reversals": 0,
 		}
 	return audience.snapshot(int(model.zal_bias))
@@ -318,7 +322,7 @@ func start_match() -> void:
 	var independent_audience := String(audience_config.get("mode", "derived")) == "pendulum"
 	model.set_external_zal(int(audience.lean), independent_audience,
 		int(audience_config.get("lean_cap", RulesCore.ZAL_MAX)))
-	_audience_emotion_delta = 0
+	_audience_conduct_delta = 0
 	_audience_reaction_seen = false
 	# Сторона игрока пересобирается из ПРОФИЛЯ (редактор колоды): счётчики + именные
 	# заменой. Оппонент остаётся каноном констант (асимметрия — сознательный полигон).
@@ -614,6 +618,7 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	var atk_left_at_finish := -1
 	var resolved: Dictionary = {}
 	var guard := 0
+	var pressure_rounds := 0
 	while model.clinch_active() and guard < 200:
 		guard += 1
 		var side: String = model.clinch_pending_side()
@@ -669,11 +674,10 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 				if my_epoch != _epoch:
 					return
 				_changed()
-				# Полная пара «защита → новый нажим» означает, что клинч затянулся. Само
-				# продолжение нагревает ОБЕ стороны и может вызвать срыв прямо внутри ралли.
-				await _emotion_clinch_round(attacker, defender, target_claim)
-				if my_epoch != _epoch:
-					return
+				# Полная пара «защита → новый нажим» лишь отмечает затяжной клинч. Давление
+				# получает проигравший один раз после исхода — шкалы больше не стреляют
+				# реакциями посреди ещё не разрешённого ралли.
+				pressure_rounds += 1
 			"resolved":
 				resolved = res
 				break
@@ -704,6 +708,7 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 		"removed": info.get("removed", false), "stolen": info.get("stolen", false),
 		"stolen_count": info.get("stolen_count", 0),
 		"captured": info.get("captured", false),
+		"pressure_rounds": pressure_rounds,
 		"atk_left_at_finish": atk_left_at_finish,
 		"target": info.get("target_name", ""),
 	}
@@ -722,19 +727,24 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	if landed:
 		stimulus = "captured" if info.get("captured", false) else \
 			("frame_lost" if info.get("removed", false) else "argument_lost")
-	var intensity := 1
+	var intensity := 1 + (1 if pressure_rounds > 0 else 0)
 	if info.get("removed", false):
 		intensity += 1
 	if info.get("captured", false):
 		intensity += 1
 	await _emotion_event(strained_side, stimulus, mini(3, intensity), {"target": target_claim})
-	var public_side := attacker if landed else defender
-	var spectacle := 2 if info.get("removed", false) or info.get("captured", false) \
-		or t_added > 0 or r_count > 1 or _audience_reaction_seen else 1
-	_settle_audience_scene(public_side, spectacle)
+	if my_epoch != _epoch:
+		return
+	# Содержание получает голос только у видимого исхода: падения/захвата рамки либо
+	# затяжного клинча. Одна реакция без такого исхода не назначает победителя сцены.
+	var content_visible := bool(info.get("removed", false)) \
+		or bool(info.get("captured", false)) or pressure_rounds > 0
+	var content_side := (attacker if landed else defender) if content_visible else ""
+	_settle_audience_scene(content_side, 1 if content_visible else 0)
 
 
 func _ask_clinch(mode: String) -> Dictionary:
+	var my_epoch := _epoch
 	_mode = "clinch_" + mode
 	if mode == "defend":
 		hint_text = "КЛИНЧ! Бьют вашу рамку — сыграйте ТЕЗИС в защиту, или «Пропустить»"
@@ -742,6 +752,8 @@ func _ask_clinch(mode: String) -> Dictionary:
 		hint_text = "КЛИНЧ! Добейте РАЗБОРОМ или КРАЖЕЙ, или «Остановиться»"
 	_changed()
 	var d: Dictionary = await _clinch_decided
+	if my_epoch != _epoch:
+		return {"act": "pass"}
 	_mode = "locked"
 	hint_text = ""
 	_changed()
@@ -819,7 +831,10 @@ func _say(side: String, text: String, tag: String = "", card_type: String = "", 
 	}
 	meta.merge(extra_meta, true)
 	EventBus.utterance.emit(side, text, meta)
-	_tx(tag, "%s (%s): %s" % [_who(side), nar.stance_label(side), text])
+	var transcript_role := String(nar.stance_label(side))
+	if extra_meta.has("conduct_effect"):
+		transcript_role += " · ВПЕЧАТЛЕНИЕ %+d" % int(extra_meta.conduct_effect)
+	_tx(tag, "%s (%s): %s" % [_who(side), transcript_role, text])
 	_say_until = _now() + ReadingPace.scene_time(text)
 
 
@@ -855,6 +870,9 @@ func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_dept
 	var side := String(result.side)
 	var stimulus := String(result.stimulus)
 	var reaction: Dictionary = result.get("reaction", {})
+	var conduct := {"relative": 0, "signed": 0}
+	if not reaction.is_empty():
+		conduct = _record_audience_reaction(side, String(reaction.get("id", "")), stimulus)
 	var ev := {
 		"ev": "emotion", "side": side, "stimulus": stimulus,
 		"before": int(result.before), "peak": int(result.peak), "after": int(result.after),
@@ -862,6 +880,7 @@ func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_dept
 		"roll": float(result.roll), "reaction": String(reaction.get("id", "")),
 		"reaction_title": String(reaction.get("title", "")),
 		"reaction_draw_left": int(result.draw_left),
+		"conduct_relative": int(conduct.relative), "conduct_signed": int(conduct.signed),
 		"link_kind": link_kind, "source_side": source_side, "chain_depth": chain_depth,
 	}
 	ev.merge(_econ())
@@ -870,7 +889,6 @@ func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_dept
 	_changed()
 	if reaction.is_empty():
 		return
-	_record_audience_reaction(side, String(reaction.get("id", "")))
 	EventBus.emotion_reacted.emit(side, reaction)
 	await _say(side, String(reaction.text), "    reaction %s %s %d→%d→%d" % [
 		side, String(reaction.id), int(result.before), int(result.peak), int(result.after)],
@@ -882,6 +900,8 @@ func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_dept
 			"reaction_source": source_side,
 			"reaction_chain_depth": chain_depth,
 			"strain": int(result.after),
+			"conduct_effect": int(conduct.relative),
+			"conduct_signed": int(conduct.signed),
 		})
 	if my_epoch != _epoch:
 		return
@@ -899,11 +919,12 @@ func _answer_emotional_reaction(source_side: String, context: Dictionary,
 	EventBus.emotion_linked.emit(source_side, responder, answer)
 	if kind == "parry":
 		var parry: Dictionary = answer.get("parry", {})
-		_record_audience_parry(responder)
+		var conduct := _record_audience_parry(responder)
 		var ev := {
 			"ev": "emotion_link", "kind": "parry", "source_side": source_side,
 			"side": responder, "before": int(answer.before), "after": int(answer.after),
 			"parry": String(parry.get("id", "")), "chain_depth": chain_depth,
+			"conduct_relative": int(conduct.relative), "conduct_signed": int(conduct.signed),
 		}
 		ev.merge(_econ())
 		_emit(ev)
@@ -916,45 +937,57 @@ func _answer_emotional_reaction(source_side: String, context: Dictionary,
 				"reaction_title": String(parry.title),
 				"reaction_source": source_side,
 				"reaction_chain_depth": chain_depth,
+				"conduct_effect": int(conduct.relative),
+				"conduct_signed": int(conduct.signed),
 			})
 		return  # спокойная парировка закрывает эмоциональный обмен
 	# absorb остаётся немым; trigger содержит полноценную карту и продолжит цепь.
 	await _resolve_emotion_result(answer, context, chain_depth, source_side, kind)
 
-
-## Один завершённый раунд затянувшегося клинча: обоим +1. Последовательный вызов сохраняет
-## читаемость двух возможных реакций и не создаёт между ними механической связи/каскада.
-func _emotion_clinch_round(attacker: String, defender: String, target: String) -> void:
-	await _emotion_event(attacker, "clinch_pressure", 1, {"target": target})
-	await _emotion_event(defender, "clinch_pressure", 1, {"target": target})
-
-
 # ------------------------------------------------------ audience / outcome ---
 
 func _begin_audience_scene() -> void:
-	_audience_emotion_delta = 0
+	_audience_conduct_delta = 0
 	_audience_reaction_seen = false
 
 
-func _record_audience_reaction(side: String, reaction_id: String) -> void:
-	if audience == null:
-		return
+## Возвращает обе системы координат для лога/meta: relative — впечатление о самом
+## говорящем, signed — тот же эффект на оси YOU↔OPP. Stimulus важен для контекстных карт
+## вроде «Поиска свидетелей»: после грязного удара он звучит иначе, чем после провала атаки.
+func _record_audience_reaction(side: String, reaction_id: String, stimulus: String) -> Dictionary:
 	_audience_reaction_seen = true
-	_audience_emotion_delta += int(audience.signed_reaction(side, reaction_id))
-
-
-func _record_audience_parry(side: String) -> void:
 	if audience == null:
-		return
+		return {"relative": 0, "signed": 0}
+	var relative := int(audience.reaction_value(reaction_id, stimulus))
+	var signed := int(audience.signed_reaction(side, reaction_id, stimulus))
+	_audience_conduct_delta += signed
+	return {"relative": relative, "signed": signed}
+
+
+func _record_audience_parry(side: String) -> Dictionary:
 	_audience_reaction_seen = true
-	_audience_emotion_delta += int(audience.signed_parry(side))
+	if audience == null:
+		return {"relative": 0, "signed": 0}
+	var signed := int(audience.signed_parry(side))
+	var relative := signed if side == SIDE_YOU else -signed
+	_audience_conduct_delta += signed
+	return {"relative": relative, "signed": signed}
 
 
-func _settle_audience_scene(public_side: String, spectacle: int) -> void:
+func _record_audience_conduct(side: String, relative: int) -> Dictionary:
+	var signed := relative if side == SIDE_YOU else -relative
+	_audience_conduct_delta += signed
+	return {"relative": relative, "signed": signed}
+
+
+func _settle_audience_scene(content_side: String, content_strength: int = 0,
+	public_behavior_seen: bool = false) -> void:
 	if audience == null:
 		return
-	audience.resolve_scene(public_side, spectacle, _audience_emotion_delta,
-		_audience_reaction_seen)
+	var heat_gain := 1 if content_strength > 0 or _audience_reaction_seen \
+		or public_behavior_seen or _audience_conduct_delta != 0 else 0
+	audience.resolve_scene(content_side, content_strength, _audience_conduct_delta,
+		heat_gain, _audience_reaction_seen)
 	_sync_audience()
 	_begin_audience_scene()
 
@@ -962,6 +995,8 @@ func _settle_audience_scene(public_side: String, spectacle: int) -> void:
 func _audience_quiet() -> void:
 	if audience == null:
 		return
+	# AudienceCore сам считает quiet_actions (по умолчанию два подряд спокойных действия)
+	# и сбрасывает серию при resolve_scene; контроллер лишь сообщает каждое действие.
 	audience.observe_quiet()
 	_sync_audience()
 
@@ -1041,6 +1076,7 @@ func _maybe_narrate_gate() -> void:
 func _log_action(info: Dictionary) -> void:
 	if info.is_empty():
 		return
+	var my_epoch := _epoch
 	var ev := {"ev": "move", "side": info.side, "type": info.type, "name": info.get("name", "")}
 	ev.merge(_econ())
 	_emit(ev)
@@ -1059,6 +1095,8 @@ func _log_action(info: Dictionary) -> void:
 			await _say(side, nar.open_line(side, claim, "open"), "t%d %s установка→рамка" % [model.turn_count, side], TYPE_USTANOVKA, false, nar.last_mood())
 		TYPE_RAZBOR:
 			pass  # атаки идут через клинч
+	if my_epoch != _epoch:
+		return
 	if String(info.type) in [TYPE_TEZIS, TYPE_USTANOVKA]:
 		_audience_quiet()
 
@@ -1088,10 +1126,16 @@ func _play_named_move(hand_index: int, target: int) -> void:
 ## Наррация и лог именного хода. Реплики приёмов пока служебные (голос ремарки, не темы) —
 ## тематические реплики твистов появятся отдельной итерацией нарратива.
 func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
+	var my_epoch := _epoch
 	_begin_audience_scene()
+	var named_conduct := int(info.get("audience_conduct", 0))
+	var conduct := {"relative": 0, "signed": 0}
+	if named_conduct != 0:
+		conduct = _record_audience_conduct(side, named_conduct)
 	var ev := {"ev": "named", "side": side, "id": String(info.get("named", "")),
 		"name": String(card.get("name", "")), "removed": info.get("removed", false),
-		"captured": info.get("captured", false)}
+		"captured": info.get("captured", false),
+		"conduct_relative": int(conduct.relative), "conduct_signed": int(conduct.signed)}
 	ev.merge(_econ())
 	_emit(ev)
 	var fx := ""
@@ -1099,7 +1143,7 @@ func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
 		"gish_gallop":
 			fx = "лавина доводов накрывает сразу две рамки — отвечать некогда"
 		"ad_hominem":
-			fx = "удар ниже пояса: рамка трещит, но зал морщится (крен −1 на вас)"
+			fx = "удар ниже пояса: рамка трещит, но зал морщится"
 		"strawman":
 			fx = ("чучело сработало — рамка выхвачена целиком (добыча похудела на тезис)"
 				if info.get("captured", false) else "подмена тезиса — и он уже в чужих руках")
@@ -1109,9 +1153,15 @@ func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
 			fx = "постулат поставлен: два тезиса разом, но обсуждению не подлежит"
 		_:
 			fx = "приём разыгран"
+	var named_meta := {}
+	if named_conduct != 0:
+		named_meta = {"conduct_effect": int(conduct.relative),
+			"conduct_signed": int(conduct.signed)}
 	await _say(side, "«%s» — %s." % [String(card.get("name", "")), fx],
 		"t%d %s ИМЕННОЙ %s" % [model.turn_count, side, String(info.get("named", ""))],
-		String(card.get("type", "")), bool(card.get("steals", false)), "")
+		String(card.get("type", "")), bool(card.get("steals", false)), "", named_meta)
+	if my_epoch != _epoch:
+		return
 	# Грязный/присваивающий выстрел может вызвать реакцию цели, но сама реакция пока не
 	# меняет эффект именной карты. Остальные именные строители эмоциональное ядро не трогают.
 	var stimulus := ""
@@ -1130,9 +1180,13 @@ func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
 		await _emotion_event(model.other(side), stimulus, intensity, {
 			"target": String(info.get("target_name", "эта позиция")),
 		})
-	var spectacular := bool(info.get("removed", false)) or bool(info.get("captured", false)) \
-		or _audience_reaction_seen
-	_settle_audience_scene(side if spectacular else "", 2 if spectacular else 0)
+		if my_epoch != _epoch:
+			return
+	# Именной приём получает содержательный голос только если реально снял/захватил рамку.
+	# Одна лишь заметная реакция остаётся голосом поведения и не делает сыгравшего победителем.
+	var content_visible := bool(info.get("removed", false)) or bool(info.get("captured", false))
+	_settle_audience_scene(side if content_visible else "", 1 if content_visible else 0,
+		named_conduct != 0)
 
 
 func _count_razbor(side: String) -> int:

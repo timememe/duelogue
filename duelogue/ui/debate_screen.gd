@@ -204,6 +204,8 @@ func _on_utterance(side: String, text: String, meta: Dictionary) -> void:
 		"burst":
 			role = "РЕАКЦИЯ · %s" % String(meta.get("reaction_title", "срыв"))
 			bolt = "⚡ "
+	if meta.has("conduct_effect"):
+		role += " · ВПЕЧАТЛЕНИЕ %+d" % int(meta.conduct_effect)
 	_log("[color=#%s]— %s%s (%s):[/color] %s" % [col, bolt, who, role, text])
 	_log_rt.text = "\n".join(log_lines)
 
@@ -246,29 +248,47 @@ func _on_match_reported(report: Dictionary) -> void:
 		int(board.get("thesis_diff", 0)) * int(board.get("thesis_weight", 1))]
 	var lean := int(audience.get("lean", 0))
 	var heat := int(audience.get("heat", 0))
-	_final_audience_score.text = "LEAN  %+d" % lean
-	var lean_text := "зал нейтрален"
-	if lean > 0:
-		lean_text = "зал склоняется к вам"
-	elif lean < 0:
-		lean_text = "зал склоняется к оппоненту"
-	_final_audience_detail.text = "Heat %d/%d\n%s" % [
+	var decision_threshold := maxi(1, int(audience.get("decision_threshold", 1)))
+	var crowd_winner := "draw"
+	if absi(lean) >= decision_threshold:
+		crowd_winner = ZalV3.SIDE_YOU if lean > 0 else ZalV3.SIDE_OPP
+	_final_audience_score.text = "КРЕН  %+d" % lean
+	var lean_text := "зал не выбрал сторону"
+	if lean == 1:
+		lean_text = "лёгкий крен к вам"
+	elif lean == -1:
+		lean_text = "лёгкий крен к оппоненту"
+	elif crowd_winner == ZalV3.SIDE_YOU:
+		lean_text = "зал выбрал вас"
+	elif crowd_winner == ZalV3.SIDE_OPP:
+		lean_text = "зал выбрал оппонента"
+	_final_audience_detail.text = "АЗАРТ %d/%d\n%s" % [
 		heat, int(audience.get("heat_max", 0)), lean_text]
 	var you_strain := int(you_emotion.get("strain", 0))
 	var opp_strain := int(opp_emotion.get("strain", 0))
-	_final_emotion_score.text = "ВЫ %d  ·  ОПП %d" % [you_strain, opp_strain]
-	_final_emotion_detail.text = "Пределы %d/%d и %d/%d\nФинальное состояние · в счёт не входит" % [
+	var you_reactions := int(you_emotion.get("reactions", 0))
+	var opp_reactions := int(opp_emotion.get("reactions", 0))
+	_final_emotion_score.text = "ВЫ %d  ·  %d ОПП" % [you_reactions, opp_reactions]
+	_final_emotion_detail.text = "Давление осталось: ВЫ %d/%d · ОПП %d/%d\nФинальное состояние · вне счёта" % [
 		you_strain, int(you_emotion.get("max", 6)), opp_strain,
 		int(opp_emotion.get("max", 6))]
-	if bool(report.get("split", false)):
+	var board_winner := String(report.get("board_winner", "draw"))
+	var split := board_winner != "draw" and crowd_winner != "draw" \
+		and board_winner != crowd_winner
+	if split:
 		_final_split.text = "РАСКОЛ: ДОСКА И ЗАЛ ВЫБРАЛИ РАЗНЫХ ОРАТОРОВ"
 		_final_split.add_theme_color_override("font_color", Color.html("#" + COL_GOLD))
-	elif String(report.get("crowd_winner", "draw")) == "draw":
+	elif crowd_winner == "draw":
 		_final_split.text = "ЗАЛ НЕ ВЫБРАЛ СТОРОНУ"
 		_final_split.add_theme_color_override("font_color", Color.html("#" + COL_DIM))
+	elif board_winner == "draw":
+		var hall_side := "К ВАМ" if crowd_winner == ZalV3.SIDE_YOU else "К ОППОНЕНТУ"
+		_final_split.text = "ДОСКА: НИЧЬЯ · ЗАЛ СКЛОНИЛСЯ %s" % hall_side
+		_final_split.add_theme_color_override("font_color", Color.html("#" + COL_GOLD))
 	else:
 		_final_split.text = "ДОСКА И ЗАЛ СОГЛАСНЫ"
-		_final_split.add_theme_color_override("font_color", Color.html("#" + COL_YOU))
+		var agreement_color := COL_YOU if board_winner == ZalV3.SIDE_YOU else COL_OPP
+		_final_split.add_theme_color_override("font_color", Color.html("#" + agreement_color))
 	_final_verdict.text = String(report.get("verdict", ""))
 	_final_description.text = String(profile.get("description", ""))
 	_final_overlay.visible = true
@@ -316,9 +336,9 @@ func _refresh() -> void:
 		elif so > 0:
 			gate_note = "  ·  ЗАЛ СКАНДИРУЕТ: %d/%d — ВЕРНИТЕ ЗАЛ!" % [so, int(model.zal_hold)]
 	if String(audience.get("mode", "derived")) == "derived":
-		_zal_label.text = "ЗАЛ: %+d  (legacy: рамки + сила)%s" % [z, gate_note]
+		_zal_label.text = "ЗАЛ: КРЕН %+d  (legacy: рамки + сила)%s" % [z, gate_note]
 	else:
-		_zal_label.text = "ЗАЛ: Lean %+d  ·  Heat %d/%d%s" % [z,
+		_zal_label.text = "ЗАЛ: КРЕН %+d  ·  АЗАРТ %d/%d%s" % [z,
 			int(audience.get("heat", 0)), int(audience.get("heat_max", 0)), gate_note]
 	_update_bar(z)
 	_update_emotion_hud()
