@@ -43,9 +43,9 @@ const FORTIFY := 0
 const CLINCH := true
 const CLINCH_FREEZE := true
 const CAPTURE := 1
-## Зал-гейт 2A (сим 2026-07-02, zal_core_v0.3 §9.2): крен зала ПРОТИВ тебя поднимает порог
-## захвата Кражей — при крене >= GATE_X шатаются чужие рамки с <=2 тезисами, >= GATE_Y — с <=3.
-## Фикшен: «фаворит под прицелом» — толпа любит поимку. 2/4 — виднее в живой партии (3/6 — fallback).
+## Public wobble band: one-thesis frames are always capturable. Audience favour for
+## a frame owner then raises ordinary Theft reach one step per point: 2->2, 3->3,
+## 4+->4. The favourite is under pressure because the crowd wants a reversal.
 const GATE_X := 2
 const GATE_Y := 4
 ## Добыча захвата (реш. игрока, сим 2026-07-02): рамка переходит СО ВСЕМИ стоящими тезисами —
@@ -85,7 +85,11 @@ var match_id := 0
 var logging_enabled := true     ## smoke/preview могут выключить файловые побочные эффекты
 var _epoch := 0          ## поколение матча; протухшие await прошлой партии выходят по нему
 var _theme_data: Dictionary
-var _mode := "locked"    ## ввод: locked | opening | move | target | clinch_defend | clinch_attack
+var _mode := "locked"    ## ввод: locked | opening | move | reframe | target | clinch_defend | clinch_attack
+var _opening_stage := ""  ## active | reserve | ""
+var _opening_choices: Array = []
+var _opening_active: Dictionary = {}
+var _opening_opp_active: Dictionary = {}
 var _pending_steals := false
 var _pending_hand := -1   ## индекс обычного Разбора, ждущего выбора рамки
 var _pending_named := -1  ## индекс ИМЕННОЙ карты руки, ждущей выбора цели (-1 — нет)
@@ -189,9 +193,15 @@ func installation_option(index: int) -> Dictionary:
 	var hand: Array = model.sides[SIDE_YOU].hand
 	if index < 0 or index >= hand.size() or String(hand[index].type) != TYPE_USTANOVKA:
 		return {}
+	var pinned: Dictionary = hand[index]
+	if String(pinned.get("claim_id", "")) != "":
+		return {
+			"id": String(pinned.claim_id), "text": String(pinned.get("claim", "")),
+			"preferred_axes": (pinned.get("preferred_axes", []) as Array).duplicate(),
+		}
 	var installation_index := 0
 	for i in index:
-		if String(hand[i].type) == TYPE_USTANOVKA:
+		if String(hand[i].type) == TYPE_USTANOVKA and String(hand[i].get("claim_id", "")) == "":
 			installation_index += 1
 	var options: Array = nar.headline_options(SIDE_YOU)
 	if options.is_empty():
@@ -247,6 +257,33 @@ func audience_state() -> Dictionary:
 	return audience.snapshot(int(model.zal_bias))
 
 
+## Единый read-only контракт для рамки: view не повторяет формулу шатания и KO.
+func frame_threat(owner: String, index: int) -> Dictionary:
+	if model == null or not owner in [SIDE_YOU, SIDE_OPP]:
+		return {}
+	var lines: Array = model.sides[owner].lines
+	if index < 0 or index >= lines.size():
+		return {}
+	var line: Dictionary = lines[index]
+	var raider: String = model.other(owner)
+	var reach := int(model.frame_capture_reach(owner))
+	var thickness := int(line.get("theses", 0))
+	var reserve := int(model.reserve_count(owner))
+	var audience_snapshot := audience_state()
+	var capturable: bool = int(model.capture_mode) > 0 and thickness <= reach \
+		and not bool(line.get("braced", false)) and not model.is_fortified(line)
+	return {
+		"owner": owner, "raider": raider, "reach": reach, "thickness": thickness,
+		"capturable": capturable,
+		# A one-thesis frame is baseline-exposed; SHAKY is the extra crowd-opened risk.
+		"shaky": capturable and thickness > 1,
+		"lean": int(audience_snapshot.get("lean", model.zal())),
+		"owner_favor": int(model.audience_favor_for(owner)),
+		"reserve": reserve, "last_frame": lines.size() == 1,
+		"lethal": bool(model.board_ko_enabled) and lines.size() == 1 and reserve == 0,
+	}
+
+
 func outcome_profile_list() -> Array:
 	var out: Array = []
 	for profile in OutcomeProfiles.all():
@@ -285,11 +322,23 @@ func select_outcome_profile(profile_id: String) -> void:
 	start_match()
 
 
-## Три смысловые рамки для opening-фазы. Это не карты руки и не расход действия.
+## Три смысловые рамки для opening-фазы. Первый выбор — активная База, второй —
+## публичный резерв внутри H5. Оба выбора бесплатны и используют один исходный набор трёх.
+func opening_stage() -> String:
+	return _opening_stage if _mode == "opening" else ""
+
+
 func opening_options() -> Array:
 	if nar == null or _mode != "opening":
 		return []
-	return nar.headline_options(SIDE_YOU, 3)
+	var out: Array = []
+	for raw in _opening_choices:
+		var option: Dictionary = raw
+		if _opening_stage == "reserve" and String(option.get("id", "")) == \
+				String(_opening_active.get("id", "")):
+			continue
+		out.append(option.duplicate(true))
+	return out
 
 func select_theme(i: int) -> void:
 	if i < 0 or i >= THEMES.size():
@@ -306,6 +355,10 @@ func start_match() -> void:
 	_pending_steals = false
 	_pending_hand = -1
 	_pending_named = -1
+	_opening_stage = ""
+	_opening_choices = []
+	_opening_active = {}
+	_opening_opp_active = {}
 	hint_text = ""
 	# Разбудить зависший _ask_clinch прошлого матча — выйдет по epoch-guard, не тронув модель.
 	_clinch_decided.emit({"act": "pass"})
@@ -330,6 +383,8 @@ func start_match() -> void:
 	model.sides[SIDE_YOU] = DeckLib.build_side(int(d.u), int(d.t), int(d.r), BASE_THESES, int(d.steals), HAND)
 	NamedCards.inject(model.sides[SIDE_YOU], d.get("named", []))
 	NamedCards.inject(model.sides[SIDE_OPP], NAMED_OPP)
+	DeckLib.prepare_opening_reserve(model.sides[SIDE_YOU], HAND)
+	DeckLib.prepare_opening_reserve(model.sides[SIDE_OPP], HAND)
 	_gate_told = {}
 	_judge_told = {}
 	_opp_style = _profile_opp_style()
@@ -339,7 +394,9 @@ func start_match() -> void:
 	emotion.start(DefaultReactions.data(), match_id ^ 0x5EED, [SIDE_YOU, SIDE_OPP])
 	_draw0 = maxi(1, _draw_left())
 	_mode = "opening"
-	hint_text = "Выберите стартовую рамку — она направит первые доводы, но не изменит силу Базы"
+	_opening_stage = "active"
+	_opening_choices = nar.headline_options(SIDE_YOU, 3)
+	hint_text = "Выберите активную рамку — затем оставьте одну из двух других в публичном резерве"
 	EventBus.match_started.emit({
 		"theme": nar.theme.id,
 		"first": "you" if _first_side == SIDE_YOU else "opp",
@@ -376,14 +433,22 @@ func _run_until_player() -> void:
 		_narrate_judge_count()
 		if st == "ko" or st == "crowd" or st == "end" or st == "over":
 			await _show_end(); _changed(); return
-		if st == "redeploy":
-			var line: Dictionary = model.sides[model.current].lines[-1]
-			var claim := _claim_of(model.current, line)
-			await _say(model.current, nar.redeploy_line(model.current, claim), "t%d %s redeploy (страховка)" % [model.turn_count, model.current], TYPE_USTANOVKA, false, nar.last_mood())
+		if st == "reframe":
+			var recovery: Array = model.recovery_indices(model.current)
+			if recovery.is_empty():
+				continue
+			if model.current == SIDE_YOU:
+				_mode = "reframe"
+				hint_text = "ПОСЛЕДНЯЯ РАМКА СБИТА · выберите сохранённую рамку — восстановление займёт весь ход"
+				EventBus.turn_changed.emit(model.current)
+				_changed()
+				return
+			var recovery_index := _preferred_recovery_index(model.current, recovery)
+			var recovered := await _perform_redeploy(model.current, recovery_index)
 			if my_epoch != _epoch:
 				return
-			var rev := {"ev": "redeploy", "side": model.current}
-			rev.merge(_econ()); _emit(rev)
+			if not recovered:
+				return
 			model.advance(); _changed(); continue
 		if st == "pass":
 			await _say(model.current, nar.pass_line(model.current), "t%d %s pass" % [model.turn_count, model.current], "", false, nar.last_mood())
@@ -439,10 +504,17 @@ func _run_until_player() -> void:
 
 # --- интенты игрока (зовёт view) ---
 
-## Opening-фаза: выбрать СМЫСЛ бесплатной стартовой Базы. Карта, ход и состав колоды
-## не расходуются; после фиксации обе стороны произносят рамки в порядке первого слова.
+## Первый клик выбирает смысл бесплатной стартовой Базы. Матч ещё не запускается:
+## второй клик должен осознанно закрепить одну из двух других рамок за резервной U в H5.
 func choose_opening(headline_id: String) -> void:
-	if _mode != "opening":
+	if _mode != "opening" or _opening_stage != "active":
+		return
+	var offered := false
+	for option in _opening_choices:
+		if String(option.get("id", "")) == headline_id:
+			offered = true
+			break
+	if not offered:
 		return
 	var yours: Dictionary = nar.select_headline(SIDE_YOU, headline_id)
 	if yours.is_empty():
@@ -451,18 +523,54 @@ func choose_opening(headline_id: String) -> void:
 	var theirs: Dictionary = nar.auto_headline(SIDE_OPP, opp_appeal)
 	if theirs.is_empty():
 		return
+	_opening_active = yours
+	_opening_opp_active = theirs
 	_bind_claim(model.sides[SIDE_YOU].lines[0], yours)
 	_bind_claim(model.sides[SIDE_OPP].lines[0], theirs)
+	_opening_stage = "reserve"
+	hint_text = "Теперь выберите запасную рамку: она останется видимой в H5 и спасёт от нокаута"
+	_changed()
+
+
+func choose_opening_reserve(headline_id: String) -> void:
+	if _mode != "opening" or _opening_stage != "reserve" or \
+			headline_id == String(_opening_active.get("id", "")):
+		return
+	var offered := false
+	for option in opening_options():
+		if String(option.get("id", "")) == headline_id:
+			offered = true
+			break
+	if not offered:
+		return
+	var yours: Dictionary = nar.select_headline(SIDE_YOU, headline_id)
+	var opp_appeal := String(OPENING_APPEAL_BY_STYLE.get(_opp_style, ""))
+	var theirs: Dictionary = nar.auto_headline(SIDE_OPP, opp_appeal)
+	var your_card := _opening_reserve_card(SIDE_YOU)
+	var opp_card := _opening_reserve_card(SIDE_OPP)
+	if yours.is_empty() or theirs.is_empty() or your_card.is_empty() or opp_card.is_empty():
+		return
+	_bind_claim(your_card, yours)
+	_bind_claim(opp_card, theirs)
+	_opening_stage = ""
 	_mode = "locked"
 	hint_text = ""
 	for side in [SIDE_YOU, SIDE_OPP]:
 		var line: Dictionary = model.sides[side].lines[0]
 		var ev := {"ev": "opening", "side": side, "claim_id": String(line.get("claim_id", "")),
-			"claim": String(line.get("claim", "")), "preferred_axes": line.get("preferred_axes", [])}
+			"claim": String(line.get("claim", "")), "preferred_axes": line.get("preferred_axes", []),
+			"reserve_claim_id": String(_opening_reserve_card(side).get("claim_id", ""))}
 		ev.merge(_econ())
 		_emit(ev)
 	_changed()
 	_present_openings()
+
+
+func _opening_reserve_card(side: String) -> Dictionary:
+	for card in model.sides[side].hand:
+		if bool(card.get("opening_reserve", false)):
+			return card
+	return {}
 
 
 func _present_openings() -> void:
@@ -484,10 +592,15 @@ func play_hand(index: int) -> void:
 	if index < 0 or index >= hand.size():
 		return
 	var card: Dictionary = hand[index]
+	# После потери последней рамки никакой обычный ход (включая именную U) не разрешён:
+	# игрок явно выбирает одну из карт, которые были в руке в момент падения.
+	if _mode == "reframe":
+		if index in model.recovery_indices(SIDE_YOU):
+			_player_redeploy(index)
+		return
 	# Реактивный выбор в клинче.
 	if _mode == "clinch_defend" or _mode == "clinch_attack":
-		var want := TYPE_TEZIS if _mode == "clinch_defend" else TYPE_RAZBOR
-		if card.type == want:
+		if model.clinch_card_legal(card):
 			_clinch_decided.emit({"act": "play", "steals": bool(card.get("steals", false)),
 				"hand_index": index})
 		return
@@ -532,12 +645,56 @@ func play_hand(index: int) -> void:
 			hint_text = "%s: наведи на рамку, чтобы увидеть точную реплику; кликни для атаки" % ("КРАЖА" if _pending_steals else "РАЗБОР")
 			# Кража по шатающейся рамке (тезисов <= твоего порога захвата) берёт её целиком.
 			if _pending_steals:
-				var th: int = model.capture_threshold(SIDE_YOU)
-				for ln in model.sides[SIDE_OPP].lines:
-					if int(ln.theses) <= th:
-						hint_text += "  ·  шатающуюся (≤%d тез.) заберёте ЦЕЛИКОМ" % th
+				for li in model.sides[SIDE_OPP].lines.size():
+					var threat := frame_threat(SIDE_OPP, li)
+					if bool(threat.get("capturable", false)):
+						if bool(threat.get("shaky", false)):
+							hint_text += "  ·  ШАТАЕТСЯ: полный захват до толщины %d" % \
+								int(threat.reach)
+						else:
+							hint_text += "  ·  ОГОЛЕНА: Кража заберёт однотезисную рамку целиком"
 						break
 			_changed()
+
+
+func _preferred_recovery_index(side: String, indices: Array) -> int:
+	for raw in indices:
+		var i := int(raw)
+		if bool(model.sides[side].hand[i].get("opening_reserve", false)):
+			return i
+	return int(indices[0])
+
+
+func _player_redeploy(index: int) -> void:
+	var my_epoch := _epoch
+	_mode = "locked"
+	hint_text = ""
+	var recovered := await _perform_redeploy(SIDE_YOU, index)
+	if my_epoch != _epoch:
+		return
+	if not recovered:
+		_mode = "reframe"
+		_changed()
+		return
+	model.advance()
+	_run_until_player()
+
+
+func _perform_redeploy(side: String, index: int) -> bool:
+	var info: Dictionary = model.play_redeploy(side, index)
+	if info.is_empty():
+		return false
+	var line: Dictionary = model.sides[side].lines[-1]
+	var claim := _claim_of(side, line)
+	await _say(side, nar.redeploy_line(side, claim),
+		"t%d %s reframe reserve=%d" % [model.turn_count, side, model.reserve_count(side)],
+		TYPE_USTANOVKA, false, nar.last_mood())
+	var rev := {"ev": "redeploy", "side": side, "claim_id": String(line.get("claim_id", "")),
+		"reserve_left": model.reserve_count(side)}
+	rev.merge(_econ())
+	_emit(rev)
+	_audience_quiet()
+	return true
 
 
 func choose_target(index: int) -> void:
@@ -593,6 +750,7 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	if idx < 0 or idx >= model.sides[defender].lines.size():
 		return
 	_begin_audience_scene()
+	# RulesCore freezes the public audience reach inside begin_clinch.
 	var ctx: Dictionary = model.begin_clinch(attacker, defender, idx, prefer_steal, named_index)
 	if ctx.is_empty():
 		return
@@ -625,6 +783,13 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 		var is_defend := side == defender
 		# Сторона не может действовать → её пас закрывает клинч.
 		if not model.clinch_can_act(side):
+			if is_defend:
+				hint_text = ("Оппоненту" if defender == SIDE_OPP else "Вам") + \
+					" нечем ответить — стек разворачивается до исходной атаки"
+				_changed()
+				await _wait_pace(CLINCH_STEP_DELAY)
+				if my_epoch != _epoch:
+					return
 			if not is_defend and attacker == SIDE_YOU:
 				hint_text = "Рамку отстояли — добить нечем (нет карт атаки в руке)"
 				_changed()
@@ -633,7 +798,7 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 					return
 			if not is_defend:
 				atk_left_at_finish = _count_razbor(attacker)
-			resolved = model.clinch_submit("pass")
+			resolved = model.clinch_submit("pass", true, -1, "exhausted")
 			break
 		# Решение текущей стороны.
 		var decision := "pass"
@@ -654,13 +819,17 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 			await _wait_pace(CLINCH_STEP_DELAY)
 			if my_epoch != _epoch:
 				return
+		var res: Dictionary = model.clinch_submit(decision, pref, chosen_hand_index)
+		# Телеметрия руки снимается ПОСЛЕ точного объекта press: значение больше не
+		# включает только что разыгранную карту и не создаёт ложное ощущение автостопа.
 		if not is_defend:
 			atk_left_at_finish = _count_razbor(attacker)
-		var res: Dictionary = model.clinch_submit(decision, pref, chosen_hand_index)
 		match String(res.get("event", "")):
 			"hold":
 				var dc: Dictionary = res.card
 				var stmt: Dictionary = nar.make_statement(defender, dc, _used_axes(line), "hold", line)
+				stmt["thesis_id"] = String(dc.get("thesis_id", ""))
+				stmt["clinch_step"] = int(res.get("step", -1))
 				_push_stmt(line, stmt)
 				await _say(defender, stmt.text, "    hold %s [%s]" % [defender, stmt.axis], TYPE_TEZIS, false, nar.last_mood())
 				if my_epoch != _epoch:
@@ -691,16 +860,45 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	var t_added := int(resolved.get("t_added", 0))
 	var r_count := int(resolved.get("r_count", 1))
 	var landed := bool(resolved.get("landed", r_count > t_added))
-	_narrate(nar.resolve_text(landed, info.get("removed", false), target_claim, int(info.get("stolen_count", 0)), not landed),
-		"    resolve t%d r%d %s%s%s" % [t_added, r_count,
-			("landed" if landed else "withstand"),
-			(" removed" if info.get("removed", false) else ""),
-			(" stolen=%d" % int(info.get("stolen_count", 0)) if int(info.get("stolen_count", 0)) > 0 else "")])
-	# Синхронизация стопки доводов с числом тезисов (если рамка не снята).
-	if not info.get("removed", false):
-		var st: Array = line.get("statements", [])
-		while st.size() > int(line.theses):
-			st.pop_back()
+	var stop_reason := String(resolved.get("stop_reason", info.get("stop_reason", "voluntary")))
+	var resolve_debug := "    resolve t%d r%d %s" % [
+		t_added, r_count, ("landed" if landed else "withstand")]
+	if landed:
+		var target_step := int(info.get("landing_target_step", -1))
+		var target_label := "frame" if target_step < 0 else "#%d:T" % target_step
+		resolve_debug += " hit=#%d:%s effect=%s target=%s" % [
+			int(info.get("landing_step", -1)), String(info.get("landing_attack_name", "Разбор")),
+			String(info.get("landing_effect", "breakdown")), target_label]
+	var unwind_effects: Array = info.get("resolved_effects", [])
+	if unwind_effects.size() > 1:
+		var unwind_labels: Array = []
+		for raw_effect in unwind_effects:
+			var effect: Dictionary = raw_effect
+			unwind_labels.append("#%d:%s→%s" % [int(effect.get("step", -1)),
+				String(effect.get("name", "R")), String(effect.get("effect", ""))])
+		resolve_debug += " unwind=[%s]" % ",".join(unwind_labels)
+	var resolved_sequence: Array = info.get("resolved_sequence", resolved.get("sequence", []))
+	var parried_labels: Array = []
+	for raw_step in info.get("parried_theft_steps", []):
+		var parried_step := int(raw_step)
+		var parried_name := "Кража"
+		if parried_step >= 0 and parried_step < resolved_sequence.size():
+			parried_name = String((resolved_sequence[parried_step] as Dictionary).get("name", "Кража"))
+		parried_labels.append("#%d:%s" % [parried_step, parried_name])
+	if not parried_labels.is_empty():
+		resolve_debug += " parried=[%s]" % ",".join(parried_labels)
+	if info.get("removed", false):
+		resolve_debug += " removed"
+	if int(info.get("stolen_count", 0)) > 0:
+		resolve_debug += " stolen=%d" % int(info.get("stolen_count", 0))
+	if info.get("captured", false):
+		resolve_debug += " captured"
+	if info.get("capture_blocked", false):
+		resolve_debug += " capture_blocked=%s" % String(info.get("capture_block_reason", "unknown"))
+	_narrate(nar.resolve_text(landed, info.get("removed", false), target_claim,
+		int(info.get("stolen_count", 0)), not landed, info),
+		resolve_debug)
+	_sync_removed_statements(defender, info)
 	var ev := {
 		"ev": "clinch", "attacker": attacker, "defender": defender,
 		"init_steals": init_steals, "t": t_added, "r": r_count,
@@ -708,6 +906,47 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 		"removed": info.get("removed", false), "stolen": info.get("stolen", false),
 		"stolen_count": info.get("stolen_count", 0),
 		"captured": info.get("captured", false),
+		"full_capture": info.get("full_capture", false),
+		"capture_blocked": info.get("capture_blocked", false),
+		"capture_block_reason": info.get("capture_block_reason", ""),
+		"capture_reach": info.get("capture_reach", 1),
+		"capture_audience_favor": info.get("capture_audience_favor", 0),
+		"captured_thesis_ids": info.get("captured_thesis_ids", []),
+		"captured_thickness": info.get("captured_thickness", 0),
+		"opening_thickness": info.get("opening_thickness", 0),
+		"protected_thickness": info.get("protected_thickness", 0),
+		"pre_effect_thickness": info.get("pre_effect_thickness", 0),
+		"capture_attempted": info.get("capture_attempted", false),
+		"capture_reactivated": info.get("capture_reactivated", false),
+		"opening_capture_eligible": info.get("opening_capture_eligible", false),
+		"peak_thickness": info.get("peak_thickness", 0),
+		"landing_step": info.get("landing_step", -1),
+		"landing_attack_name": info.get("landing_attack_name", ""),
+		"landing_attack_steals": info.get("landing_attack_steals", false),
+		"landing_effect": info.get("landing_effect", ""),
+		"landing_target_kind": info.get("landing_target_kind", ""),
+		"landing_aim_kind": info.get("landing_aim_kind", ""),
+		"landing_target_step": info.get("landing_target_step", -1),
+		"affected_kind": info.get("affected_kind", ""),
+		"affected_thesis_id": info.get("affected_thesis_id", ""),
+		"removed_thesis_ids": info.get("removed_thesis_ids", []),
+		"removed_thesis_steps": info.get("removed_thesis_steps", []),
+		"final_thickness": info.get("final_thickness", 0),
+		"damage_count": info.get("damage_count", 0),
+		"parried_steps": info.get("parried_steps", []),
+		"parried_theft_steps": info.get("parried_theft_steps", []),
+		"parried_capture": info.get("parried_capture", false),
+		"initially_countered_steps": info.get("initially_countered_steps", []),
+		"initially_countered_theft_steps": info.get("initially_countered_theft_steps", []),
+		"resolved_attack_steps": info.get("resolved_attack_steps", []),
+		"resolved_effects": info.get("resolved_effects", []),
+		"socratic": info.get("socratic", false),
+		"socratic_expired": info.get("socratic_expired", false),
+		"socratic_target_step": info.get("socratic_target_step", -1),
+		"sequence": info.get("resolved_sequence", resolved.get("sequence", [])),
+		"stop_reason": stop_reason,
+		"stop_side": info.get("stop_side", resolved.get("stop_side", "")),
+		"exhausted_side": info.get("exhausted_side", resolved.get("exhausted_side", "")),
 		"pressure_rounds": pressure_rounds,
 		"atk_left_at_finish": atk_left_at_finish,
 		"target": info.get("target_name", ""),
@@ -732,9 +971,12 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 		intensity += 1
 	if info.get("captured", false):
 		intensity += 1
-	await _emotion_event(strained_side, stimulus, mini(3, intensity), {"target": target_claim})
-	if my_epoch != _epoch:
-		return
+	# Осознанное «хватит» — стратегическая остановка, а не потеря самообладания. Вынужденное
+	# истощение без следующей атаки по-прежнему даёт attack_stalled.
+	if landed or stop_reason != "voluntary":
+		await _emotion_event(strained_side, stimulus, mini(3, intensity), {"target": target_claim})
+		if my_epoch != _epoch:
+			return
 	# Содержание получает голос только у видимого исхода: падения/захвата рамки либо
 	# затяжного клинча. Одна реакция без такого исхода не назначает победителя сцены.
 	var content_visible := bool(info.get("removed", false)) \
@@ -746,10 +988,16 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 func _ask_clinch(mode: String) -> Dictionary:
 	var my_epoch := _epoch
 	_mode = "clinch_" + mode
+	var sequence: Array = model.clinch.get("sequence", [])
 	if mode == "defend":
-		hint_text = "КЛИНЧ! Бьют вашу рамку — сыграйте ТЕЗИС в защиту, или «Пропустить»"
+		var incoming: Dictionary = sequence.back() if not sequence.is_empty() else {}
+		var incoming_name := "КРАЖА" if bool(incoming.get("steals", false)) else "РАЗБОР"
+		if sequence.size() == 1:
+			hint_text = "КЛИНЧ · %s направлен в рамку. ТЕЗИС погасит именно эту карту и останется сверху; либо «Пропустить»." % incoming_name
+		else:
+			hint_text = "КЛИНЧ · %s направлен в последний ответный тезис. Если пропустить, он снимет ответ и освободит всю цепь до исходной атаки." % incoming_name
 	else:
-		hint_text = "КЛИНЧ! Добейте РАЗБОРОМ или КРАЖЕЙ, или «Остановиться»"
+		hint_text = "КЛИНЧ · последний ТЕЗИС прикрыл рамку. РАЗБОР снимет только его; КРАЖА украдёт только его и не захватит рамку."
 	_changed()
 	var d: Dictionary = await _clinch_decided
 	if my_epoch != _epoch:
@@ -1046,7 +1294,7 @@ func _narrate_judge_count() -> void:
 
 
 ## Обучение зал-гейту голосом зала: ПЕРВЫЙ раз за матч, когда крен открывает стороне
-## уровень захвата 2/3, — объясняем правило ремаркой. Постоянная индикация — на доске
+## уровень захвата 2/3/4, — объясняем правило ремаркой. Постоянная индикация — на доске
 ## (шатающиеся рамки) и на баре (риски порогов); это только событие-телеграф.
 func _maybe_narrate_gate() -> void:
 	if model == null or model.gate_x <= 0 or model.game_over:
@@ -1087,6 +1335,7 @@ func _log_action(info: Dictionary) -> void:
 			var line: Dictionary = model.sides[side].lines[-1]
 			_claim_of(side, line)  # рамке нужна headline-позиция (топик)
 			var stmt: Dictionary = nar.make_statement(side, card, _used_axes(line), "assert", line)
+			stmt["thesis_id"] = String(info.get("thesis_id", ""))
 			_push_stmt(line, stmt)
 			await _say(side, stmt.text, "t%d %s тезис[%s/%s]" % [model.turn_count, side, stmt.device, stmt.axis], TYPE_TEZIS, false, nar.last_mood())
 		TYPE_USTANOVKA:
@@ -1128,6 +1377,7 @@ func _play_named_move(hand_index: int, target: int) -> void:
 func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
 	var my_epoch := _epoch
 	_begin_audience_scene()
+	_sync_removed_statements(model.other(side), info)
 	var named_conduct := int(info.get("audience_conduct", 0))
 	var conduct := {"relative": 0, "signed": 0}
 	if named_conduct != 0:
@@ -1135,6 +1385,8 @@ func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
 	var ev := {"ev": "named", "side": side, "id": String(info.get("named", "")),
 		"name": String(card.get("name", "")), "removed": info.get("removed", false),
 		"captured": info.get("captured", false),
+		"affected_thesis_id": info.get("affected_thesis_id", ""),
+		"removed_thesis_ids": info.get("removed_thesis_ids", []),
 		"conduct_relative": int(conduct.relative), "conduct_signed": int(conduct.signed)}
 	ev.merge(_econ())
 	_emit(ev)
@@ -1153,6 +1405,14 @@ func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
 			fx = "постулат поставлен: два тезиса разом, но обсуждению не подлежит"
 		_:
 			fx = "приём разыгран"
+	if String(info.get("named", "")) == "burden_shift" and \
+			String(info.get("thesis_id", "")) != "" and not model.sides[side].lines.is_empty():
+		var statement := {
+			"text": "«%s» — %s." % [String(card.get("name", "")), fx],
+			"axis": "named", "device": String(card.get("name", "")),
+			"thesis_id": String(info.thesis_id),
+		}
+		_push_stmt(model.sides[side].lines[-1], statement)
 	var named_meta := {}
 	if named_conduct != 0:
 		named_meta = {"conduct_effect": int(conduct.relative),
@@ -1190,11 +1450,7 @@ func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
 
 
 func _count_razbor(side: String) -> int:
-	var n := 0
-	for c in model.sides[side].hand:
-		if c.type == TYPE_RAZBOR:
-			n += 1
-	return n
+	return int(model.clinch_legal_count(side, "await_attack"))
 
 
 ## Приколоть выбранную смысловую позицию и её мягкий биас осей к механической рамке.
@@ -1218,6 +1474,22 @@ func _push_stmt(line: Dictionary, stmt: Dictionary) -> void:
 	if not line.has("statements"):
 		line["statements"] = []
 	line["statements"].append(stmt)
+
+
+## Общий мост механика→нарратив для любого эффекта карты (clinch или named-shot).
+## Каждая снятая карта сообщает thesis_id; ищем этот id на всех уцелевших рамках
+## владельца и удаляем только связанную реплику.
+func _sync_removed_statements(owner: String, info: Dictionary) -> void:
+	var removed_ids: Array = info.get("removed_thesis_ids", [])
+	if removed_ids.is_empty() or not model.sides.has(owner):
+		return
+	for raw_line in model.sides[owner].lines:
+		var line: Dictionary = raw_line
+		var statements: Array = line.get("statements", [])
+		for i in range(statements.size() - 1, -1, -1):
+			var thesis_id := String((statements[i] as Dictionary).get("thesis_id", ""))
+			if thesis_id != "" and removed_ids.has(thesis_id):
+				statements.remove_at(i)
 
 
 func _top_stmt(line: Dictionary) -> Dictionary:

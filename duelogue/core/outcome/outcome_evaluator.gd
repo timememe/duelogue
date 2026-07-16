@@ -108,6 +108,12 @@ func evaluate(model: RefCounted, audience: Dictionary, emotions: Dictionary,
 
 func verdict_text(report: Dictionary, you_label: String, opp_label: String) -> String:
 	var winner := String(report.get("winner", "draw"))
+	if String(report.get("reason", "")) == "knockout" and winner != "draw":
+		var knockout_label := you_label if winner == SIDE_YOU else opp_label
+		var fallen_side := "последняя рамка оппонента" if winner == SIDE_YOU else \
+			"ваша последняя рамка"
+		return "Нокаут. Побеждает «%s»: %s выбита, а запасной рамки в руке не оказалось." % [
+			knockout_label, fallen_side]
 	var board: Dictionary = report.get("board", {})
 	var audience: Dictionary = report.get("audience", {})
 	var lean := int(audience.get("lean", 0))

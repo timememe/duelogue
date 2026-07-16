@@ -14,10 +14,17 @@ func _ready() -> void:
 
 
 func _run() -> void:
-	var vector := OutcomeProfiles.get_profile(OutcomeProfiles.DEFAULT_ID)
-	_check(String(vector.id) == "vector_conduct" and OutcomeProfiles.all().size() >= 6 and
-		String(OutcomeProfiles.get_profile("missing_profile").id) == "vector_conduct",
-		"профили — данные и доступны тестам")
+	var production := OutcomeProfiles.get_profile(OutcomeProfiles.DEFAULT_ID)
+	_check(String(production.id) == "combat_cohesion" and OutcomeProfiles.all().size() >= 7 and
+		String(OutcomeProfiles.get_profile("missing_profile").id) == "combat_cohesion",
+		"новый связный боевой профиль выбран production-default и fallback")
+	_check(bool((production.terminal as Dictionary).board_ko) and
+		int((production.links as Dictionary).gate_x) == 2 and
+		int((production.links as Dictionary).gate_y) == 4 and
+		not (production.links as Dictionary).has("composure_gate") and
+		String((production.victory as Dictionary).mode) == "board",
+		"production-профиль включает KO и публичное audience-only шатание 2/3/4")
+	var vector := OutcomeProfiles.get_profile("vector_conduct")
 	_check(String((vector.victory as Dictionary).mode) == "board" and
 		String((vector.audience as Dictionary).valence_mode) == "content_plus_conduct" and
 		int((vector.audience as Dictionary).decision_threshold) == 1,
@@ -129,8 +136,8 @@ func _run() -> void:
 	model.gate_x = 2
 	model.gate_y = 4
 	model.set_external_zal(-4, true)
-	_check(model.zal() == -4 and model.capture_threshold(RulesCore.SIDE_YOU) == 3,
-		"RulesCore читает независимый зал через прежний API гейта")
+	_check(model.zal() == -4 and model.capture_threshold(RulesCore.SIDE_YOU) == 4,
+		"RulesCore читает независимый публичный Lean как reach 1/2/3/4")
 
 	# Без board-KO сторона без рамки может продолжить Разбором и дождаться общего вердикта.
 	model.game_over = false

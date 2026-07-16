@@ -4,7 +4,7 @@ extends RefCounted
 ## Это данные, а не реализация: AudienceCore читает audience, RulesCore — links/terminal,
 ## OutcomeEvaluator — board/victory. Новый эксперимент добавляется одной записью.
 
-const DEFAULT_ID := "vector_conduct"
+const DEFAULT_ID := "combat_cohesion"
 
 const CONDUCT_REACTION_VALUES := {
 	"default": 0,
@@ -56,6 +56,17 @@ const LEGACY_REACTION_AUDIENCE := {
 
 const PROFILES := [
 	{
+		"id": "combat_cohesion",
+		"label": "Бой: рамка + давление зала",
+		"description": "Доска решает вердикт; последняя рамка даёт KO без резерва, а публичный крен зала открывает захват более толстых рамок.",
+		"board": {"frame_weight": 3, "thesis_weight": 1},
+		"audience": CONDUCT_AUDIENCE,
+		"links": {"gate_x": 2, "gate_y": 4,
+			"crowd_ko": 0, "crowd_hold": 1},
+		"terminal": {"board_ko": true},
+		"victory": {"mode": "board", "audience_weight": 0},
+	},
+	{
 		"id": "vector_conduct",
 		"label": "Вектор: содержание + поведение",
 		"description": "Доска решает спор; зал отдельно оценивает содержание сцены и поведение ораторов.",
@@ -78,7 +89,7 @@ const PROFILES := [
 	{
 		"id": "vector_gate",
 		"label": "Вектор + гейт 2/4",
-		"description": "Доска решает; зал косвенно влияет на будущие захваты.",
+		"description": "Доска решает; при крене 2/3/4 зал открывает захват рамок толщины 2/3/4.",
 		"board": {"frame_weight": 3, "thesis_weight": 1},
 		"audience": CONDUCT_AUDIENCE,
 		"links": {"gate_x": 2, "gate_y": 4, "crowd_ko": 0, "crowd_hold": 1},

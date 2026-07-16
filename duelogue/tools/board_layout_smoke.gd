@@ -30,6 +30,34 @@ func _ready() -> void:
 	theft.free()
 	stolen_thesis.free()
 
+	var object_line := {
+		"theses": 3,
+		"stolen": 1,
+		"thesis_stack": [
+			{"thesis_id": "base", "stolen": false},
+			{"thesis_id": "stolen-middle", "stolen": true},
+			{"thesis_id": "normal-top", "stolen": false},
+		],
+	}
+	var exact_flags := _stolen_flags(DebateScreen.visible_thesis_tokens(object_line))
+	failures += _check(exact_flags == [false, true, false],
+		"object stack keeps gold on the stolen middle thesis, not the normal top thesis")
+	var contested_line: Dictionary = object_line.duplicate(true)
+	(contested_line.thesis_stack as Array).append(
+		{"thesis_id": "contested-stolen", "stolen": true})
+	contested_line["theses"] = 4
+	contested_line["stolen"] = 2
+	var base_flags := _stolen_flags(
+		DebateScreen.visible_thesis_tokens(contested_line, 1))
+	failures += _check(base_flags == [false, true, false],
+		"contested top thesis stays in the clinch overlay and cannot recolor the base")
+	var legacy_flags := _stolen_flags(DebateScreen.visible_thesis_tokens(
+		{"theses": 3, "stolen": 1}))
+	failures += _check(legacy_flags == [false, false, true],
+		"legacy scalar state retains its deterministic last-N fallback")
+	failures += _check(DebateScreen.wobble_tick_levels(2, 4) == [-4, -3, -2, 2, 3, 4],
+		"audience bar exposes every exact wobble threshold for reach 2/3/4")
+
 	var counts := [8, 8, 8, 8]
 	var pads := [16.0, 46.0, 16.0, 16.0]
 	var fit: Dictionary = DebateScreen.fit_board_row(counts, pads, 584.0, 12.0)
@@ -112,6 +140,13 @@ func _ready() -> void:
 func _check(ok: bool, label: String) -> int:
 	print("  %s · %s" % [label, "OK" if ok else "FAIL"])
 	return 0 if ok else 1
+
+
+func _stolen_flags(tokens: Array) -> Array:
+	var flags: Array = []
+	for raw in tokens:
+		flags.append(bool((raw as Dictionary).get("stolen", false)))
+	return flags
 
 
 func _add_probe_group(view: Control, row: Control, x: float, thesis_count: int,

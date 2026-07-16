@@ -47,9 +47,52 @@ static func build_side(n_u: int, n_t: int, n_r: int, base_theses: int, steal_car
 		"discard": [],   # публичная стопка: потраченные атаки, сбитые тезисы, павшие рамки
 		"sw_used": 0,    # сколько раз сторона брала «второе дыхание» из сброса
 		"passed": false,
+		"recovery_pending": false,
 	}
 	refill(s, hand_size)
 	return s
+
+
+## Opening с осознанной страховкой: ровно одна уже существующая Установка гарантированно
+## остаётся в стартовой руке и занимает обычный слот. Остальные стартовые карты берутся
+## только из T/R; оставшиеся U возвращаются в добор ПОСЛЕ раздачи. Размер и состав обоймы
+## не меняются — меняется лишь стартовый порядок. Возвращает саму карту резерва либо {}.
+static func prepare_opening_reserve(side: Dictionary, hand_size: int) -> Dictionary:
+	var pool: Array = []
+	pool.append_array(side.get("hand", []))
+	pool.append_array(side.get("draw", []))
+	var frames: Array = []
+	var actions: Array = []
+	for raw in pool:
+		var card: Dictionary = raw
+		card.erase("opening_reserve")
+		card.erase("recovery_ready")
+		if String(card.get("type", "")) == TYPE_USTANOVKA:
+			frames.append(card)
+		else:
+			actions.append(card)
+	frames.shuffle()
+	actions.shuffle()
+	var hand: Array = []
+	var reserve := {}
+	if not frames.is_empty() and hand_size > 0:
+		reserve = frames.pop_back()
+		reserve["opening_reserve"] = true
+		hand.append(reserve)
+	while hand.size() < hand_size and not actions.is_empty():
+		hand.append(actions.pop_back())
+	# Нестандартная маленькая обойма может не набрать H только действиями — тогда добиваем
+	# оставшимися рамками, не создавая новых карт из воздуха.
+	while hand.size() < hand_size and not frames.is_empty():
+		hand.append(frames.pop_back())
+	var draw: Array = []
+	draw.append_array(actions)
+	draw.append_array(frames)
+	draw.shuffle()
+	side["hand"] = hand
+	side["draw"] = draw
+	side["recovery_pending"] = false
+	return reserve
 
 
 ## Добор стороны до hand_size из её колоды (тянет с конца — колода уже перетасована).

@@ -71,6 +71,22 @@ func _test_selected_clinch_cards() -> void:
 		String(sequence[1].type) == Cards.TYPE_TEZIS and
 		bool(sequence[1].get("stolen", false)) and String(sequence[2].type) == Cards.TYPE_RAZBOR,
 		"клинч хранит визуальный порядок Разбор → Тезис → Разбор")
+	var resolved: Dictionary = rules.clinch_submit("pass")
+	var info: Dictionary = resolved.get("info", {})
+	var resolved_sequence: Array = info.get("resolved_sequence", [])
+	_check(int(info.get("landing_step", -1)) == 2 and
+		int(info.get("landing_target_step", -1)) == 1 and
+		String(info.get("landing_effect", "")) == "breakdown" and
+		resolved_sequence.size() == 3 and
+		String(info.get("affected_thesis_id", "")) ==
+			String(resolved_sequence[1].get("thesis_id", "")) and
+		String(resolved_sequence[0].result) == "parried" and
+		String(resolved_sequence[1].result) == "removed" and
+		String(resolved_sequence[2].result) == "landed",
+		"резолв связывает финальную карту с конкретным ответным Тезисом")
+	_check(int(rules.sides.opp.lines[0].theses) == 2 and
+		int(rules.sides.opp.lines[0].stolen) == 0,
+		"финальный Разбор снимает именно верхний украденный Тезис, не исходную рамку")
 
 
 func _test_exact_narrative(theme: Dictionary) -> void:

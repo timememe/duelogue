@@ -186,6 +186,8 @@ func _refresh() -> void:
 
 
 func _validate() -> String:
+	if int(_deck.u) < 1:
+		return "Нужна минимум 1 Установка: opening закрепляет её как публичный резерв от нокаута."
 	var need := {"u": 0, "t": 0, "plain": 0, "steals": 0}
 	for id in _deck.named:
 		var card := NamedCards.make(String(id))

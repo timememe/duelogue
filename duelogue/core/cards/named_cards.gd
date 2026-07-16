@@ -11,8 +11,9 @@ extends RefCounted
 ##
 ## Карта-словарь совместима с ванильной ({type, name, steals}) плюс поля:
 ##   named — id приёма (диспатч твиста), text — правило на столе,
-##   targeted — атака с выбором цели (UI ведёт таргетинг), clinch — открывает клинч
-##   (прочие именные атаки в V1 бьют БЕЗ клинча — «выстрел», не ралли).
+##   targeted — атака с выбором цели (UI ведёт таргетинг), clinch — может ОТКРЫТЬ клинч.
+##   Это не разрешение играть карту поздним press/defense: для таких ролей будущей карте
+##   понадобится собственный объектный hook; прочие именные атаки — «выстрел», не ралли.
 
 const C := preload("res://duelogue/core/cards/card_types.gd")
 
@@ -35,6 +36,7 @@ const CARDS := {
 	"strawman": {
 		"name": "Соломенное чучело", "base": C.TYPE_RAZBOR, "steals": true,
 		"targeted": true, "clinch": false,
+		"capture_bonus": 1, "capture_trim": 1,
 		"text": "Кража с длинной рукой: порог захвата +1 (дотягивается до рамок толще), но добыча приходит с −1 тезисом (мин. 1).",
 	},
 	"burden_shift": {
@@ -63,11 +65,15 @@ static func make(id: String) -> Dictionary:
 	var d: Dictionary = CARDS.get(id, {})
 	if d.is_empty():
 		return {}
-	return {
+	var card := {
 		"type": String(d.base), "name": String(d.name), "steals": bool(d.get("steals", false)),
 		"named": id, "text": String(d.text),
 		"targeted": bool(d.get("targeted", false)), "clinch": bool(d.get("clinch", false)),
 	}
+	for key in ["capture_bonus", "capture_trim"]:
+		if d.has(key):
+			card[key] = d[key]
+	return card
 
 
 ## ЗАМЕНА (§1): именная карта ВЫТЕСНЯЕТ из колоды добора ванильную того же базового типа
@@ -83,16 +89,23 @@ static func inject(side: Dictionary, card_ids: Array) -> void:
 		# любую ванильную той же базы — размер обоймы не раздувается, даже если, скажем,
 		# кража-приём взят при 0 ванильных Краж в счётчиках.
 		var removed := false
+		# Инъекция вызывается после стартовой раздачи, поэтому подходящая ваниль могла уже
+		# оказаться в руке. Ищем в обеих зонах: иначе именная карта незаметно раздувала колоду.
 		for exact in [true, false]:
-			for i in draw.size():
-				var c: Dictionary = draw[i]
-				if String(c.type) != String(nc.type) or c.has("named"):
-					continue
-				if exact and bool(c.get("steals", false)) != bool(nc.steals):
-					continue
-				draw.remove_at(i)
-				removed = true
-				break
+			for zone in ["hand", "draw"]:
+				var pile: Array = side[zone]
+				for i in pile.size():
+					var c: Dictionary = pile[i]
+					if String(c.type) != String(nc.type) or c.has("named"):
+						continue
+					if exact and bool(c.get("steals", false)) != bool(nc.steals):
+						continue
+					pile.remove_at(i)
+					removed = true
+					break
+				if removed:
+					break
 			if removed:
 				break
-		draw.insert(randi() % (draw.size() + 1), nc)
+		if removed:
+			draw.insert(randi() % (draw.size() + 1), nc)

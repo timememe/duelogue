@@ -44,11 +44,13 @@ func _apply_named(r: RefCounted, side: String, act: Dictionary) -> Dictionary:
 		# не-кража — не в момент кражи (не жжём окно захвата гишем/сократиком).
 		if String(act.type) == TYPE_RAZBOR and String(style_of.get(side, "")) == "smart":
 			var tgt := int(act.get("target", -1))
-			var dl: Array = r.sides[r.other(side)].lines
 			if bool(c.get("steals", false)):
-				var reach := int(r.capture_threshold(side)) + 1
-				if tgt < 0 or tgt >= dl.size() or int(dl[tgt].theses) > reach:
+				var reach := int(r.capture_threshold(side)) + \
+					maxi(0, int(c.get("capture_bonus", 0)))
+				var named_target := _capturable_target_at_reach(r, side, reach)
+				if named_target < 0:
 					continue
+				act["target"] = named_target
 			elif atk_prefer_steal(r, side, r.other(side), tgt):
 				continue
 		act["named_index"] = i
@@ -66,13 +68,15 @@ func _pick_base(r: RefCounted, side: String, style: String) -> Dictionary:
 	var opp: String = r.other(side)
 	var opp_lines: Array = r.sides[opp].lines
 
-	# 1. Летальный разбор (снять последнюю рамку оппонента).
-	if legal.has(TYPE_RAZBOR) and opp_lines.size() == 1 and int(opp_lines[0].theses) == 1:
+	# 1. Настоящий летал: последняя рамка и нет публичного резерва в руке.
+	if r.board_ko_enabled and legal.has(TYPE_RAZBOR) and opp_lines.size() == 1 \
+			and int(opp_lines[0].theses) == 1 and r.reserve_count(opp) == 0:
 		return {"type": TYPE_RAZBOR, "target": 0}
 
 	# 2. Выживание: единственная хрупкая рамка — укрепить.
 	var me: Dictionary = r.sides[side]
-	if me.lines.size() == 1 and int(me.lines[0].theses) <= 1:
+	if r.board_ko_enabled and me.lines.size() == 1 and int(me.lines[0].theses) <= 1 \
+			and r.reserve_count(side) == 0:
 		if legal.has(TYPE_TEZIS):
 			return {"type": TYPE_TEZIS}
 		if legal.has(TYPE_USTANOVKA):
@@ -99,12 +103,14 @@ func _pick_smart(r: RefCounted, side: String) -> Dictionary:
 	var opp_lines: Array = r.sides[opp].lines
 	var my_lines: Array = r.sides[side].lines
 
-	# 1. Летал: снести последнюю рамку оппонента (нокаут).
-	if legal.has(TYPE_RAZBOR) and opp_lines.size() == 1 and int(opp_lines[0].theses) == 1:
+	# 1. Летал: снести последнюю рамку, если в руке нет рамки для восстановления.
+	if r.board_ko_enabled and legal.has(TYPE_RAZBOR) and opp_lines.size() == 1 \
+			and int(opp_lines[0].theses) == 1 and r.reserve_count(opp) == 0:
 		return {"type": TYPE_RAZBOR, "target": 0}
 
 	# 2. Выживание: единственная рамка хрупкая → укрепить (защита от KO/захвата).
-	if my_lines.size() == 1 and int(my_lines[0].theses) <= 1:
+	if r.board_ko_enabled and my_lines.size() == 1 and int(my_lines[0].theses) <= 1 \
+			and r.reserve_count(side) == 0:
 		if legal.has(TYPE_TEZIS):
 			return {"type": TYPE_TEZIS}
 		if legal.has(TYPE_USTANOVKA):
@@ -146,8 +152,11 @@ func _pick_smart(r: RefCounted, side: String) -> Dictionary:
 func def_will_clinch(r: RefCounted, defender: String, line: Dictionary) -> bool:
 	if String(style_of.get(defender, "")) == "smart":
 		return _smart_def_will_clinch(r, defender, line)
-	# Обязательно защищаем, если потеря рамки = нокаут.
-	if r.sides[defender].lines.size() == 1 and int(line.theses) <= 1:
+	# Press бьёт точный T, но если его не накрыть, unwind освободит opener по рамке.
+	# Поэтому смертельность исходной атаки остаётся актуальной на всей длине ралли.
+	if r.board_ko_enabled and r.sides[defender].lines.size() == 1 \
+			and int(r.clinch.get("opening_thickness", int(line.theses))) <= 1 \
+			and r.reserve_count(defender) == 0:
 		return true
 	return randf() < 0.75
 
@@ -155,37 +164,44 @@ func def_will_clinch(r: RefCounted, defender: String, line: Dictionary) -> bool:
 func atk_will_clinch(r: RefCounted, attacker: String, line: Dictionary) -> bool:
 	if String(style_of.get(attacker, "")) == "smart":
 		return _smart_atk_will_clinch(r, attacker, line)
-	# Дожимаем охотнее, если рамка вот-вот падёт.
-	if int(line.theses) <= 1:
-		return true
+	# Press снимает точный T и тем самым может освободить всю цепь до opener.
+	# Для обычного стиля решение всё ещё остаётся риском экономики руки.
 	return randf() < 0.5
-
 
 ## Умная защита в клинче — по ЭКОНОМИКЕ РУКИ (ось мастерства из GDD §7), не по монетке.
 func _smart_def_will_clinch(r: RefCounted, defender: String, line: Dictionary) -> bool:
 	var theses := int(line.theses)
-	# Потеря рамки = нокаут → держим обязательно.
-	if r.sides[defender].lines.size() == 1 and theses <= 1:
+	var root_capture := bool(r.clinch.get("opening_capture_eligible", false))
+	var root_lethal: bool = bool(r.board_ko_enabled) and r.sides[defender].lines.size() == 1 and \
+		int(r.clinch.get("opening_thickness", theses)) <= 1 and r.reserve_count(defender) == 0
+	# Потеря рамки = нокаут → держим обязательно на любом уровне стека: пропуск
+	# освобождает все атаки ниже вплоть до opener.
+	if root_lethal:
 		return true
-	var tez := _hand_count(r, defender, TYPE_TEZIS)
+	var tez := _clinch_count(r, defender, "await_defend")
 	if tez == 0:
 		return false
-	# Рамка в досягаемости захвата (порог атакующего с учётом зал-гейта) — тянем вверх.
-	if r.capture_mode > 0 and theses <= r.capture_threshold(r.other(defender)):
+	# Frozen-флаг принадлежит конкретному opener-объекту: обычный R на той же толщине
+	# не превращается для AI в Кражу лишь из-за геометрии рамки.
+	if root_capture:
 		return true
 	# Иначе держим только при запасе тезисов — не палим последнюю карту на дешёвую рамку.
 	return tez >= 2
 
 
-## Умное добивание — дожимаем, только когда это окупается и есть запас атак.
+## Умное добивание: при ценном opener press последней картой оправдан, потому что
+## exact T будет снят и весь стек развернётся до рамки. В обычной сцене сохраняем резерв.
 func _smart_atk_will_clinch(r: RefCounted, attacker: String, line: Dictionary) -> bool:
-	var atk := _hand_count(r, attacker, TYPE_RAZBOR)
+	var atk := _clinch_count(r, attacker, "await_attack")
 	if atk == 0:
 		return false
-	# Рамка вот-вот падёт (а с Кражей — ещё и захват) → добиваем.
-	if int(line.theses) <= 1:
+	var root_capture := bool(r.clinch.get("opening_capture_eligible", false))
+	var root_lethal: bool = bool(r.board_ko_enabled) and \
+		r.sides[r.clinch.defender].lines.size() == 1 and \
+		int(r.clinch.get("opening_thickness", int(line.theses))) <= 1 and \
+		r.reserve_count(String(r.clinch.defender)) == 0
+	if root_capture or root_lethal:
 		return true
-	# Дожимать дальше — только при запасе атак.
 	return atk >= 2
 
 
@@ -196,6 +212,10 @@ func _smart_atk_will_clinch(r: RefCounted, attacker: String, line: Dictionary) -
 func atk_prefer_steal(r: RefCounted, attacker: String, defender: String, idx: int) -> bool:
 	if String(style_of.get(attacker, "")) != "smart":
 		return true
+	# После ответного T следующая атака направлена уже в этот тезис, а не в рамку:
+	# обычный Разбор приоритетнее; Кража тратится лишь при отсутствии другой атаки.
+	if r.clinch_active() and String(r.clinch.get("phase", "")) == "await_attack":
+		return false
 	var dl: Array = r.sides[defender].lines
 	if idx < 0 or idx >= dl.size():
 		return true
@@ -216,7 +236,14 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 		var st: String = r.begin_turn(r.current)
 		if st == "ko" or st == "crowd" or st == "end" or st == "over":
 			break
-		if st == "redeploy" or st == "pass":
+		if st == "reframe":
+			var recovery: Array = r.recovery_indices(r.current)
+			if recovery.is_empty():
+				break
+			r.play_redeploy(r.current, int(recovery[0]))
+			r.advance()
+			continue
+		if st == "pass":
 			r.advance()
 			continue
 		var style := style_you if r.current == SIDE_YOU else style_opp
@@ -238,7 +265,6 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 			# Клинч с волей обеих сторон (мехвариант play_action был только в симе).
 			# named_i >= 0 — клинч именно этой картой (Сократический вопрос).
 			_auto_resolve(r, r.current, r.other(r.current), int(act.get("target", -1)), named_i)
-			r.turn_count += 1
 		else:
 			r.play_action(r.current, act.type, act.get("target", -1))
 		diffs.append(r.score(SIDE_YOU) - r.score(SIDE_OPP))
@@ -291,6 +317,19 @@ func _hand_count(r: RefCounted, side: String, type: String) -> int:
 	return n
 
 
+func _clinch_count(r: RefCounted, side: String, phase: String) -> int:
+	if r.has_method("clinch_legal_count"):
+		return int(r.clinch_legal_count(side, phase))
+	return _hand_count(r, side, TYPE_TEZIS if phase == "await_defend" else TYPE_RAZBOR)
+
+
+func _clinch_targets_frame(r: RefCounted) -> bool:
+	if not r.clinch_active() or String(r.clinch.get("phase", "")) != "await_defend":
+		return false
+	var sequence: Array = r.clinch.get("sequence", [])
+	return sequence.size() == 1
+
+
 func _hand_has_steal(r: RefCounted, side: String) -> bool:
 	for c in r.sides[side].hand:
 		if c.type == TYPE_RAZBOR and bool(c.get("steals", false)):
@@ -301,13 +340,17 @@ func _hand_has_steal(r: RefCounted, side: String) -> bool:
 ## Индекс чужой рамки, которую можно ЗАХВАТИТЬ Кражей (тезисы <= порога захвата, не
 ## укреплена). Берём самую жирную из досягаемых (больше отнято). -1 если нет.
 func _capturable_target(r: RefCounted, side: String) -> int:
-	var thresh: int = r.capture_threshold(side)
+	return _capturable_target_at_reach(r, side, int(r.capture_threshold(side)))
+
+
+func _capturable_target_at_reach(r: RefCounted, side: String, reach: int) -> int:
 	var lines: Array = r.sides[r.other(side)].lines
 	var best := -1
 	var best_theses := 0
 	for i in lines.size():
 		var t := int(lines[i].theses)
-		if t <= thresh and t > best_theses and not r.is_fortified(lines[i]):
+		if t <= reach and t > best_theses and not r.is_fortified(lines[i]) and \
+				not bool(lines[i].get("braced", false)):
 			best = i
 			best_theses = t
 	return best

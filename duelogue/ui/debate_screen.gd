@@ -161,7 +161,10 @@ func _on_clinch_pass() -> void:
 
 
 func _on_opening_pressed(headline_id: String) -> void:
-	controller.choose_opening(headline_id)
+	if String(controller.opening_stage()) == "reserve":
+		controller.choose_opening_reserve(headline_id)
+	else:
+		controller.choose_opening(headline_id)
 
 
 func _new_match() -> void:
@@ -314,9 +317,10 @@ func _refresh() -> void:
 	var opp_n: int = model.score(ZalV3.SIDE_OPP)
 	var live_report: Dictionary = controller.outcome_report()
 	var live_board: Dictionary = live_report.get("board", {})
-	_score_label.text = "ДОСКА B %+d  ·  рамки %d:%d  ·  тезисы %d:%d  (опп:вы)" % [
+	_score_label.text = "ДОСКА B %+d  ·  рамки %d:%d  ·  тезисы %d:%d  ·  РЕЗЕРВ U %d:%d  (опп:вы)" % [
 		int(live_board.get("score", 0)), opp_n, you_n,
-		int(live_board.get("opp_theses", 0)), int(live_board.get("you_theses", 0))]
+		int(live_board.get("opp_theses", 0)), int(live_board.get("you_theses", 0)),
+		int(model.reserve_count(ZalV3.SIDE_OPP)), int(model.reserve_count(ZalV3.SIDE_YOU))]
 	var audience: Dictionary = controller.audience_state()
 	var z: int = int(audience.get("lean", model.zal()))
 	# Зал-гейт: фаворит зала — под прицелом (его тонкие рамки захватываемы целиком).
@@ -388,10 +392,16 @@ func _update_controls() -> void:
 	_hint_label.text = String(controller.hint_text)
 	_cancel_btn.visible = mode == "target"
 	if mode == "clinch_defend":
-		_clinch_btn.text = "Пропустить (снос пройдёт)"
+		var opener: bool = not model.clinch.is_empty() and \
+			(model.clinch.get("sequence", []) as Array).size() == 1
+		var sequence: Array = model.clinch.get("sequence", [])
+		var incoming: Dictionary = sequence.back() if not sequence.is_empty() else {}
+		var outcome := "украдёт" if bool(incoming.get("steals", false)) else "снимет"
+		_clinch_btn.text = "Пропустить (исходная атака ударит в рамку)" if opener else \
+			"Пропустить (эта карта %s тезис; цепь дойдёт до рамки)" % outcome
 		_clinch_btn.visible = true
 	elif mode == "clinch_attack":
-		_clinch_btn.text = "Остановиться"
+		_clinch_btn.text = "Остановиться (ответный тезис закроет всю цепь)"
 		_clinch_btn.visible = true
 	else:
 		_clinch_btn.visible = false
@@ -423,13 +433,33 @@ func _update_bar(z: int) -> void:
 		_fill.color = Color.html("#" + COL_OPP)
 
 
-## Риски порогов зал-гейта на баре (±gate_x, ±gate_y): стрелка пересекла риску —
-## у фаворита зашатались рамки. Создаются один раз, позиционируются с баром.
+## Every public crowd threshold in the wobble band gets a tick: with 2..4 these
+## are ±2, ±3 and ±4, matching capture reach 2, 3 and 4.
+static func wobble_tick_levels(gate_start: int, gate_end: int) -> Array:
+	if gate_start <= 0:
+		return []
+	var levels: Array = []
+	var band_end := maxi(gate_start, gate_end)
+	for lv in range(band_end, gate_start - 1, -1):
+		levels.append(-lv)
+	for lv in range(gate_start, band_end + 1):
+		levels.append(lv)
+	return levels
+
+
 func _update_gate_ticks(center: float, bar_w: float, bar_y: float, bar_h: float, zmax: int) -> void:
 	if model.gate_x <= 0:
+		for old_tick in _gate_ticks:
+			(old_tick.node as ColorRect).queue_free()
+		_gate_ticks.clear()
 		return
+	var levels := wobble_tick_levels(int(model.gate_x), int(model.gate_y))
+	var current_levels: Array = _gate_ticks.map(func(gt): return int(gt.level))
+	if current_levels != levels:
+		for old_tick in _gate_ticks:
+			(old_tick.node as ColorRect).queue_free()
+		_gate_ticks.clear()
 	if _gate_ticks.is_empty():
-		var levels := [-model.gate_y, -model.gate_x, model.gate_x, model.gate_y]
 		for lv in levels:
 			if lv == 0:
 				continue
@@ -658,12 +688,11 @@ func _clinch_sequence(cl: Dictionary) -> Array:
 	var fallback: Array = []
 	var razbors := int(cl.get("r_count", 0))
 	var theses := int(cl.get("t_added", 0))
-	var steals_left := int(cl.get("atk_steals", 0))
 	for i in razbors:
-		var steals := bool(cl.get("init_steals", false)) if i == 0 else steals_left > 0
+		# Старый стейт надёжно знает только объект первой атаки; эффект поздней карты
+		# нельзя восстанавливать из агрегата без нарушения карточной семантики.
+		var steals := bool(cl.get("init_steals", false)) if i == 0 else false
 		fallback.append({"type": ZalV3.TYPE_RAZBOR, "steals": steals})
-		if steals:
-			steals_left = maxi(0, steals_left - 1)
 		if i < theses:
 			fallback.append({"type": ZalV3.TYPE_TEZIS, "stolen": false})
 	return fallback
@@ -688,10 +717,33 @@ static func board_card_position_x(ltr_x: float, content_width: float,
 	return outer_pad + content_width - CARD_W - ltr_x if reverse else ltr_x
 
 
+## The board reads the object stack when it exists. Defensive theses added by the
+## active clinch live at its top but render in the clinch overlay, so the base frame
+## gets only the prefix below them. Scalars are a fallback for legacy state only.
+static func visible_thesis_tokens(line: Dictionary, contested_t_added: int = 0) -> Array:
+	var hidden := maxi(0, contested_t_added)
+	var raw_stack: Variant = line.get("thesis_stack", null)
+	if raw_stack is Array:
+		var stack: Array = raw_stack
+		var visible_count := maxi(0, stack.size() - mini(hidden, stack.size()))
+		var visible: Array = []
+		for i in visible_count:
+			visible.append(stack[i])
+		return visible
+
+	var total := maxi(0, int(line.get("theses", 0)) - hidden)
+	var stolen := clampi(int(line.get("stolen", 0)), 0, total)
+	var fallback: Array = []
+	for i in total:
+		fallback.append({
+			"thesis_id": "",
+			"stolen": i >= total - stolen,
+		})
+	return fallback
+
+
 func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 	trailing_pad: float = FRAME_GROUP_PAD, reverse: bool = false) -> Control:
-	var total_theses := int(line.theses)
-	var stolen := int(line.get("stolen", 0))
 	var closed: bool = line.closed
 	# Контест и счётчик ударов — прямо из стейта клинча в ядре (model.clinch).
 	var cl: Dictionary = model.clinch
@@ -701,13 +753,15 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 		var my_side := ZalV3.SIDE_YOU if is_you else ZalV3.SIDE_OPP
 		contested = (int(cl.idx) == idx) and (String(cl.defender) == my_side)
 		razbors = int(cl.r_count)
-	var theses := total_theses - (int(cl.get("t_added", 0)) if contested else 0)
-	theses = maxi(0, theses)
+	var thesis_tokens := visible_thesis_tokens(line,
+		int(cl.get("t_added", 0)) if contested else 0)
+	var theses := thesis_tokens.size()
 	var targetable: bool = String(controller.input_mode()) == "target" and not is_you
-	# «Шатается» = рамку прямо сейчас может забрать целиком Кража соперника её владельца:
-	# тезисов не больше его порога захвата (базово 1; зал-гейт против фаворита поднимает до 2/3).
-	var raider := ZalV3.SIDE_OPP if is_you else ZalV3.SIDE_YOU
-	var shaky: bool = not contested and theses <= int(model.capture_threshold(raider))
+	# View reads the exact object thickness and the single public audience-only reach.
+	# Temporary/permanent frame protection remains a separate eligibility flag.
+	var owner := ZalV3.SIDE_YOU if is_you else ZalV3.SIDE_OPP
+	var threat: Dictionary = controller.frame_threat(owner, idx)
+	var shaky: bool = not contested and bool(threat.get("shaky", false))
 
 	var shown := mini(theses, 8)
 	var width := _group_width(theses, gap)
@@ -726,14 +780,20 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 	uc.position = Vector2(board_card_position_x(0.0, width, trailing_pad, reverse), y0)
 	var frame_info := claim_txt
 	if shaky:
-		frame_info += "\n\n⚠ ШАТАЕТСЯ: Кража соперника заберёт эту рамку целиком."
+		frame_info += "\n\n⚠ ШАТАЕТСЯ · КРАЖА ДО %d\nКрен к владельцу %+d · толщина %d" % [
+			int(threat.get("reach", 1)), int(threat.get("owner_favor", 0)),
+			int(threat.get("thickness", theses))]
 		var warn := Label.new()
-		warn.text = "шатается"
+		warn.text = "ШАТАЕТСЯ · КРАЖА ДО %d" % int(threat.get("reach", 1))
 		warn.position = Vector2(uc.position.x - 2.0, y0 - 18.0)
 		warn.add_theme_font_size_override("font_size", 10)
 		warn.add_theme_color_override("font_color", Color.html("#" + COL_RAZBOR))
 		warn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		root.add_child(warn)
+	if bool(threat.get("last_frame", false)) and bool(model.board_ko_enabled):
+		frame_info += "\n\nЕсли рамка падёт: %s · резерв %d" % [
+			("НОКАУТ" if bool(threat.get("lethal", false)) else "восстановление следующим ходом"),
+			int(threat.get("reserve", 0))]
 	if targetable:
 		uc.disabled = false
 		uc.pressed.connect(_on_target_pressed.bind(idx))
@@ -745,11 +805,13 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 	root.add_child(uc)
 
 	for j in shown:
-		var is_st := j >= (theses - mini(stolen, theses))
+		var thesis_token: Dictionary = thesis_tokens[j]
+		var is_st := bool(thesis_token.get("stolen", false))
 		# Украденный тезис сохраняет тезисную пиктограмму; золото живёт только в окантовке.
 		var tc := _mkcard({"type": ZalV3.TYPE_TEZIS, "steals": false},
 			(COL_GOLD if is_st else COL_TEZIS), closed, false)
 		tc.set_meta("board_stolen", is_st)
+		tc.set_meta("thesis_id", String(thesis_token.get("thesis_id", "")))
 		tc.set_meta("board_card", true)
 		tc.set_meta("board_role", "thesis")
 		# Первый тезис стоит ПОСЛЕ рамки; отрицательный gap уплотняет только следующие
@@ -854,16 +916,20 @@ func _rebuild_hand() -> void:
 		_layout_hand()
 		return
 	var hand: Array = model.sides[ZalV3.SIDE_YOU].hand
+	var recovery: Array = model.recovery_indices(ZalV3.SIDE_YOU) if mode == "reframe" else []
+	var legal: Array = model.legal_types(ZalV3.SIDE_YOU) if mode == "move" else []
 	for i in hand.size():
 		var card: Dictionary = hand[i]
 		var enabled := false
 		match mode:
 			"clinch_defend":
-				enabled = card.type == ZalV3.TYPE_TEZIS
+				enabled = model.clinch_card_legal(card)
 			"clinch_attack":
-				enabled = card.type == ZalV3.TYPE_RAZBOR
+				enabled = model.clinch_card_legal(card)
 			"move":
-				enabled = true
+				enabled = card.type in legal
+			"reframe":
+				enabled = i in recovery
 		# Лицо карты: у ванильной — точная контекстная реплика; у ИМЕННОЙ (zal_run §2) —
 		# имя и правило-твист. Для Разбора точная строка появляется на рамке после выбора карты,
 		# потому что содержание зависит от цели.
@@ -873,7 +939,11 @@ func _rebuild_hand() -> void:
 		# схлопываем их все в одинаковый заголовок «Установка».
 		var title: String = String(card.get("name", "")) if is_named or \
 			card.type == ZalV3.TYPE_USTANOVKA else nar.device_label(card)
+		if bool(card.get("opening_reserve", false)):
+			title = "Резервная рамка"
 		var body: String = String(card.get("text", "")) if is_named else controller.hand_preview(i)
+		if bool(card.get("opening_reserve", false)) and String(card.get("claim", "")) != "":
+			body = "«%s»\n\nПУБЛИЧНЫЙ РЕЗЕРВ" % String(card.claim)
 		var btn: Button = CardScene.instantiate()
 		_hand_row.add_child(btn)  # в дерево ДО setup: слои шаблона резолвятся в _ready
 		btn.setup(card, title, body, enabled)
@@ -881,6 +951,8 @@ func _rebuild_hand() -> void:
 		var bubble_body := String(card.get("text", "")) if is_named else "СКАЖЕТЕ:\n%s" % body
 		if is_named:
 			bubble_body = "Именной приём\n\n" + bubble_body
+		if mode == "reframe" and not enabled and card.type == ZalV3.TYPE_USTANOVKA:
+			bubble_body += "\n\nЭта рамка пришла после падения и сейчас не может спасти позицию."
 		_attach_card_bubble(btn, bubble_title, bubble_body, card)
 		_attach_hand_motion(btn)
 		btn.pressed.connect(_on_hand_pressed.bind(i))
@@ -890,19 +962,23 @@ func _rebuild_hand() -> void:
 ## На нулевом ходе смысловые варианты выглядят как обычные карты-Установки в руке.
 ## Это presentation-only: контроллер по-прежнему не списывает U-карту и не двигает ход.
 func _rebuild_opening_hand() -> void:
+	var reserve_stage := String(controller.opening_stage()) == "reserve"
 	for option in controller.opening_options():
 		var axes: Array = nar.axis_tags(option.get("preferred_axes", []))
 		var focus := "" if axes.is_empty() else "Фокус: %s" % " · ".join(axes)
-		var card := {"type": ZalV3.TYPE_USTANOVKA, "name": "Стартовая рамка", "steals": false}
+		var card := {"type": ZalV3.TYPE_USTANOVKA,
+			"name": ("Резерв" if reserve_stage else "Активная рамка"), "steals": false}
 		var body := "«%s»" % String(option.get("text", ""))
 		if focus != "":
 			body += "\n\n" + focus
 		var btn: Button = CardScene.instantiate()
 		_hand_row.add_child(btn)
-		btn.setup(card, "Установка", body, true)
-		var bubble_body := "%s\n\n%s\n\nНе расходует карту или ход. Сила Базы остаётся 1." % [
-			"«%s»" % String(option.get("text", "")), focus]
-		_attach_card_bubble(btn, "Стартовая Установка", bubble_body, card)
+		btn.setup(card, "Резерв" if reserve_stage else "Активная рамка", body, true)
+		var rule := "Останется видимой в H5, займёт обычный слот и спасёт от KO. Восстановление потратит весь ход." \
+			if reserve_stage else "Не расходует карту или ход. Сила Базы остаётся 1. После выбора закрепите резерв."
+		var bubble_body := "%s\n\n%s\n\n%s" % [
+			"«%s»" % String(option.get("text", "")), focus, rule]
+		_attach_card_bubble(btn, "Резервная рамка" if reserve_stage else "Активная рамка", bubble_body, card)
 		_attach_hand_motion(btn)
 		btn.pressed.connect(_on_opening_pressed.bind(String(option.get("id", ""))))
 

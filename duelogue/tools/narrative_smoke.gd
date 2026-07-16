@@ -98,55 +98,74 @@ func _play_match(seed: int, theme: Dictionary) -> void:
 func _auto_clinch(attacker: String, defender: String, idx: int) -> void:
 	if idx < 0 or idx >= model.sides[defender].lines.size():
 		return
-	var initc: Dictionary = model.remove_attack(attacker, true)
+	var started: Dictionary = model.begin_clinch(attacker, defender, idx, true)
+	if started.is_empty():
+		return
+	var initc: Dictionary = started.card
 	var init_steals: bool = initc.get("steals", false)
 	var line: Dictionary = model.sides[defender].lines[idx]
 	var target_claim := _claim_of(defender, line)
-	var is_callback: bool = line.closed
+	var is_callback: bool = bool(started.get("is_callback", false))
 	var atk_word := "кража" if init_steals else "разбор"
 	var cb := "←старая" if is_callback else ""
 	_say(attacker, nar.refute_line(attacker, target_claim, _top_stmt(line), initc, is_callback, line),
 		"t%d %s clinch→%s[%d] %s%s" % [model.turn_count, attacker, defender, idx, atk_word, cb])
 
-	var t_added := 0
-	var r_count := 1
-	var atk_steals := 1 if init_steals else 0
+	var resolved: Dictionary = {}
 	var guard := 0
-	while guard < 40:
+	while model.clinch_active() and guard < 40:
 		guard += 1
-		if model.has_card(defender, ZalV3.TYPE_TEZIS) and ai.def_will_clinch(model, defender, line):
-			var dc: Dictionary = model.remove_card_of(defender, ZalV3.TYPE_TEZIS)
-			line.theses = int(line.theses) + 1
-			t_added += 1
-			var stmt: Dictionary = nar.make_statement(defender, dc, _used_axes(line), "hold", line)
-			_push_stmt(line, stmt)
-			_say(defender, stmt.text, "    hold %s [%s]" % [defender, stmt.axis])
-		else:
+		var pending_side: String = model.clinch_pending_side()
+		var is_defend: bool = pending_side == defender
+		if not model.clinch_can_act(pending_side):
+			resolved = model.clinch_submit("pass", true, -1, "exhausted")
 			break
-		if model.has_card(attacker, ZalV3.TYPE_RAZBOR) and ai.atk_will_clinch(model, attacker, line):
-			var ac: Dictionary = model.remove_attack(attacker, true)
-			r_count += 1
-			if ac.get("steals", false):
-				atk_steals += 1
-			_say(attacker, nar.press_line(attacker, _top_stmt(line), ac),
-				"    press %s %s" % [attacker, ("кража" if ac.get("steals", false) else "разбор")])
-			_emotion_event(attacker, "clinch_pressure", 1, target_claim)
-			_emotion_event(defender, "clinch_pressure", 1, target_claim)
-		else:
+		var will_play: bool = ai.def_will_clinch(model, defender, line) if is_defend else \
+			ai.atk_will_clinch(model, attacker, line)
+		if not will_play:
+			resolved = model.clinch_submit("pass")
 			break
-
-	var info := {"side": attacker, "type": ZalV3.TYPE_RAZBOR}
-	model.clinch_finalize(attacker, defender, idx, t_added, r_count, info, atk_steals)
-	var landed := r_count > t_added
-	_narrate(nar.resolve_text(landed, info.get("removed", false), target_claim, int(info.get("stolen_count", 0)), not landed),
-		"    resolve t%d r%d %s%s%s" % [t_added, r_count,
+		var prefer: bool = true if is_defend else \
+			bool(ai.atk_prefer_steal(model, attacker, defender, idx))
+		var step: Dictionary = model.clinch_submit("play", prefer)
+		match String(step.get("event", "")):
+			"hold":
+				var dc: Dictionary = step.card
+				var stmt: Dictionary = nar.make_statement(defender, dc, _used_axes(line), "hold", line)
+				stmt["thesis_id"] = String(dc.get("thesis_id", ""))
+				_push_stmt(line, stmt)
+				_say(defender, stmt.text, "    hold %s [%s]" % [defender, stmt.axis])
+			"press":
+				var ac: Dictionary = step.card
+				_say(attacker, nar.press_line(attacker, _top_stmt(line), ac),
+					"    press %s %s" % [attacker,
+						("кража" if ac.get("steals", false) else "разбор")])
+				_emotion_event(attacker, "clinch_pressure", 1, target_claim)
+				_emotion_event(defender, "clinch_pressure", 1, target_claim)
+			"resolved":
+				resolved = step
+				break
+	if resolved.is_empty() and model.clinch_active():
+		resolved = model.clinch_submit("pass", true, -1, "exhausted")
+	var t_added := int(resolved.get("t_added", 0))
+	var r_count := int(resolved.get("r_count", 1))
+	var landed := bool(resolved.get("landed", r_count > t_added))
+	var info: Dictionary = resolved.get("info", {})
+	_narrate(nar.resolve_text(landed, info.get("removed", false), target_claim,
+		int(info.get("stolen_count", 0)), not landed, info),
+		"    resolve t%d r%d %s%s%s%s%s" % [t_added, r_count,
 			("landed" if landed else "withstand"),
 			(" removed" if info.get("removed", false) else ""),
-			(" stolen=%d" % int(info.get("stolen_count", 0)) if int(info.get("stolen_count", 0)) > 0 else "")])
+			(" stolen=%d" % int(info.get("stolen_count", 0)) if int(info.get("stolen_count", 0)) > 0 else ""),
+			(" captured" if info.get("captured", false) else ""),
+			(" capture_blocked=%s" % String(info.get("capture_block_reason", "unknown"))
+				if info.get("capture_blocked", false) else "")])
 	if not info.get("removed", false):
 		var stx: Array = line.get("statements", [])
-		while stx.size() > int(line.theses):
-			stx.pop_back()
+		var removed_ids: Array = info.get("removed_thesis_ids", [])
+		for si in range(stx.size() - 1, -1, -1):
+			if removed_ids.has(String((stx[si] as Dictionary).get("thesis_id", ""))):
+				stx.remove_at(si)
 	var strained_side := defender if landed else attacker
 	var stimulus := "attack_stalled"
 	if landed:
@@ -168,6 +187,7 @@ func _narrate_move(info: Dictionary) -> void:
 			var line: Dictionary = model.sides[side].lines[-1]
 			_claim_of(side, line)
 			var stmt: Dictionary = nar.make_statement(side, card, _used_axes(line), "assert", line)
+			stmt["thesis_id"] = String(info.get("thesis_id", ""))
 			_push_stmt(line, stmt)
 			_say(side, stmt.text, "t%d %s тезис[%s/%s]" % [model.turn_count, side, stmt.device, stmt.axis])
 		ZalV3.TYPE_USTANOVKA:

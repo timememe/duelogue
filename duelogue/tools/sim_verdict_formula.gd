@@ -286,11 +286,12 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 		return super.begin_clinch(attacker, defender, idx, prefer_steal, hand_index)
 
 	func clinch_submit(decision: String, prefer_steal: bool = true,
-			hand_index: int = -1) -> Dictionary:
+			hand_index: int = -1, stop_reason: String = "voluntary") -> Dictionary:
 		var attacker := String(clinch.get("attacker", ""))
 		var defender := String(clinch.get("defender", ""))
 		var was_press := decision == "play" and String(clinch.get("phase", "")) == "await_attack"
-		var result: Dictionary = super.clinch_submit(decision, prefer_steal, hand_index)
+		var result: Dictionary = super.clinch_submit(decision, prefer_steal, hand_index,
+			stop_reason)
 		if was_press and String(result.get("event", "")) == "press":
 			if emotion != null and (pressure_mode == "each_pair" \
 					or pressure_mode == "once" and _pressure_rounds == 0):
@@ -302,8 +303,8 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 
 	## Один завершённый публичный обмен = базовый голос победителю плюс видимые эффекты
 	## реакционных карт. Вся сцена коммитится в зал один раз, с публичным капом ±scene_cap.
-	func _finish_clinch() -> Dictionary:
-		var result: Dictionary = super._finish_clinch()
+	func _finish_clinch(stop_reason: String = "voluntary") -> Dictionary:
+		var result: Dictionary = super._finish_clinch(stop_reason)
 		if String(result.get("event", "")) != "resolved" or hall_cap <= 0:
 			return result
 		var exchange_winner := String(result.attacker) if bool(result.landed) else String(result.defender)
@@ -576,6 +577,234 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 		return ""
 
 
+## Измерительный адаптер production-контракта KO / резерва / audience-only wobble.
+##
+## 1. В стартовой H5 можно гарантировать ровно одну Установку: это публичный резерв,
+##    занимающий обычный слот руки. Остальные Установки возвращаются в добор.
+## 2. Потеря последней рамки снимает snapshot руки ДО refill. Установка в snapshot даёт
+##    redeploy целым следующим ходом; отсутствие Установки немедленно завершает матч KO.
+## 3. Толстая рамка шатается только по snapshot начала клинча. Ответный T гасит сам
+##    opener-Кражу; любой поздний press целится уже в этот T и не проверяет рамку повторно.
+##
+## Мехрезолв не дублируется: наследник только считает
+## диагностику, чтобы balance-suite проверял тот же RulesCore, что живая битва.
+class ReserveKoRules extends FormulaRules:
+	var snapshot_ko_enabled := true
+	var guaranteed_reserve_enabled := true
+	var wobble_enabled := true
+	var knockdowns := 0
+	var reserve_saves := 0
+	var redeploys := 0
+	var snapshot_kos := 0
+	var early_kos := 0
+	var ko_action_sum := 0
+	var wobble_windows := 0
+	var wobble_reach_2 := 0
+	var wobble_reach_3 := 0
+	var wobble_reach_4 := 0
+	var thick_attempts := 0
+	var thick_captures := 0
+	var thick_attempts_behind := 0
+	var thick_attempts_tied := 0
+	var thick_attempts_ahead := 0
+	var thick_captures_behind := 0
+	var thick_captures_tied := 0
+	var thick_captures_ahead := 0
+	var four_captures := 0
+	var defense_denials := 0
+	var telegraphed_captures := 0
+	var untelegraphed_captures := 0
+	var voluntary_stalls := 0
+	var exhausted_stalls := 0
+	var capture_at_1 := 0
+	var capture_at_2 := 0
+	var capture_at_3 := 0
+	var capture_at_4 := 0
+	var capture_at_5_plus := 0
+
+	var _scene_initial_thickness := 0
+	var _scene_reach := 1
+	var _scene_board_relation := 0
+
+	func configure_candidate(config: Dictionary) -> void:
+		snapshot_ko_enabled = bool(config.get("snapshot_ko", true))
+		guaranteed_reserve_enabled = bool(config.get("guaranteed_reserve", true))
+		wobble_enabled = bool(config.get("wobble", true))
+		board_ko_enabled = snapshot_ko_enabled
+		gate_x = int(config.get("gate_x", 2)) if wobble_enabled else 0
+		gate_y = int(config.get("gate_y", 4)) if wobble_enabled else 0
+
+	## Opening уже выставил Базу. Из U3 оставляем в H5 ровно одну рамку и четыре
+	## не-рамки; выбор тематического имени механически нейтрален для этого полигона.
+	func prepare_opening_reserves() -> void:
+		if not guaranteed_reserve_enabled:
+			return
+		for side in [SIDE_YOU, SIDE_OPP]:
+			Deck.prepare_opening_reserve(sides[side], hand_size)
+
+	func begin_turn(side: String) -> String:
+		if not snapshot_ko_enabled:
+			return super.begin_turn(side)
+		if game_over:
+			return "over"
+		var s: Dictionary = sides[side]
+		for ln in s.lines:
+			if ln.get("braced", false):
+				ln.braced = false
+		if s.lines.is_empty():
+			if recovery_pending(side) and not recovery_indices(side).is_empty():
+				s.passed = false
+				return "reframe"
+			_finish(other(side), "knockout")
+			return "ko"
+		_try_second_wind(s)
+		if legal_types(side).is_empty():
+			s.passed = true
+			if sides[other(side)].passed:
+				_end_by_decision()
+				return "end"
+			return "pass"
+		s.passed = false
+		return "ok"
+
+	func play_redeploy(side: String, hand_index: int) -> Dictionary:
+		var result: Dictionary = super.play_redeploy(side, hand_index)
+		if not result.is_empty():
+			redeploys += 1
+		return result
+
+	func capture_threshold(side: String) -> int:
+		if clinch_active() and String(clinch.get("attacker", "")) == side:
+			return int(clinch.get("capture_reach", 1))
+		# Between scenes AI reads current public Lean. Inside a clinch it reads the
+		# frozen reach above, so later audience reactions are not retroactive.
+		return super.capture_threshold(side)
+
+	## Snapshot берётся до снятия первой атаки и до любых реакций текущей сцены.
+	func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bool,
+			hand_index: int = -1) -> Dictionary:
+		_scene_initial_thickness = 0
+		_scene_board_relation = signi(score(attacker) - score(defender))
+		if idx >= 0 and idx < sides[defender].lines.size():
+			_scene_initial_thickness = int(sides[defender].lines[idx].theses)
+		var result: Dictionary = super.begin_clinch(attacker, defender, idx, prefer_steal,
+			hand_index)
+		if result.is_empty():
+			_clear_scene_snapshot()
+		else:
+			_scene_reach = int(clinch.get("capture_reach", 1))
+		return result
+
+	func _finish_clinch(stop_reason: String = "voluntary") -> Dictionary:
+		var initial := _scene_initial_thickness
+		var reach := _scene_reach
+		var result: Dictionary = super._finish_clinch(stop_reason)
+		if String(result.get("event", "")) == "resolved":
+			var info: Dictionary = result.get("info", {})
+			if String(info.get("stop_reason", result.get("stop_reason", "voluntary"))) == "exhausted":
+				exhausted_stalls += 1
+			else:
+				voluntary_stalls += 1
+			if bool(info.get("last_frame_lost", false)):
+				knockdowns += 1
+				if bool(info.get("recovery_pending", false)):
+					reserve_saves += 1
+				elif bool(info.get("knockout", false)):
+					snapshot_kos += 1
+					ko_action_sum += turn_count
+					if turn_count <= 3:
+						early_kos += 1
+			if reach > 1:
+				wobble_windows += 1
+				match reach:
+					2: wobble_reach_2 += 1
+					3: wobble_reach_3 += 1
+					4: wobble_reach_4 += 1
+			if wobble_enabled and initial > 1 and initial <= reach \
+					and (bool(info.get("capture_attempted", false)) \
+						or bool(info.get("parried_capture", false))):
+				thick_attempts += 1
+				match _scene_board_relation:
+					-1: thick_attempts_behind += 1
+					0: thick_attempts_tied += 1
+					1: thick_attempts_ahead += 1
+				if bool(info.get("captured", false)):
+					thick_captures += 1
+					match _scene_board_relation:
+						-1: thick_captures_behind += 1
+						0: thick_captures_tied += 1
+						1: thick_captures_ahead += 1
+					if initial >= 4:
+						four_captures += 1
+				elif bool(info.get("parried_capture", false)) \
+						or bool(info.get("capture_blocked", false)):
+					defense_denials += 1
+			if bool(info.get("captured", false)):
+				if bool(info.get("capture_attempted", false)) \
+						and int(info.get("protected_thickness", initial)) <= reach:
+					telegraphed_captures += 1
+				else:
+					untelegraphed_captures += 1
+				match initial:
+					1: capture_at_1 += 1
+					2: capture_at_2 += 1
+					3: capture_at_3 += 1
+					4: capture_at_4 += 1
+					_: capture_at_5_plus += 1
+		if game_over and end_reason == "knockout":
+			_record_terminal_board()
+		_clear_scene_snapshot()
+		return result
+
+	func _record_terminal_board() -> void:
+		final_board_diff = board_weight(SIDE_YOU) - board_weight(SIDE_OPP)
+		final_hall = zal()
+		final_heat = heat
+		final_mandate = signi(final_hall) * final_heat
+		fallback_margin = final_board_diff + final_mandate
+		final_clean_hall = clampi(clean_hall + zal_bias, -hall_cap, hall_cap)
+		var clean_mandate := signi(final_clean_hall) * clean_heat
+		match verdict_mode:
+			"board":
+				final_margin = final_board_diff
+				final_clean_margin = final_board_diff
+			"mandate":
+				final_margin = fallback_margin
+				final_clean_margin = final_board_diff + clean_mandate
+			_:
+				final_margin = final_board_diff + hall_weight * final_hall
+				final_clean_margin = final_board_diff + hall_weight * final_clean_hall
+		old_decision_winner = _old_winner_on_this_board()
+
+	func _clear_scene_snapshot() -> void:
+		_scene_initial_thickness = 0
+		_scene_reach = 1
+		_scene_board_relation = 0
+
+	func candidate_metrics() -> Dictionary:
+		return {
+			"knockdowns": knockdowns, "reserve_saves": reserve_saves,
+			"redeploys": redeploys, "snapshot_kos": snapshot_kos,
+			"early_kos": early_kos, "ko_action_sum": ko_action_sum,
+			"wobble_windows": wobble_windows, "wobble_reach_2": wobble_reach_2,
+			"wobble_reach_3": wobble_reach_3, "wobble_reach_4": wobble_reach_4,
+			"thick_attempts": thick_attempts, "thick_captures": thick_captures,
+			"thick_attempts_behind": thick_attempts_behind,
+			"thick_attempts_tied": thick_attempts_tied,
+			"thick_attempts_ahead": thick_attempts_ahead,
+			"thick_captures_behind": thick_captures_behind,
+			"thick_captures_tied": thick_captures_tied,
+			"thick_captures_ahead": thick_captures_ahead,
+			"four_captures": four_captures, "defense_denials": defense_denials,
+			"telegraphed_captures": telegraphed_captures,
+			"untelegraphed_captures": untelegraphed_captures,
+			"voluntary_stalls": voluntary_stalls, "exhausted_stalls": exhausted_stalls,
+			"capture_at_1": capture_at_1, "capture_at_2": capture_at_2,
+			"capture_at_3": capture_at_3, "capture_at_4": capture_at_4,
+			"capture_at_5_plus": capture_at_5_plus,
+		}
+
+
 ## Сим-бот, осведомлённый о новой целевой функции 3Р+1Т+1З. Это НЕ production-ai:
 ## нужен, чтобы старая эвристика «ширина сначала» не подменяла тест нового вердикта.
 class VerdictAi extends "res://duelogue/core/ai/ai.gd":
@@ -584,6 +813,7 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 	const STYLE_VERDICT_9 := "verdict9"
 	const STYLE_VERDICT_CALM := "verdict_calm"
 	const STYLE_VERDICT_PROVOKE := "verdict_provoke"
+	const STYLE_VERDICT_RESERVE := "verdict_reserve"
 	const W_FRAME := 3
 
 	func pick(r: RefCounted, side: String, style: String) -> Dictionary:
@@ -637,26 +867,32 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 		# Отстающий обязан уменьшать чужой вес; лидер сначала капитализирует рамки/тезисы.
 		if _deficit_attack(style, margin) and legal.has(TYPE_RAZBOR) and target >= 0:
 			return {"type": TYPE_RAZBOR, "target": target}
-		if legal.has(TYPE_USTANOVKA):
+		var holds_last_reserve := style == STYLE_VERDICT_RESERVE \
+			and _v_hand_count(r, side, TYPE_USTANOVKA) <= 1 and not mine.is_empty()
+		if legal.has(TYPE_USTANOVKA) and not holds_last_reserve:
 			return {"type": TYPE_USTANOVKA}
 		if legal.has(TYPE_TEZIS):
 			return {"type": TYPE_TEZIS}
 		if legal.has(TYPE_RAZBOR) and target >= 0:
 			return {"type": TYPE_RAZBOR, "target": target}
+		# Если кроме последнего резерва ничего не осталось, вечный пас хуже осознанного риска.
+		if legal.has(TYPE_USTANOVKA):
+			return {"type": TYPE_USTANOVKA}
 		return {"type": legal[0]}
 
 	func def_will_clinch(r: RefCounted, defender: String, line: Dictionary) -> bool:
 		if not _is_verdict_style(String(style_of.get(defender, ""))):
 			return super.def_will_clinch(r, defender, line)
-		var tez := _v_hand_count(r, defender, TYPE_TEZIS)
+		var tez := _v_clinch_count(r, defender, "await_defend")
 		if tez == 0:
 			return false
-		var attacker: String = String(r.other(defender))
-		# Захват переводит вес дважды — такое окно закрывается обязательно.
-		if int(line.theses) <= int(r.capture_threshold(attacker)):
+		var frame_target := _clinch_targets_frame(r)
+		# Захват переводит вес дважды — но угрозой является конкретная opener-Кража,
+		# а не любая R-карта на рамке той же толщины.
+		if frame_target and bool(r.clinch.get("opening_capture_eligible", false)):
 			return true
 		# Последняя позиция не является KO, но без неё оставшиеся Тезисы становятся мёртвыми.
-		if r.sides[defender].lines.size() == 1:
+		if frame_target and r.sides[defender].lines.size() == 1 and int(line.theses) <= 1:
 			return true
 		# Дешёвую рамку не перекармливаем последним Тезисом; дорогую/закрытую сохраняем.
 		var line_value := W_FRAME + int(line.theses)
@@ -665,17 +901,11 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 	func atk_will_clinch(r: RefCounted, attacker: String, line: Dictionary) -> bool:
 		if not _is_verdict_style(String(style_of.get(attacker, ""))):
 			return super.atk_will_clinch(r, attacker, line)
-		var atk := _v_hand_count(r, attacker, TYPE_RAZBOR)
+		var atk := _v_clinch_count(r, attacker, "await_attack")
 		if atk == 0:
 			return false
-		if int(line.theses) <= 1:
-			return true
 		if String(style_of.get(attacker, "")) == STYLE_VERDICT_PROVOKE \
 				and _v_strain(r, r.other(attacker)) >= 4:
-			return true
-		# Активная Кража и досягаемая рамка оправдывают дожим даже последней атакой.
-		if int(r.clinch.get("atk_steals", 0)) > 0 \
-				and int(line.theses) <= int(r.capture_threshold(attacker)):
 			return true
 		# В минусе принимаем риск; в плюсе нужен резерв, чтобы не отдать зал пустым ралли.
 		if _v_margin(r, attacker) < 0:
@@ -685,6 +915,8 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 	func atk_prefer_steal(r: RefCounted, attacker: String, defender: String, idx: int) -> bool:
 		if not _is_verdict_style(String(style_of.get(attacker, ""))):
 			return super.atk_prefer_steal(r, attacker, defender, idx)
+		if r.clinch_active() and String(r.clinch.get("phase", "")) == "await_attack":
+			return false
 		var lines: Array = r.sides[defender].lines
 		if idx < 0 or idx >= lines.size():
 			return false
@@ -741,6 +973,11 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 				n += 1
 		return n
 
+	func _v_clinch_count(r: RefCounted, side: String, phase: String) -> int:
+		if r.has_method("clinch_legal_count"):
+			return int(r.clinch_legal_count(side, phase))
+		return _v_hand_count(r, side, TYPE_TEZIS if phase == "await_defend" else TYPE_RAZBOR)
+
 	func _v_has_steal(r: RefCounted, side: String) -> bool:
 		for card in r.sides[side].hand:
 			if String(card.type) == TYPE_RAZBOR and bool(card.get("steals", false)):
@@ -754,7 +991,8 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 
 	func _is_verdict_style(style: String) -> bool:
 		return style == STYLE_VERDICT or style == STYLE_VERDICT_5 or style == STYLE_VERDICT_9 \
-			or style == STYLE_VERDICT_CALM or style == STYLE_VERDICT_PROVOKE
+			or style == STYLE_VERDICT_CALM or style == STYLE_VERDICT_PROVOKE \
+			or style == STYLE_VERDICT_RESERVE
 
 	func _deficit_attack(style: String, margin: int) -> bool:
 		match style:
@@ -766,6 +1004,8 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 				return margin <= -9
 			STYLE_VERDICT_PROVOKE:
 				return margin < 0
+			STYLE_VERDICT_RESERVE:
+				return margin < 0
 			_:
 				return false
 
@@ -774,6 +1014,13 @@ func _ready() -> void:
 	_ai = VerdictAi.new()
 	await get_tree().process_frame
 	var t0 := Time.get_ticks_msec()
+	if OS.get_cmdline_user_args().has("--ko-wobble"):
+		print("\n=== SNAPSHOT KO · РЕЗЕРВ РАМКИ · ШАТАНИЕ ===")
+		_ko_wobble_suite()
+		print("\nПроверки инвариантов: %s" % ("OK" if _failures == 0 else "ОШИБОК: %d" % _failures))
+		print("=== КОНЕЦ (%.1f c) ===\n" % ((Time.get_ticks_msec() - t0) / 1000.0))
+		get_tree().quit(0 if _failures == 0 else 1)
+		return
 	if OS.get_cmdline_user_args().has("--emotion-candidate"):
 		print("\n=== ЕДИНЫЙ ВЕРДИКТ · КАНДИДАТ ЭМОЦИОНАЛЬНОГО ЗАЛА ===")
 		_emotion_candidate_suite()
@@ -863,7 +1110,12 @@ func _new_match(config: Dictionary, first: String, deck_you: Dictionary = {},
 		m.reset(first, U, T, R, HAND, BASE, KOMI, STEAL, FORT,
 			CLINCH, FREEZE, CAPTURE, GATE_X, GATE_Y, SW, LOOT, OLD_ZAL_KO, OLD_ZAL_HOLD)
 	else:
-		var fm := FormulaRules.new()
+		var fm: RefCounted
+		if bool(config.get("snapshot_ko", false)) or bool(config.get("wobble", false)) \
+				or bool(config.get("guaranteed_reserve", false)):
+			fm = ReserveKoRules.new()
+		else:
+			fm = FormulaRules.new()
 		fm.hall_cap = int(config.cap)
 		fm.frame_weight = int(config.wf)
 		fm.thesis_weight = int(config.wt)
@@ -871,11 +1123,14 @@ func _new_match(config: Dictionary, first: String, deck_you: Dictionary = {},
 		var gate_x := int(config.get("gate_x", GATE_X))
 		var gate_y := int(config.get("gate_y", GATE_Y))
 		fm.reset(first, U, T, R, HAND, BASE, KOMI, STEAL, FORT,
-			CLINCH, FREEZE, CAPTURE, gate_x, gate_y, SW, LOOT, 0, 1)
+			CLINCH, FREEZE, CAPTURE, gate_x, gate_y, SW, LOOT, 0, 1,
+			bool(config.get("snapshot_ko", false)))
 		fm.configure_emotion(String(config.get("emotion_mode", "none")), emotion_seed,
 			int(config.get("hall_per_clinch", 1)), int(config.get("scene_cap", 2)),
 			String(config.get("pressure_mode", "each_pair")))
 		fm.configure_crowd(config)
+		if fm.has_method("configure_candidate"):
+			fm.configure_candidate(config)
 		var opening_hall := int(config.get("opening_hall", 0))
 		if opening_hall != 0:
 			fm.hall = opening_hall if first == Rules.SIDE_YOU else -opening_hall
@@ -885,6 +1140,8 @@ func _new_match(config: Dictionary, first: String, deck_you: Dictionary = {},
 		m.sides[Rules.SIDE_YOU] = _build_side(deck_you)
 	if not deck_opp.is_empty():
 		m.sides[Rules.SIDE_OPP] = _build_side(deck_opp)
+	if m.has_method("prepare_opening_reserves"):
+		m.prepare_opening_reserves()
 	return m
 
 
@@ -1608,6 +1865,234 @@ func _crowd_pendulum_suite() -> void:
 			_pct(int(selected.strict_neutral), strict_resolved)])
 		print("среди партий с логическим победителем; %.2f разворота зала за матч, corr(B,Lean)=%+.3f." % [
 			float(selected.crowd_reversals) / n, _correlation(selected)])
+
+
+# --------------------------------------- snapshot KO + резерв + шатание рамок ---
+
+func _candidate_config(label: String, snapshot_ko: bool, reserve: bool,
+		wobble: bool) -> Dictionary:
+	var config := _production_crowd_config()
+	config["id"] = "ko_wobble_candidate" if snapshot_ko or reserve or wobble \
+		else "ko_wobble_reference"
+	config["label"] = label
+	config["selected_production"] = false
+	# 2 — публичный Lean-порог нового composure gate; старый второй порог не используется.
+	config["gate_x"] = 2 if wobble else 0
+	config["gate_y"] = 4 if wobble else 0
+	config["snapshot_ko"] = snapshot_ko
+	config["guaranteed_reserve"] = reserve
+	config["wobble"] = wobble
+	return config
+
+
+func _blank_candidate_metrics() -> Dictionary:
+	return {
+		"wins_you": 0, "wins_opp": 0, "draws": 0, "first_wins": 0, "decisive": 0,
+		"turns": 0, "guard_hits": 0, "captures": 0, "capture_theses": 0,
+		"hall_abs": 0, "heat_sum": 0,
+		"knockdowns": 0, "reserve_saves": 0, "redeploys": 0,
+		"snapshot_kos": 0, "early_kos": 0, "ko_action_sum": 0,
+		"wobble_windows": 0, "wobble_reach_2": 0, "wobble_reach_3": 0,
+		"wobble_reach_4": 0, "thick_attempts": 0, "thick_captures": 0,
+		"thick_attempts_behind": 0, "thick_attempts_tied": 0,
+		"thick_attempts_ahead": 0, "thick_captures_behind": 0,
+		"thick_captures_tied": 0, "thick_captures_ahead": 0,
+		"four_captures": 0, "defense_denials": 0,
+		"telegraphed_captures": 0, "untelegraphed_captures": 0,
+		"voluntary_stalls": 0, "exhausted_stalls": 0,
+		"capture_at_1": 0, "capture_at_2": 0, "capture_at_3": 0,
+		"capture_at_4": 0, "capture_at_5_plus": 0,
+	}
+
+
+func _run_candidate_cell(config: Dictionary, style_you: String, style_opp: String,
+		matches: int, deck_you: Dictionary = {}, deck_opp: Dictionary = {},
+		salt: int = 0) -> Dictionary:
+	var out := _blank_candidate_metrics()
+	for i in matches:
+		_seed_for(i, salt)
+		var first := Rules.SIDE_YOU if i % 2 == 0 else Rules.SIDE_OPP
+		var m := _new_match(config, first, deck_you, deck_opp,
+			_seed_value(i, salt) ^ 0x5EEDC0DE)
+		var result: Dictionary = _ai.simulate(m, style_you, style_opp)
+		var win := String(result.winner)
+		if win == Rules.SIDE_YOU:
+			out.wins_you += 1
+		elif win == Rules.SIDE_OPP:
+			out.wins_opp += 1
+		else:
+			out.draws += 1
+		if win != "":
+			out.decisive += 1
+			if win == first:
+				out.first_wins += 1
+		out.turns += int(result.turns)
+		out.guard_hits += int(int(result.turns) >= 400)
+		out.captures += int(result.captures)
+		out.capture_theses += int(result.capture_theses)
+		out.hall_abs += absi(int(m.final_hall))
+		out.heat_sum += int(m.final_heat)
+		if m.has_method("candidate_metrics"):
+			var diagnostics: Dictionary = m.candidate_metrics()
+			for key in diagnostics:
+				out[key] = int(out.get(key, 0)) + int(diagnostics[key])
+
+	if int(out.early_kos) > int(out.snapshot_kos) \
+			or int(out.redeploys) > int(out.reserve_saves) \
+			or int(out.thick_captures) > int(out.thick_attempts) \
+			or int(out.four_captures) > int(out.thick_captures):
+		_failures += 1
+	if int(out.thick_attempts_behind) + int(out.thick_attempts_tied) + \
+			int(out.thick_attempts_ahead) != int(out.thick_attempts) or \
+			int(out.thick_captures_behind) + int(out.thick_captures_tied) + \
+			int(out.thick_captures_ahead) != int(out.thick_captures):
+		_failures += 1
+	if bool(config.get("snapshot_ko", false)) or bool(config.get("wobble", false)) \
+			or bool(config.get("guaranteed_reserve", false)):
+		var histogram_total := int(out.capture_at_1) + int(out.capture_at_2) \
+			+ int(out.capture_at_3) + int(out.capture_at_4) + int(out.capture_at_5_plus)
+		if int(out.untelegraphed_captures) != 0 or histogram_total != int(out.captures) \
+				or int(out.telegraphed_captures) != int(out.captures):
+			_failures += 1
+	return out
+
+
+func _candidate_winrate(m: Dictionary) -> float:
+	var n := int(m.wins_you) + int(m.wins_opp) + int(m.draws)
+	return 0.5 if n == 0 else (float(m.wins_you) + 0.5 * float(m.draws)) / float(n)
+
+
+func _candidate_pair_rate(a: Dictionary, b: Dictionary) -> float:
+	# A: тестируемая политика/колода играет YOU; B: она играет OPP.
+	return (_candidate_winrate(a) + (1.0 - _candidate_winrate(b))) * 50.0
+
+
+func _ko_wobble_suite() -> void:
+	var quick := OS.get_cmdline_user_args().has("--quick")
+	var n := mini(mirror_matches, 300) if quick else mirror_matches
+	var dn := mini(deck_matches, 250) if quick else deck_matches
+	if OS.get_cmdline_user_args().has("--long") and not quick:
+		n *= 3
+		dn *= 3
+
+	print("Контракт: H5 = 1 гарантированная Установка + 4 боевые карты; резерв можно сыграть.")
+	print("Последняя рамка: snapshot руки до refill → U = redeploy всем следующим ходом, иначе KO.")
+	print("Шатание snapshot начала клинча: Lean к владельцу 0–1/2/3/4+ → reach 1/2/3/4.")
+	print("Heat, strain и положение по доске reach не меняют; ответный T гасит opener.\n")
+
+	var rows := [
+		{"label": "без KO, random H5", "config": _candidate_config("reference", false, false, false),
+			"style": "verdict"},
+		{"label": "snapshot KO, random", "config": _candidate_config("snapshot", true, false, false),
+			"style": "verdict"},
+		{"label": "KO + reserve, spend", "config": _candidate_config("reserve", true, true, false),
+			"style": "verdict"},
+		{"label": "KO + wobble, spend", "config": _candidate_config("candidate", true, true, true),
+			"style": "verdict"},
+		{"label": "KO + wobble, hold", "config": _candidate_config("candidate", true, true, true),
+			"style": "verdict_reserve"},
+	]
+	var results: Array = []
+	print("--- A. ЗЕРКАЛО, %d МАТЧЕЙ/СТРОКУ ---" % n)
+	print("%-24s | 1-й ход | KO | ран≤3 | ход KO | ходы | паден. | спас. | refrm | cap" % "вариант")
+	for ri in rows.size():
+		var row: Dictionary = rows[ri]
+		var m := _run_candidate_cell(row.config, row.style, row.style, n, {}, {}, 2000 + ri)
+		results.append(m)
+		var avg_ko_action := float(m.ko_action_sum) / float(maxi(1, int(m.snapshot_kos)))
+		print("%-24s | %7.1f%% | %4.1f%% | %5.1f%% | %6.1f | %4.1f | %6.2f | %5.2f | %5.2f | %4.2f" % [
+			String(row.label), _pct(int(m.first_wins), int(m.decisive)),
+			_pct(int(m.snapshot_kos), n), _pct(int(m.early_kos), n), avg_ko_action,
+			float(m.turns) / n, float(m.knockdowns) / n, float(m.reserve_saves) / n,
+			float(m.redeploys) / n, float(m.captures) / n])
+	print("Ранний KO считается на 1–3-м полном действии; ход восстановления входит в длину матча.\n")
+
+	print("--- B. ДОСЯГАЕМОСТЬ ШАТАНИЯ ---")
+	print("%-24s | окон/матч | reach 2/3/4 | попытки >1 | трофеи >1 | def deny | cap4" % "вариант")
+	for ri in rows.size():
+		var row: Dictionary = rows[ri]
+		var m: Dictionary = results[ri]
+		print("%-24s | %9.3f | %4d/%4d/%3d | %10.3f | %9.3f | %8.3f | %4d" % [
+			String(row.label), float(m.wobble_windows) / n, int(m.wobble_reach_2),
+			int(m.wobble_reach_3), int(m.wobble_reach_4), float(m.thick_attempts) / n,
+			float(m.thick_captures) / n, float(m.defense_denials) / n,
+			int(m.four_captures)])
+	print("Окно — любой открытый клинч с reach>1; попытка — Кража прямо в исходно толстую")
+	print("рамку в reach; def deny — ответный Тезис погасил именно эту карту Кражи.\n")
+	print("%-24s | thick attempts B/T/A | thick captures B/T/A" % "вариант")
+	for ri in rows.size():
+		var row: Dictionary = rows[ri]
+		var m: Dictionary = results[ri]
+		print("%-24s | %6d/%d/%d | %6d/%d/%d" % [
+			String(row.label), int(m.thick_attempts_behind), int(m.thick_attempts_tied),
+			int(m.thick_attempts_ahead), int(m.thick_captures_behind),
+			int(m.thick_captures_tied), int(m.thick_captures_ahead)])
+	print("B/T/A = атакующий отстаёт / равен / впереди по числу рамок в момент opener.\n")
+	print("%-24s | tele/untele | толщина cap 1/2/3/4/5+ | stop vol/exh" % "вариант")
+	for ri in range(1, rows.size()):
+		var row: Dictionary = rows[ri]
+		var m: Dictionary = results[ri]
+		print("%-24s | %4d/%-6d | %4d/%4d/%4d/%4d/%-3d | %6.2f/%5.2f" % [
+			String(row.label), int(m.telegraphed_captures), int(m.untelegraphed_captures),
+			int(m.capture_at_1), int(m.capture_at_2), int(m.capture_at_3),
+			int(m.capture_at_4), int(m.capture_at_5_plus),
+			float(m.voluntary_stalls) / n, float(m.exhausted_stalls) / n])
+	print("tele = непогашенная Кража целилась прямо в рамку при thickness ≤ snapshot reach; untele должен оставаться 0.\n")
+
+	var candidate := _candidate_config("candidate", true, true, true)
+	var hold_you := _run_candidate_cell(candidate, "verdict_reserve", "verdict", n, {}, {}, 2100)
+	var hold_opp := _run_candidate_cell(candidate, "verdict", "verdict_reserve", n, {}, {}, 2100)
+	print("--- C. ЦЕНА ЭКОНОМИКИ РУКИ ---")
+	print("hold против spend, парно по обеим сторонам: %.1f%% побед hold" % [
+		_candidate_pair_rate(hold_you, hold_opp)])
+	print("hold сохраняет последнюю U, пока есть другой легальный глагол; spend строит ширину как текущий бот.\n")
+
+	var decks := [
+		{"label": "канон 3/8/9", "u": 3, "t": 8, "r": 9, "steals": 2},
+		{"label": "глубина 2/12/6", "u": 2, "t": 12, "r": 6, "steals": 2},
+		{"label": "ширина 5/7/8", "u": 5, "t": 7, "r": 8, "steals": 2},
+		{"label": "разбор 2/6/12", "u": 2, "t": 6, "r": 12, "steals": 2},
+		{"label": "смешанная 4/9/7", "u": 4, "t": 9, "r": 7, "steals": 2},
+	]
+	print("--- D. ОБОЙМЫ ПРОТИВ КАНОНА, HOLD-ПОЛИТИКА, %d×2 ---" % dn)
+	print("%-20s | winrate | KO | ран≤3 | cap | thick cap | cap4" % "тестируемая обойма")
+	for di in decks.size():
+		var deck: Dictionary = decks[di]
+		var a := _run_candidate_cell(candidate, "verdict_reserve", "verdict_reserve", dn,
+			deck, {}, 2200 + di)
+		var b := _run_candidate_cell(candidate, "verdict_reserve", "verdict_reserve", dn,
+			{}, deck, 2200 + di)
+		var total_matches := 2 * dn
+		print("%-20s | %6.1f%% | %4.1f%% | %5.1f%% | %4.2f | %9.3f | %4d" % [
+			String(deck.label), _candidate_pair_rate(a, b),
+			_pct(int(a.snapshot_kos) + int(b.snapshot_kos), total_matches),
+			_pct(int(a.early_kos) + int(b.early_kos), total_matches),
+			float(int(a.captures) + int(b.captures)) / total_matches,
+			float(int(a.thick_captures) + int(b.thick_captures)) / total_matches,
+			int(a.capture_at_4) + int(b.capture_at_4)])
+	print("Сторожа гипотезы: KO 10–25%; ранний KO ≤5%; первый ход 45–55%; cap4 только через")
+	print("публичное окно reach=4. Выход за коридор — результат теста, не авто-подгонка правил.\n")
+
+	print("--- E. СТИЛИ ПРОТИВ HOLD-КАНДИДАТА, %d×2 ---" % dn)
+	print("%-10s | paired win | KO | ран≤3 | cap | thick cap | cap4" % "стиль")
+	for si in ["wide", "aggro"]:
+		var a := _run_candidate_cell(candidate, si, "verdict_reserve", dn, {}, {},
+			2300 + (0 if si == "wide" else 1))
+		var b := _run_candidate_cell(candidate, "verdict_reserve", si, dn, {}, {},
+			2300 + (0 if si == "wide" else 1))
+		var total_matches := 2 * dn
+		print("%-10s | %9.1f%% | %4.1f%% | %5.1f%% | %4.2f | %9.3f | %4d" % [
+			si, _candidate_pair_rate(a, b),
+			_pct(int(a.snapshot_kos) + int(b.snapshot_kos), total_matches),
+			_pct(int(a.early_kos) + int(b.early_kos), total_matches),
+			float(int(a.captures) + int(b.captures)) / total_matches,
+			float(int(a.thick_captures) + int(b.thick_captures)) / total_matches,
+			int(a.capture_at_4) + int(b.capture_at_4)])
+	var guard_hits := 0
+	for m in results:
+		guard_hits += int((m as Dictionary).guard_hits)
+	guard_hits += int(hold_you.guard_hits) + int(hold_opp.guard_hits)
+	print("\nGuard 400 действий: %d срабатываний в зеркалах/проверке политик." % guard_hits)
 
 
 func _emotion_candidate_suite() -> void:

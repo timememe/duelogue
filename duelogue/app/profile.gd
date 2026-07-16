@@ -22,7 +22,7 @@ const OPP_STYLES := ["smart", "balanced", "aggro", "tall", "wide"]
 var deck := {}
 var settings := {
 	"opp_style": "smart", "chars_per_sec": 30.0, "cutscenes": true,
-	"outcome_profile": "vector_conduct", "outcome_contract_version": 2,
+	"outcome_profile": "combat_cohesion", "outcome_contract_version": 3,
 }
 
 
@@ -50,6 +50,7 @@ func deck_summary() -> String:
 
 func set_deck(d: Dictionary) -> void:
 	deck = d.duplicate(true)
+	deck["u"] = maxi(1, int(deck.get("u", 1)))
 	save_profile()
 
 
@@ -86,9 +87,13 @@ func load_profile() -> void:
 		deck = classic()
 		for k in loaded:
 			deck[k] = loaded[k]
+		# Новый opening требует физическую рамку-резерв. Старые экспериментальные U0
+		# нормализуем один раз вместо зависания второго выбора.
+		deck["u"] = maxi(1, int(deck.get("u", 1)))
 	if d.get("settings") is Dictionary:
 		var ls: Dictionary = d.settings
-		var old_contract := int(ls.get("outcome_contract_version", 0)) < 2
+		var contract_version := int(ls.get("outcome_contract_version", 0))
+		var old_contract := contract_version < 2
 		for k in ls:
 			settings[k] = ls[k]
 		# Одноразово переводим только прежний дефолт. После этой отметки пользователь может
@@ -97,6 +102,13 @@ func load_profile() -> void:
 			if String(settings.get("outcome_profile", "")) == "vector_reaction":
 				settings["outcome_profile"] = "vector_conduct"
 			settings["outcome_contract_version"] = 2
+			save_profile()
+		# v3 включает новый связный боевой луп. Переводим только прежний дефолт; явно
+		# выбранные диагностические/legacy-профили остаются выбором игрока.
+		if contract_version < 3:
+			if String(settings.get("outcome_profile", "")) == "vector_conduct":
+				settings["outcome_profile"] = "combat_cohesion"
+			settings["outcome_contract_version"] = 3
 			save_profile()
 
 

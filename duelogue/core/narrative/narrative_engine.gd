@@ -281,7 +281,7 @@ const RES_REMOVED := [
 	"Позиция «%s» рассыпалась на глазах у зала.",
 ]
 const RES_SHAKEN := [
-	"Довод снят, рамка «%s» зашаталась.",
+	"Довод снят, рамка «%s» ослабла.",
 	"Минус довод: «%s» держится на честном слове.",
 	"Укол прошёл — «%s» просела.",
 ]
@@ -797,19 +797,46 @@ func press_line(attacker: String, target_stmt: Dictionary, card: Dictionary) -> 
 
 ## Итог клинча — голос зала. Если в ралли была зацепка (HIT) — закрытие ссылается на неё:
 ## снос → «вопрос остался без ответа», устояла → «на каждый выпад нашёлся довод».
-func resolve_text(landed: bool, removed: bool, claim: String, stolen: int, def_held: bool) -> String:
+func resolve_text(landed: bool, removed: bool, claim: String, stolen: int, def_held: bool,
+		info: Dictionary = {}) -> String:
 	var s := ""
 	if landed:
 		s = _pick(RES_REMOVED if removed else RES_SHAKEN) % claim
-		if stolen > 0:
+		if info.get("captured", false):
+			if info.get("capture_reactivated", false):
+				s += " Ответный тезис снят, исходная Кража снова открылась — рамка перехвачена целиком."
+			else:
+				s += " Кража прошла — рамка перехвачена целиком."
+			if stolen > 0:
+				s += " По пути перехвачено ответных тезисов: %d." % stolen
+		elif stolen > 0 and int(info.get("parried_steals", 0)) == 0:
 			s += " (перехвачено себе: %d)" % stolen
+		if info.get("capture_blocked", false):
+			match String(info.get("capture_block_reason", "")):
+				"out_of_reach":
+					var protected := int(info.get("protected_thickness", 0))
+					var reach := int(info.get("capture_reach", 0))
+					s += " Полный захват не открылся: толщина %d выше досягаемости %d." % [
+						protected, reach]
+				"fortified":
+					s += " Захват сорван: рамка укреплена."
+				"braced":
+					s += " Захват сорван особой защитой рамки."
+				_:
+					s += " Полный захват рамки сорван защитой."
 		var hook := String(_rally.get("hook", ""))
 		if HOOK_CLOSE.has(hook):
 			s += " " + String(HOOK_CLOSE[hook])
 	else:
 		s = _pick(RES_HELD) % claim
+		if int(info.get("parried_steals", 0)) > 0:
+			s += " Кража погашена ответным тезисом."
 		if String(_rally.get("hook", "")) != "":
 			s += " " + _pick(HOOK_CLOSE_HELD)
+	if info.get("socratic", false):
+		s += " Сократическая ловушка забрала именно первый сохранившийся ответный тезис."
+	elif info.get("socratic_expired", false):
+		s += " Ответный тезис уже снят другой картой — ловушка не перескочила на рамку."
 	_rally = {}
 	return s
 
@@ -856,9 +883,9 @@ func _attack_line(attacker: String, target_claim: String, target_stmt: Dictionar
 	var hook := String(HOOK_OF.get(dev, ""))
 	var scheme := String(target_stmt.get("device", ""))
 	var is_hit := not steals and hook != "" and scheme != "" and (OPEN_HOOKS.get(scheme, []) as Array).has(hook)
-	if is_hit:
-		_rally.hook = hook
-		_rally.obj = String(SCHEME_OBJ.get(scheme, "довод"))
+	# Закрывашка принадлежит текущей карте, а не старой погашенной атаке в том же ралли.
+	_rally.hook = hook if is_hit else ""
+	_rally.obj = String(SCHEME_OBJ.get(scheme, "довод")) if is_hit else ""
 	# Стейт говорящего: панч — вспышка; кража и попадание в зацепку — «подловил»; иначе атака.
 	if tier >= 3:
 		_mood = "burst"

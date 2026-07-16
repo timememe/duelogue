@@ -43,14 +43,15 @@ var fortify_threshold := 0
 ## clinch_freeze — заморозка добора на время воли (бой из руки, аггро может выдохнуться).
 var clinch_enabled := false
 var clinch_freeze := true
-## Захват рамки (teardown-рычаг против храповика): Кража, снёсшая ПОСЛЕДНИЙ тезис рамки,
-## переносит рамку к атакующему (−1 оппоненту, +1 себе), а не просто сносит её.
+## Захват рамки (teardown-рычаг против храповика): только разблокированная Кража, сыгранная
+## прямо в рамку в пределах reach, переносит её атакующему (−1 оппоненту, +1 себе).
+## Ответный Тезис накрывает именно её; поздняя атака снимает exact T, после чего unwind
+## снова открывает исходную Кражу по рамке.
 ## 0 — выкл; 1 — приходит ЗАКРЫТЫМ трофеем; 2 — приходит АКТИВНОЙ (закрывает прежнюю активную).
 var capture_mode := 0
-## Зал-гейт 2A (асимметрия в пользу отстающего): чем сильнее зал кренится ПРОТИВ стороны,
-## тем толще рамки, которые её Кража забирает ЦЕЛИКОМ. Базовый порог захвата 1 (рамка с
-## 1 тезисом — текущее поведение трофея); при крене >= gate_x порог 2; >= gate_y — порог 3.
-## gate_x = 0 — гейт выключен. Порог обязан рендериться на рамках (маркер «шатается»).
+## Audience wobble band. A one-thesis frame is always exposed. If public Lean favours
+## the frame owner, every point in [gate_x..gate_y] raises direct Theft reach by one:
+## defaults 2->2, 3->3, 4+->4. gate_x=0 disables only the extra crowd reach.
 var gate_x := 0
 var gate_y := 0
 ## Второе дыхание (топливо финала): когда у стороны пусты И рука, И добор, она вытягивает
@@ -86,6 +87,10 @@ var external_zal_cap := ZAL_MAX
 var board_ko_enabled := true
 ## Розыгрыши именных приёмов за партию по сторонам (диагностика сима/плейтеста).
 var named_played := {}
+## Тезис — не только число на рамке, а конкретный объект карты. Скалярные theses/stolen
+## остаются совместимым read-model для UI и старых симов; авторитетный порядок хранится
+## в line.thesis_stack (снизу вверх), а thesis_id связывает карту, реплику и цель эффекта.
+var _thesis_serial := 0
 
 
 func reset(
@@ -116,6 +121,7 @@ func reset(
 	external_zal = 0
 	external_zal_cap = ZAL_MAX
 	named_played = {SIDE_YOU: 0, SIDE_OPP: 0}
+	_thesis_serial = 0
 	captures = 0
 	capture_theses = 0
 	clinch = {}
@@ -142,6 +148,108 @@ func score(side: String) -> int:
 	return sides[side].lines.size()
 
 
+func _next_thesis_id() -> String:
+	_thesis_serial += 1
+	return "thesis_%d" % _thesis_serial
+
+
+func _thesis_token(card: Dictionary = {}) -> Dictionary:
+	var token: Dictionary = card if not card.is_empty() else Deck.make_card(TYPE_TEZIS, 0)
+	token["type"] = TYPE_TEZIS
+	if String(token.get("name", "")) == "":
+		token["name"] = "Тезис"
+	if String(token.get("thesis_id", "")) == "":
+		token["thesis_id"] = _next_thesis_id()
+	return token
+
+
+## Лениво мигрирует старую рамку {theses, stolen} в стек объектов. Если тест/ран-слой
+## напрямую поправил совместимый скаляр, стек один раз догоняет его; все штатные мутации
+## ниже меняют объект и тут же пересчитывают скаляры обратно.
+func _ensure_thesis_stack(line: Dictionary) -> Array:
+	var wanted := maxi(0, int(line.get("theses", 0)))
+	var wanted_stolen := clampi(int(line.get("stolen", 0)), 0, wanted)
+	var stack: Array = line.get("thesis_stack", [])
+	while stack.size() < wanted:
+		stack.append(_thesis_token())
+	while stack.size() > wanted:
+		stack.pop_back()
+	for raw in stack:
+		_thesis_token(raw as Dictionary)
+	var actual_stolen := 0
+	for raw in stack:
+		if bool((raw as Dictionary).get("stolen", false)):
+			actual_stolen += 1
+	if actual_stolen < wanted_stolen:
+		for i in range(stack.size() - 1, -1, -1):
+			var token: Dictionary = stack[i]
+			if not bool(token.get("stolen", false)):
+				token["stolen"] = true
+				actual_stolen += 1
+				if actual_stolen == wanted_stolen:
+					break
+	elif actual_stolen > wanted_stolen:
+		for i in range(stack.size() - 1, -1, -1):
+			var token: Dictionary = stack[i]
+			if bool(token.get("stolen", false)):
+				token.erase("stolen")
+				actual_stolen -= 1
+				if actual_stolen == wanted_stolen:
+					break
+	line["thesis_stack"] = stack
+	return stack
+
+
+func _sync_thesis_scalars(line: Dictionary) -> void:
+	var stack: Array = line.get("thesis_stack", [])
+	line["theses"] = stack.size()
+	var stolen := 0
+	for raw in stack:
+		if bool((raw as Dictionary).get("stolen", false)):
+			stolen += 1
+	line["stolen"] = stolen
+
+
+func _thesis_ids(line: Dictionary) -> Array:
+	var ids: Array = []
+	for raw in line.get("thesis_stack", []):
+		ids.append(String((raw as Dictionary).get("thesis_id", "")))
+	return ids
+
+
+func _put_thesis(line: Dictionary, card: Dictionary = {}) -> Dictionary:
+	var stack := _ensure_thesis_stack(line)
+	var token := _thesis_token(card)
+	stack.append(token)
+	line["thesis_stack"] = stack
+	_sync_thesis_scalars(line)
+	return token
+
+
+func _take_top_thesis(line: Dictionary) -> Dictionary:
+	var stack := _ensure_thesis_stack(line)
+	if stack.is_empty():
+		return {}
+	var token: Dictionary = stack.pop_back()
+	line["thesis_stack"] = stack
+	_sync_thesis_scalars(line)
+	return token
+
+
+func _take_thesis_object(line: Dictionary, thesis_id: String) -> Dictionary:
+	var stack := _ensure_thesis_stack(line)
+	if thesis_id == "":
+		return {}
+	for i in stack.size():
+		var token: Dictionary = stack[i]
+		if String(token.get("thesis_id", "")) == thesis_id:
+			stack.remove_at(i)
+			line["thesis_stack"] = stack
+			_sync_thesis_scalars(line)
+			return token
+	return {}
+
+
 ## Сила рамки = тезисы; при включённом укреплении краденые считаются вдвое (lекарство 3).
 ## Когда укрепление выкл — stolen чисто визуальный (золотая карта), на силу не влияет.
 func line_strength(line: Dictionary) -> int:
@@ -151,37 +259,49 @@ func line_strength(line: Dictionary) -> int:
 	return s
 
 
-## Украденный тезис кладётся в АКТИВНУЮ установку вора (мгновенный +1 на доску).
-## Если рамок нет — в колоду добора (страховка). Помечается stolen (визуал).
-func _give_stolen(attacker: String, info: Dictionary) -> void:
+## Украденный объект тезиса кладётся в АКТИВНУЮ установку вора (мгновенный +1 на доску).
+## Если рамок нет — в колоду добора (страховка). Карта сохраняет thesis_id: кража
+## переносит объект, а не создаёт безымянную единицу силы.
+func _give_stolen(attacker: String, info: Dictionary, card: Dictionary = {}) -> void:
+	var stolen_card := _thesis_token(card)
+	stolen_card["stolen"] = true
 	var al: Array = sides[attacker].lines
 	if al.size() > 0:
-		al[-1].theses = int(al[-1].theses) + 1
-		al[-1].stolen = int(al[-1].get("stolen", 0)) + 1
+		_put_thesis(al[-1], stolen_card)
 	else:
-		sides[attacker].draw.append({"type": TYPE_TEZIS, "name": "Перехват", "stolen": true})
+		sides[attacker].draw.append(stolen_card)
 	info["stolen"] = true
+	info["stolen_thesis_id"] = String(stolen_card.get("thesis_id", ""))
 
 
 func is_fortified(line: Dictionary) -> bool:
 	return fortify_threshold > 0 and line_strength(line) >= fortify_threshold
 
 
-## Порог захвата стороны: Кража забирает целиком рамку с тезисами <= порога.
-## 1 — базовый (только рамка на последнем тезисе); крен зала ПРОТИВ стороны поднимает
-## порог до 2 (>= gate_x) и 3 (>= gate_y). 0 — захват выключен вовсе.
-func capture_threshold(side: String) -> int:
+## Public crowd pressure on a frame owner. Positive means the audience currently
+## favours that owner and therefore wants to see the favourite challenged.
+func audience_favor_for(owner: String) -> int:
+	return zal() if owner == SIDE_YOU else -zal()
+
+
+## Maximum frame thickness an ordinary direct Theft can capture from this owner.
+## One-thesis frames are always in reach. With the default public band 2..4 every
+## further point of audience favour opens one further thickness: 2->2, 3->3, 4+->4.
+## Heat, emotion strain and board score deliberately do not alter this public number.
+func frame_capture_reach(owner: String) -> int:
 	if capture_mode == 0:
 		return 0
-	var thresh := 1
+	var reach := 1
 	if gate_x <= 0:
-		return thresh
-	var crank := -zal() if side == SIDE_YOU else zal()  # крен зала против side
-	if crank >= gate_x:
-		thresh += 1
-	if gate_y > gate_x and crank >= gate_y:
-		thresh += 1
-	return thresh
+		return reach
+	var band_end := maxi(gate_x, gate_y)
+	var owner_favor := maxi(0, audience_favor_for(owner))
+	return reach + clampi(owner_favor - gate_x + 1, 0, band_end - gate_x + 1)
+
+
+## Compatibility API for callers that reason from the raider's side.
+func capture_threshold(attacker: String) -> int:
+	return frame_capture_reach(other(attacker))
 
 
 ## Сброс — публичная стопка стороны: её потраченные карты атаки, сбитые с её рамок тезисы
@@ -215,22 +335,35 @@ func _try_second_wind(s: Dictionary) -> void:
 
 ## Захват: переносит павшую рамку defender[idx] на сторону attacker (−1 ему, +1 себе).
 ## capture_mode 1 — закрытым трофеем; 2 — активной (закрывает прежнюю активную атакующего).
-func _capture_frame(attacker: String, defender: String, idx: int, info: Dictionary) -> void:
+func _capture_frame(attacker: String, defender: String, idx: int,
+		info: Dictionary) -> Dictionary:
 	var dl: Array = sides[defender].lines
 	if idx < 0 or idx >= dl.size():
-		return
+		return {}
 	var captured: Dictionary = dl[idx]
+	var captured_stack := _ensure_thesis_stack(captured)
 	dl.remove_at(idx)
 	if capture_loot == 1:
 		# «Переманил вместе с аргументами»: рамка переходит со всеми стоящими тезисами
 		# (мин. 1 — добытый) — вся её сила в глазах зала теперь твоя.
-		captured.theses = maxi(1, int(captured.theses))
+		if captured_stack.is_empty():
+			captured_stack.append(_thesis_token())
 	else:
-		# Голый трофей: лишние тезисы поверх добытого — в сброс владельца.
-		for k in int(captured.theses) - 1:
-			_discard(defender, Deck.make_card(TYPE_TEZIS, k))
-		captured.theses = 1
-	captured.stolen = int(captured.theses)   # визуал: вся стопка — добыча (золото)
+		# Голый трофей: один конкретный опорный тезис переходит с рамкой, остальные
+		# реальные объекты карт уходят в сброс прежнего владельца.
+		while captured_stack.size() > 1:
+			_discard(defender, captured_stack.pop_back())
+		if captured_stack.is_empty():
+			captured_stack.append(_thesis_token())
+	for raw in captured_stack:
+		var token: Dictionary = raw
+		token["stolen"] = true
+		token.erase("statement")
+	var captured_ids: Array = []
+	for raw in captured_stack:
+		captured_ids.append(String((raw as Dictionary).get("thesis_id", "")))
+	captured["thesis_stack"] = captured_stack
+	_sync_thesis_scalars(captured)
 	captures += 1
 	capture_theses += int(captured.theses)
 	# Опциональная презентационная нагрузка нарративного слоя (реплики чужой рамки)
@@ -242,11 +375,46 @@ func _capture_frame(attacker: String, defender: String, idx: int, info: Dictiona
 		if not al.is_empty():
 			al[-1].closed = true
 		captured.closed = false
+		al.append(captured)
 	else:
 		captured.closed = true
-	al.append(captured)
+		# Active frame is always lines[-1]. A closed trophy must not steal that slot:
+		# insert it immediately before the current active frame.
+		if al.is_empty():
+			captured.closed = false
+			al.append(captured)
+		else:
+			al.insert(al.size() - 1, captured)
 	info["captured"] = true
+	info["captured_thesis_ids"] = captured_ids
+	info["captured_thickness"] = captured_stack.size()
 	info["removed"] = true
+	_snapshot_last_frame_loss(defender, info)
+	return captured
+
+
+## Снимок делается в момент падения последней рамки — до любого добора. Рамка в руке
+## спасает от KO, но помечается для обязательного восстановления целым следующим ходом.
+func _snapshot_last_frame_loss(side: String, info: Dictionary) -> void:
+	if not sides[side].lines.is_empty():
+		return
+	info["last_frame_lost"] = true
+	var ready := 0
+	for card in sides[side].hand:
+		if String(card.get("type", "")) == TYPE_USTANOVKA:
+			ready += 1
+	info["recovery_available"] = ready
+	if not board_ko_enabled:
+		return
+	if ready <= 0:
+		info["knockout"] = true
+		_finish(other(side), "knockout")
+		return
+	for card in sides[side].hand:
+		if String(card.get("type", "")) == TYPE_USTANOVKA:
+			card["recovery_ready"] = true
+	sides[side]["recovery_pending"] = true
+	info["recovery_pending"] = true
 
 
 ## Сумма силы рамок стороны (для «блеска» / крена зала).
@@ -282,6 +450,10 @@ func clear_external_zal() -> void:
 func legal_types(side: String) -> Array:
 	var s: Dictionary = sides[side]
 	var out: Array = []
+	if bool(s.get("recovery_pending", false)):
+		if not recovery_indices(side).is_empty():
+			out.append(TYPE_USTANOVKA)
+		return out
 	var has := {TYPE_TEZIS: false, TYPE_RAZBOR: false, TYPE_USTANOVKA: false}
 	for c in s.hand:
 		has[c.type] = true
@@ -298,7 +470,7 @@ func legal_types(side: String) -> Array:
 ##   "over"     — игра уже кончена
 ##   "ko"       — сторона обнулена и не может развернуть рамку → она проиграла
 ##   "crowd"    — крен зала в пользу стороны >= zal_ko продержался круг → она ВЫИГРАЛА (TKO)
-##   "redeploy" — рамок не было, но в руке Установка: развернул её (ход потрачен)
+##   "reframe"  — последняя рамка потеряна, резерв в руке ждёт выбора (весь ход)
 ##   "end"      — оба спасовали → решение по «Ширине» (см. winner/end_reason)
 ##   "pass"     — сторона не может ходить (рука пуста), но партия продолжается
 ##   "ok"       — сторона должна выбрать действие
@@ -310,12 +482,11 @@ func begin_turn(side: String) -> String:
 	for ln in s.lines:
 		if ln.get("braced", false):
 			ln.braced = false
-	# Нокаут / страховка Установкой.
+	# Нокаут уже решён снимком в момент потери рамки; здесь — обязательный ход восстановления.
 	if s.lines.is_empty():
-		if _hand_has(side, TYPE_USTANOVKA):
-			play_action(side, TYPE_USTANOVKA)
+		if bool(s.get("recovery_pending", false)) and not recovery_indices(side).is_empty():
 			s.passed = false
-			return "redeploy"
+			return "reframe"
 		if board_ko_enabled:
 			_finish(other(side), "knockout")
 			return "ko"
@@ -351,21 +522,28 @@ func advance() -> void:
 ## Применить ОДНО действие. Для RAZBOR — снос одного тезиса БЕЗ воли (single-razbor).
 ## Волю клинча («разбор↔тезис») ведёт драйвер снаружи через remove_attack + clinch_finalize.
 func play_action(side: String, type: String, target: int = -1, hand_index: int = -1) -> Dictionary:
+	if game_over or not type in legal_types(side):
+		return {}
+	if hand_index >= 0:
+		var selected: Array = sides[side].hand
+		if hand_index >= selected.size() or String(selected[hand_index].get("type", "")) != type:
+			return {}
 	var info := {"side": side, "type": type, "name": "", "removed": false}
 	var s: Dictionary = sides[side]
 	match type:
 		TYPE_TEZIS:
 			var c := _remove_selected_card(side, TYPE_TEZIS, hand_index)
 			info.name = c.get("name", "")
-			s.lines[-1].theses = int(s.lines[-1].theses) + 1
-			if c.get("stolen", false):
-				s.lines[-1].stolen = int(s.lines[-1].get("stolen", 0)) + 1
+			var token := _put_thesis(s.lines[-1], c)
+			info["thesis_id"] = String(token.get("thesis_id", ""))
 		TYPE_USTANOVKA:
 			var c := _remove_selected_card(side, TYPE_USTANOVKA, hand_index)
 			info.name = c.get("name", "")
 			if not s.lines.is_empty():
 				s.lines[-1].closed = true
-			s.lines.append({"theses": 1, "closed": false, "name": info.name, "stolen": 0})
+			var new_line := {"theses": 1, "closed": false, "name": info.name, "stolen": 0}
+			_copy_claim(c, new_line)
+			s.lines.append(new_line)
 		TYPE_RAZBOR:
 			var c: Dictionary
 			if hand_index >= 0:
@@ -398,21 +576,28 @@ func _resolve_single_razbor(attacker: String, defender: String, target: int, inf
 	# Захват (базовый порог 1 = рамка на последнем тезисе; зал-гейт поднимает до 2/3).
 	# braced — именной «Перенос бремени»: рамка временно не захватывается (тезис снять можно).
 	if will_steal and int(line.theses) <= capture_threshold(attacker) and not line.get("braced", false):
+		info["affected_kind"] = "frame"
 		_capture_frame(attacker, defender, target, info)
 		return
-	line.theses = int(line.theses) - 1
+	var affected := _take_top_thesis(line)
+	if affected.is_empty():
+		info["affected_kind"] = ""
+		return
+	info["affected_kind"] = "thesis"
+	info["affected_thesis_id"] = String(affected.get("thesis_id", ""))
+	var removed_ids: Array = info.get("removed_thesis_ids", [])
+	removed_ids.append(String(affected.get("thesis_id", "")))
+	info["removed_thesis_ids"] = removed_ids
 	if will_steal:
-		_give_stolen(attacker, info)
+		_give_stolen(attacker, info, affected)
 	else:
-		_discard(defender, Deck.make_card(TYPE_TEZIS, 0))  # сбитый тезис — в сброс владельца
+		_discard(defender, affected)  # сбитый объект тезиса — в сброс владельца
 	if int(line.theses) <= 0:
 		# Рамка пала (обычным Разбором, либо Кражей при выключенном захвате).
 		_discard(defender, {"type": TYPE_USTANOVKA, "name": String(line.get("name", ""))})
 		sides[defender].lines.remove_at(target)
 		info["removed"] = true
-	else:
-		if int(line.get("stolen", 0)) > int(line.theses):
-			line.stolen = int(line.theses)
+		_snapshot_last_frame_loss(defender, info)
 
 
 # --- Именные приёмы (zal_run §2): розыгрыш по ИНДЕКСУ руки, диспатч по id твиста ---
@@ -447,17 +632,20 @@ func play_named(side: String, hand_index: int, target: int = -1) -> Dictionary:
 			_named_ad_hominem(side, target, info)
 		"strawman":
 			_discard(side, card)
-			_named_strawman(side, target, info)
+			_named_strawman(side, target, info, card)
 		"burden_shift":
 			var line: Dictionary = s.lines[-1]
-			line.theses = int(line.theses) + 1
+			var token := _put_thesis(line, card)
+			info["thesis_id"] = String(token.get("thesis_id", ""))
 			line.braced = true   # не захватывается до начала хода владельца (begin_turn снимет)
 			info["braced"] = true
 		"axiom":
 			if not s.lines.is_empty():
 				s.lines[-1].closed = true
-			s.lines.append({"theses": 2, "closed": false, "name": String(card.name),
-				"stolen": 0, "no_defend": true})
+			var axiom_line := {"theses": 2, "closed": false, "name": String(card.name),
+				"stolen": 0, "no_defend": true}
+			_copy_claim(card, axiom_line)
+			s.lines.append(axiom_line)
 		_:
 			pass
 	_refill(s)
@@ -487,6 +675,12 @@ func _named_gish(attacker: String, target: int, info: Dictionary) -> void:
 	for i in hits:
 		var sub := {}
 		_named_chip(opp, i, sub)
+		var removed_ids: Array = info.get("removed_thesis_ids", [])
+		removed_ids.append_array(sub.get("removed_thesis_ids", []))
+		info["removed_thesis_ids"] = removed_ids
+		if String(sub.get("affected_thesis_id", "")) != "":
+			info["affected_thesis_id"] = String(sub.affected_thesis_id)
+			info["affected_kind"] = "thesis"
 		if sub.get("removed", false):
 			info["removed"] = true
 		if info.get("target_name", "") == "":
@@ -512,22 +706,27 @@ func _named_ad_hominem(attacker: String, target: int, info: Dictionary) -> void:
 
 ## Соломенное чучело: Кража с порогом захвата +1 («длинная рука»), добыча приходит с −1
 ## тезисом (мин. 1). Вне досягаемости — обычная кража тезиса (ванильный резолв).
-func _named_strawman(attacker: String, target: int, info: Dictionary) -> void:
+func _named_strawman(attacker: String, target: int, info: Dictionary,
+		card: Dictionary) -> void:
 	var opp := other(attacker)
 	var lines: Array = sides[opp].lines
 	if target < 0 or target >= lines.size():
 		target = lines.size() - 1
 	var line: Dictionary = lines[target]
+	var capture_bonus := maxi(0, int(card.get("capture_bonus", 0)))
 	if capture_mode > 0 and not is_fortified(line) and not line.get("braced", false) \
-			and int(line.theses) <= capture_threshold(attacker) + 1:
+			and int(line.theses) <= capture_threshold(attacker) + capture_bonus:
 		info["target_name"] = line.name
-		_capture_frame(attacker, opp, target, info)
-		var cap: Dictionary = sides[attacker].lines[-1]
-		if int(cap.theses) > 1:
-			cap.theses = int(cap.theses) - 1
-			cap.stolen = mini(int(cap.get("stolen", 0)), int(cap.theses))
-			_discard(opp, Deck.make_card(TYPE_TEZIS, 0))
+		var cap: Dictionary = _capture_frame(attacker, opp, target, info)
+		var trim := maxi(0, int(card.get("capture_trim", 0)))
+		while trim > 0 and int(cap.theses) > 1:
+			var trimmed := _take_top_thesis(cap)
+			_discard(opp, trimmed)
+			trim -= 1
+		info["captured_thesis_ids"] = _thesis_ids(cap)
+		info["captured_thickness"] = int(cap.theses)
 		info["strawman"] = true
+		info["capture_bonus"] = capture_bonus
 	else:
 		_resolve_single_razbor(attacker, opp, target, info, true)
 
@@ -539,67 +738,199 @@ func _named_chip(owner: String, idx: int, info: Dictionary) -> void:
 	if idx < 0 or idx >= lines.size():
 		return
 	var line: Dictionary = lines[idx]
-	line.theses = int(line.theses) - 1
-	_discard(owner, Deck.make_card(TYPE_TEZIS, 0))
+	var affected := _take_top_thesis(line)
+	if affected.is_empty():
+		return
+	_discard(owner, affected)
+	info["affected_kind"] = "thesis"
+	info["affected_thesis_id"] = String(affected.get("thesis_id", ""))
+	var removed_ids: Array = info.get("removed_thesis_ids", [])
+	removed_ids.append(String(affected.get("thesis_id", "")))
+	info["removed_thesis_ids"] = removed_ids
 	info["target_name"] = line.name
 	if int(line.theses) <= 0:
 		_discard(owner, {"type": TYPE_USTANOVKA, "name": String(line.get("name", ""))})
 		lines.remove_at(idx)
 		info["removed"] = true
-	elif int(line.get("stolen", 0)) > int(line.theses):
-		line.stolen = int(line.theses)
+		_snapshot_last_frame_loss(owner, info)
 
 
-## Применяет исход клинча: финальный непогашенный разбор (если есть) снимает тезис и,
-## возможно, крадёт; упавшую рамку убирает; добор обеим. Зовётся драйвером воли (сцена/ai).
-func clinch_finalize(attacker: String, defender: String, line_index: int, t_added: int, r_count: int, info: Dictionary, atk_steals: int = 0) -> void:
+## Применяет ОДИН точный объект атаки к его точной цели. Полный клинч вызывает этот
+## примитив сверху вниз: press снимает адресный защитный T, после чего освобождённая
+## атака под ним тоже может разрешиться. Так K→T→R сначала снимает T объектом R,
+## затем исходный объект K снова получает доступ к рамке.
+func clinch_finalize(attacker: String, defender: String, line_index: int, t_added: int,
+		r_count: int, info: Dictionary, landing_attack: Dictionary = {}) -> void:
 	if line_index < 0 or line_index >= sides[defender].lines.size():
 		return
 	var line: Dictionary = sides[defender].lines[line_index]
+	_ensure_thesis_stack(line)
 	info["clinch_t"] = t_added
 	info["clinch_r"] = r_count
 	info["target_name"] = line.name
-	if r_count > t_added:
-		# Атакующий перестоял: ВСЕ его удары проходят по рамке (на ней уже лежат защитные
-		# тезисы). Каждая Кража забирает тезис себе, Разборы — в сброс.
-		var to_remove := mini(r_count, int(line.theses))
-		var to_steal := 0 if is_fortified(line) else mini(atk_steals, to_remove)
-		line.theses = int(line.theses) - to_remove
-		# Была Кража и остаток рамки в досягаемости порога захвата (базово 0 = пала;
-		# зал-гейт дотягивается до выживших с 1–2 тезисами) → рамка переходит целиком
-		# (вместо россыпи краденых тезисов); снятые в клинче тезисы — в сброс владельца.
-		if to_steal > 0 and int(line.theses) <= capture_threshold(attacker) - 1 and not line.get("braced", false):
-			for k in to_remove:
-				_discard(defender, Deck.make_card(TYPE_TEZIS, k))
-			_capture_frame(attacker, defender, line_index, info)
-		elif int(line.theses) <= 0:
-			for k in to_steal:
-				_give_stolen(attacker, info)
-			info["stolen_count"] = to_steal
-			for k in to_remove - to_steal:
-				_discard(defender, Deck.make_card(TYPE_TEZIS, k))
-			_discard(defender, {"type": TYPE_USTANOVKA, "name": String(line.get("name", ""))})
-			sides[defender].lines.remove_at(line_index)
-			info["removed"] = true
-		else:
-			for k in to_steal:
-				_give_stolen(attacker, info)
-			info["stolen_count"] = to_steal
-			for k in to_remove - to_steal:
-				_discard(defender, Deck.make_card(TYPE_TEZIS, k))
-			if int(line.get("stolen", 0)) > int(line.theses):
-				line.stolen = int(line.theses)
+	var protected_thickness := int(info.get("protected_thickness", int(line.theses)))
+	var capture_reach := int(info.get("capture_reach", frame_capture_reach(defender)))
+	var opening_thickness := int(info.get("opening_thickness",
+		maxi(0, protected_thickness - t_added)))
+	var capture_fortified := is_fortified(line)
+	var attack_landed := r_count > t_added
+	var landing_card: Dictionary = landing_attack.duplicate(true)
+	if attack_landed and landing_card.is_empty():
+		landing_card = {"type": TYPE_RAZBOR, "name": "Разбор", "steals": false}
+	var landing_steals := attack_landed and bool(landing_card.get("steals", false))
+	var landing_target_kind := String(info.get("landing_target_kind",
+		"frame" if t_added == 0 else "thesis"))
+	var landing_target_card: Dictionary = info.get("landing_target_card", {})
+	var capture_attempted := landing_steals and landing_target_kind == "frame" \
+		and capture_reach > 0
+	info["opening_thickness"] = opening_thickness
+	info["protected_thickness"] = protected_thickness
+	info["pre_effect_thickness"] = protected_thickness
+	info["capture_reach"] = capture_reach
+	info["capture_audience_favor"] = int(info.get("capture_audience_favor",
+		audience_favor_for(defender)))
+	info["landing_attack_name"] = String(landing_card.get("name", ""))
+	info["landing_attack_steals"] = landing_steals
+	info["landing_target_kind"] = landing_target_kind if attack_landed else ""
+	info["landing_aim_kind"] = landing_target_kind if attack_landed else ""
+	info["capture_attempted"] = capture_attempted
+	info["removed_thesis_ids"] = info.get("removed_thesis_ids", [])
+	info["removed_thesis_steps"] = info.get("removed_thesis_steps", [])
+	if not attack_landed:
+		info["final_thickness"] = int(line.theses)
+		return
+	# Полный трофей проверяет только объект Кражи, который сам целится в рамку. Ответный T
+	# блокирует его лишь пока остаётся в стеке: press имеет отдельную цель-T, а после её
+	# снятия unwind отдельно вызывает этот opener уже по исходной рамке.
+	if capture_attempted and protected_thickness <= capture_reach \
+			and not line.get("braced", false) and not capture_fortified:
+		info["full_capture"] = true
+		info["landing_effect"] = "capture"
+		info["affected_kind"] = "frame"
+		info["damage_count"] = int(line.theses)
+		_capture_frame(attacker, defender, line_index, info)
+		info["final_thickness"] = 0
+		return
+	# Укрепление принадлежит рамке, поэтому оно может отбить только Кражу, направленную
+	# в рамку. Press-K, направленная в конкретный ответный T, крадёт этот T как обычно.
+	var theft_hits_fortification := landing_steals and landing_target_kind == "frame" \
+		and capture_fortified
+	var steal_thesis := landing_steals and not theft_hits_fortification
+	if landing_steals:
+		if theft_hits_fortification:
+			info["bounced"] = true
+			if capture_attempted:
+				info["capture_blocked"] = true
+				info["capture_block_reason"] = "fortified"
+		elif capture_attempted and line.get("braced", false):
+			info["capture_blocked"] = true
+			info["capture_block_reason"] = "braced"
+		elif capture_attempted and protected_thickness > capture_reach:
+			info["capture_blocked"] = true
+			info["capture_block_reason"] = "out_of_reach"
+	var affected: Dictionary
+	if landing_target_kind == "thesis":
+		affected = _take_thesis_object(line, String(landing_target_card.get("thesis_id", "")))
+	else:
+		affected = _take_top_thesis(line)
+	# Объект уже исчез — эффект не перескакивает на соседний тезис. Это защитный инвариант
+	# для будущих именных карт и отложенных эффектов.
+	if affected.is_empty():
+		info["landing_effect"] = "no_target"
+		info["affected_kind"] = ""
+		info["damage_count"] = 0
+		info["final_thickness"] = int(line.theses)
+		return
+	var affected_id := String(affected.get("thesis_id", ""))
+	info["affected_kind"] = "thesis"
+	info["affected_thesis_id"] = affected_id
+	info["damage_count"] = 1
+	(info["removed_thesis_ids"] as Array).append(affected_id)
+	var target_step := int(info.get("landing_target_step", -1))
+	if target_step >= 0:
+		(info["removed_thesis_steps"] as Array).append(target_step)
+	if steal_thesis:
+		_give_stolen(attacker, info, affected)
+		info["stolen_count"] = 1
+		info["landing_effect"] = "steal_thesis"
+	else:
+		_discard(defender, affected)
+		info["stolen_count"] = 0
+		info["landing_effect"] = "breakdown"
+	if int(line.theses) <= 0:
+		_discard(defender, {"type": TYPE_USTANOVKA, "name": String(line.get("name", ""))})
+		sides[defender].lines.remove_at(line_index)
+		info["removed"] = true
+		_snapshot_last_frame_loss(defender, info)
+		info["final_thickness"] = 0
+	else:
+		info["final_thickness"] = int(line.theses)
 	# иначе защитник перестоял — его тезисы уже на рамке, остаются (усиление).
-	_refill(sides[attacker])
-	_refill(sides[defender])
 
 
 # --- Клинч как явный СТЕЙТ (синхронный автомат; волю ведёт драйвер: контроллер/ai) ---
-## Пусто = нет клинча. Активный: {attacker, defender, idx, t_added, r_count, atk_steals,
-## init_steals, sequence, phase}. sequence хранит визуальную хронологию карт клинча;
-## расчёт исхода по-прежнему идёт по счётчикам. phase: "await_defend" | "await_attack".
+## Пусто = нет клинча. Активный: {attacker, defender, idx, t_added, r_count,
+## init_steals, sequence, phase}. sequence хранит полные объекты карт и их точные связи;
+## при победе атаки стек разворачивается сверху вниз. phase: "await_defend" | "await_attack".
 ## Заменяет корутинный клинч UI: переходы синхронны, async/пейсинг — забота драйвера.
 var clinch := {}
+
+
+## Единая объектная легальность карты в ралли. Именной clinch=true означает только
+## «может ОТКРЫТЬ клинч»; пока у карты нет собственного on_defend/on_press, превращать
+## её в безымянный ответ нельзя — иначе написанный на объекте твист молча потеряется.
+func clinch_card_legal(card: Dictionary, phase: String = "") -> bool:
+	var active_phase := phase if phase != "" else String(clinch.get("phase", ""))
+	var type := String(card.get("type", ""))
+	var named_id := String(card.get("named", ""))
+	match active_phase:
+		"open":
+			return type == TYPE_RAZBOR and \
+				(named_id == "" or bool(card.get("clinch", false)))
+		"await_defend":
+			return type == TYPE_TEZIS and named_id == ""
+		"await_attack":
+			return type == TYPE_RAZBOR and named_id == ""
+	return false
+
+
+func clinch_legal_indices(side: String, phase: String = "") -> Array:
+	var out: Array = []
+	if not sides.has(side):
+		return out
+	for i in sides[side].hand.size():
+		if clinch_card_legal(sides[side].hand[i], phase):
+			out.append(i)
+	return out
+
+
+func clinch_legal_count(side: String, phase: String = "") -> int:
+	return clinch_legal_indices(side, phase).size()
+
+
+func _take_clinch_card(side: String, phase: String, prefer_steal: bool,
+		hand_index: int = -1) -> Dictionary:
+	var hand: Array = sides[side].hand
+	if hand_index >= 0:
+		if hand_index >= hand.size() or not clinch_card_legal(hand[hand_index], phase):
+			return {}
+		var selected: Dictionary = hand[hand_index]
+		hand.remove_at(hand_index)
+		return selected
+	# Сначала точная steals-природа и ваниль, затем другая ваниль; opener-only named
+	# (сейчас Socratic) — лишь последний допустимый fallback.
+	for allow_named in [false, true]:
+		for exact_steal in [true, false]:
+			for i in hand.size():
+				var candidate: Dictionary = hand[i]
+				if not clinch_card_legal(candidate, phase) or \
+						candidate.has("named") != allow_named:
+					continue
+				if exact_steal and bool(candidate.get("steals", false)) != prefer_steal:
+					continue
+				hand.remove_at(i)
+				return candidate
+	return {}
 
 
 ## Начать клинч: attacker бьёт рамку defender[idx]. Снимает первый удар, ставит стейт.
@@ -610,24 +941,30 @@ func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bo
 	var lines: Array = sides[defender].lines
 	if idx < 0 or idx >= lines.size():
 		return {}
-	var initc: Dictionary
-	var ah: Array = sides[attacker].hand
-	if hand_index >= 0 and hand_index < ah.size() and ah[hand_index].type == TYPE_RAZBOR:
-		initc = ah[hand_index]
-		ah.remove_at(hand_index)
-	else:
-		initc = remove_attack(attacker, prefer_steal)
+	var initc := _take_clinch_card(attacker, "open", prefer_steal, hand_index)
+	if initc.is_empty():
+		return {}
 	var init_steals: bool = initc.get("steals", false)
+	var capture_reach := frame_capture_reach(defender)
+	var capture_audience_favor := audience_favor_for(defender)
+	var opening_thickness := int(lines[idx].theses)
+	var opening_capture_eligible: bool = init_steals and capture_reach > 0 \
+		and opening_thickness <= capture_reach and not lines[idx].get("braced", false) \
+		and not is_fortified(lines[idx])
 	if initc.has("named"):
 		named_played[attacker] = int(named_played.get(attacker, 0)) + 1
 	_discard(attacker, initc)
+	turn_count += 1
 	clinch = {
 		"attacker": attacker, "defender": defender, "idx": idx,
-		"t_added": 0, "r_count": 1, "atk_steals": (1 if init_steals else 0),
+		"t_added": 0, "r_count": 1,
 		"init_steals": init_steals, "phase": "await_defend",
+		"capture_reach": capture_reach,
+		"capture_audience_favor": capture_audience_favor,
+		"opening_thickness": opening_thickness,
+		"opening_capture_eligible": opening_capture_eligible,
 		"named": String(initc.get("named", "")),
-		"sequence": [{"type": TYPE_RAZBOR, "steals": init_steals,
-			"name": String(initc.get("name", ""))}],
+		"sequence": [initc.duplicate(true)],
 	}
 	return {"card": initc, "is_callback": bool(lines[idx].closed)}
 
@@ -646,53 +983,51 @@ func clinch_pending_side() -> String:
 ## Может ли сторона, чья воля, сделать ход (есть нужная карта в руке).
 ## Рамку именной «Аксиомы» (no_defend) оборонять в клинче нельзя — защита всегда пас.
 func clinch_can_act(side: String) -> bool:
-	if clinch.is_empty():
+	if clinch.is_empty() or side != clinch_pending_side():
 		return false
 	if clinch.phase == "await_defend":
 		var dl: Array = sides[clinch.defender].lines
 		var i := int(clinch.idx)
 		if i >= 0 and i < dl.size() and dl[i].get("no_defend", false):
 			return false
-		return _hand_has(clinch.defender, TYPE_TEZIS)
-	return _hand_has(clinch.attacker, TYPE_RAZBOR)
+	return clinch_legal_count(side, String(clinch.phase)) > 0
 
 
 ## Решение текущей стороны. "play" продолжает волю, "pass" завершает клинч (finalize).
 ## Возвращает {event}: "hold" (защитник держит, card=тезис) | "press" (атакующий добил,
 ## card=карта атаки) | "resolved" (клинч закрыт; info+landed+счётчики).
-func clinch_submit(decision: String, prefer_steal: bool = true, hand_index: int = -1) -> Dictionary:
+func clinch_submit(decision: String, prefer_steal: bool = true, hand_index: int = -1,
+		stop_reason: String = "voluntary") -> Dictionary:
 	if clinch.is_empty():
 		return {}
 	if decision != "play":
-		return _finish_clinch()
+		var stopped_side := clinch_pending_side()
+		if not clinch_can_act(clinch_pending_side()):
+			stop_reason = "exhausted"
+		return _finish_clinch(stop_reason, stopped_side)
 	if clinch.phase == "await_defend":
 		var line: Dictionary = sides[clinch.defender].lines[clinch.idx]
-		var dc: Dictionary = _remove_selected_card(clinch.defender, TYPE_TEZIS, hand_index)
-		line.theses = int(line.theses) + 1
-		if dc.get("stolen", false):
-			line.stolen = int(line.get("stolen", 0)) + 1
+		var dc := _take_clinch_card(clinch.defender, "await_defend", false, hand_index)
+		if dc.is_empty():
+			return {"event": "invalid"}
+		var token := _put_thesis(line, dc)
 		clinch.t_added = int(clinch.t_added) + 1
 		var sequence: Array = clinch.get("sequence", [])
-		sequence.append({"type": TYPE_TEZIS, "stolen": bool(dc.get("stolen", false)),
-			"name": String(dc.get("name", ""))})
+		sequence.append(token.duplicate(true))
 		clinch["sequence"] = sequence
 		if not clinch_freeze:
 			_refill(sides[clinch.defender])
 		clinch.phase = "await_attack"
-		return {"event": "hold", "card": dc}
+		return {"event": "hold", "card": token, "step": sequence.size() - 1,
+			"thesis_id": String(token.get("thesis_id", ""))}
 	else:
-		var ac: Dictionary
-		if hand_index >= 0:
-			ac = _remove_selected_card(clinch.attacker, TYPE_RAZBOR, hand_index)
-		else:
-			ac = remove_attack(clinch.attacker, prefer_steal)
+		var ac := _take_clinch_card(clinch.attacker, "await_attack", prefer_steal, hand_index)
+		if ac.is_empty():
+			return {"event": "invalid"}
 		_discard(clinch.attacker, ac)
 		clinch.r_count = int(clinch.r_count) + 1
-		if ac.get("steals", false):
-			clinch.atk_steals = int(clinch.atk_steals) + 1
 		var sequence: Array = clinch.get("sequence", [])
-		sequence.append({"type": TYPE_RAZBOR, "steals": bool(ac.get("steals", false)),
-			"name": String(ac.get("name", ""))})
+		sequence.append(ac.duplicate(true))
 		clinch["sequence"] = sequence
 		if not clinch_freeze:
 			_refill(sides[clinch.attacker])
@@ -701,43 +1036,195 @@ func clinch_submit(decision: String, prefer_steal: bool = true, hand_index: int 
 
 
 ## Закрыть клинч: применить исход (clinch_finalize), очистить стейт, вернуть итог.
-func _finish_clinch() -> Dictionary:
+func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = "") -> Dictionary:
 	var attacker: String = clinch.attacker
 	var defender: String = clinch.defender
 	var idx: int = clinch.idx
 	var t_added: int = clinch.t_added
 	var r_count: int = clinch.r_count
-	var atk_steals: int = clinch.atk_steals
 	var named: String = String(clinch.get("named", ""))
 	var sequence: Array = clinch.get("sequence", []).duplicate(true)
-	var info := {"side": attacker, "type": TYPE_RAZBOR}
+	var reach: int = int(clinch.get("capture_reach", 1))
+	var capture_audience_favor: int = int(clinch.get("capture_audience_favor", 0))
+	var opening_thickness: int = int(clinch.get("opening_thickness", 0))
+	var opening_capture_eligible: bool = bool(clinch.get("opening_capture_eligible", false))
+	var peak_thickness: int = opening_thickness + t_added
+	var latest_attack := -1
+	var initially_countered_steps: Array = []
+	var initially_countered_theft_steps: Array = []
+	for i in sequence.size():
+		var step_card: Dictionary = sequence[i]
+		step_card["step"] = i
+		if String(step_card.get("type", "")) == TYPE_RAZBOR:
+			step_card["actor"] = attacker
+			step_card["role"] = "attack"
+			step_card["result"] = "pending"
+			step_card["target_kind"] = "frame" if i == 0 else "thesis"
+			step_card["aim_kind"] = String(step_card.target_kind)
+			step_card["target_step"] = -1 if i == 0 else i - 1
+			latest_attack = i
+		else:
+			step_card["actor"] = defender
+			step_card["role"] = "defense"
+			step_card["result"] = "held"
+			if latest_attack >= 0:
+				step_card["counters"] = latest_attack
+				var parried: Dictionary = sequence[latest_attack]
+				parried["result"] = "parried"
+				parried["countered_by"] = i
+				initially_countered_steps.append(latest_attack)
+				if bool(parried.get("steals", false)):
+					initially_countered_theft_steps.append(latest_attack)
+	var attacker_won := r_count > t_added
+	var info := {"side": attacker, "type": TYPE_RAZBOR,
+		"capture_reach": reach, "capture_audience_favor": capture_audience_favor,
+		"opening_thickness": opening_thickness,
+		"peak_thickness": peak_thickness, "protected_thickness": peak_thickness,
+		"landing_step": -1, "landing_target_kind": "", "landing_target_step": -1,
+		"initially_countered_steps": initially_countered_steps.duplicate(),
+		"initially_countered_theft_steps": initially_countered_theft_steps.duplicate(),
+		"parried_steps": ([] if attacker_won else initially_countered_steps.duplicate()),
+		"parried_theft_steps": ([] if attacker_won else initially_countered_theft_steps.duplicate()),
+		"parried_steals": 0 if attacker_won else initially_countered_theft_steps.size(),
+		"opening_capture_eligible": opening_capture_eligible,
+		"parried_capture": not attacker_won and opening_capture_eligible and
+			initially_countered_theft_steps.has(0),
+		"capture_reactivated": attacker_won and opening_capture_eligible and
+			initially_countered_theft_steps.has(0),
+		"resolved_attack_steps": [], "resolved_effects": [],
+		"removed_thesis_ids": [], "removed_thesis_steps": [],
+		"stolen_count": 0, "damage_count": 0,
+		"stop_reason": stop_reason, "stop_side": stopped_side,
+		"exhausted_side": stopped_side if stop_reason == "exhausted" else ""}
 	clinch = {}   # очистить ДО finalize, чтобы рендер не считал рамку контестом
-	clinch_finalize(attacker, defender, idx, t_added, r_count, info, atk_steals)
+	if attacker_won:
+		# Стек разворачивается сверху вниз. Каждый press работает только со своим exact T;
+		# opener выполняется последним уже по очищенной от защитных T исходной рамке.
+		for i in range(sequence.size() - 1, -1, -1):
+			var attack_card: Dictionary = sequence[i]
+			if String(attack_card.get("type", "")) != TYPE_RAZBOR:
+				continue
+			var target_step := -1 if i == 0 else i - 1
+			var target_kind := "frame" if i == 0 else "thesis"
+			var target_card: Dictionary = {} if target_step < 0 else \
+				(sequence[target_step] as Dictionary).duplicate(true)
+			var current_thickness := opening_thickness
+			if idx >= 0 and idx < sides[defender].lines.size():
+				current_thickness = int(sides[defender].lines[idx].theses)
+			var step_info := {"side": attacker, "type": TYPE_RAZBOR,
+				"capture_reach": reach, "capture_audience_favor": capture_audience_favor,
+				"opening_thickness": opening_thickness,
+				"protected_thickness": current_thickness,
+				"landing_step": i, "landing_target_kind": target_kind,
+				"landing_target_step": target_step, "landing_target_card": target_card,
+				"removed_thesis_ids": [], "removed_thesis_steps": []}
+			clinch_finalize(attacker, defender, idx, 0, 1, step_info,
+				attack_card.duplicate(true))
+			_merge_clinch_effect(info, step_info)
+			(info["resolved_attack_steps"] as Array).append(i)
+			attack_card["result"] = "captured" if bool(step_info.get("captured", false)) \
+				else "landed"
+			attack_card["effect"] = String(step_info.get("landing_effect", ""))
+			attack_card["affected_kind"] = String(step_info.get("affected_kind", ""))
+			attack_card["affected_thesis_id"] = String(step_info.get("affected_thesis_id", ""))
+			if target_step >= 0 and String(step_info.get("landing_effect", "")) in \
+					["breakdown", "steal_thesis"]:
+				sequence[target_step]["result"] = "stolen" if \
+					String(step_info.get("landing_effect", "")) == "steal_thesis" else "removed"
+	else:
+		clinch_finalize(attacker, defender, idx, t_added, r_count, info, {})
+	info["clinch_t"] = t_added
+	info["clinch_r"] = r_count
 	# Именной «Сократический вопрос»: защитник отвечал тезисами → первый защитный тезис
-	# уходит атакующему (ловушка). Рамка снята в finalize — ловушка сгорела вместе с ней.
+	# уходит атакующему, только если именно этот объект всё ещё лежит на рамке.
 	if named == "socratic" and t_added > 0:
-		_socratic_trap(attacker, defender, idx, info)
+		_socratic_trap(attacker, defender, idx, info, sequence)
+	info["resolved_sequence"] = sequence.duplicate(true)
+	# Снимок KO/резерва уже сделан внутри резолва; только теперь разрешён добор.
+	_refill(sides[attacker])
+	_refill(sides[defender])
 	return {
-		"event": "resolved", "info": info, "landed": r_count > t_added,
+		"event": "resolved", "info": info, "landed": attacker_won,
 		"attacker": attacker, "defender": defender, "idx": idx,
 		"t_added": t_added, "r_count": r_count, "sequence": sequence,
+		"stop_reason": stop_reason, "stop_side": stopped_side,
+		"exhausted_side": stopped_side if stop_reason == "exhausted" else "",
 	}
 
 
-func _socratic_trap(attacker: String, defender: String, idx: int, info: Dictionary) -> void:
+## Склеивает эффекты одного шага unwind в публичный итог клинча. Поля landing_* всегда
+## описывают последний разрешённый шаг; поскольку обход идёт сверху вниз, в конце это
+## opener и его исход по рамке. Побочные точные T сохраняются в resolved_effects/IDs.
+func _merge_clinch_effect(total: Dictionary, step: Dictionary) -> void:
+	for key in ["target_name", "protected_thickness", "pre_effect_thickness",
+			"landing_step", "landing_attack_name", "landing_attack_steals",
+			"landing_target_kind", "landing_aim_kind", "landing_target_step",
+			"landing_target_card", "capture_attempted", "capture_blocked",
+			"capture_block_reason", "bounced", "affected_kind", "affected_thesis_id",
+			"landing_effect", "final_thickness", "stolen_thesis_id"]:
+		if step.has(key):
+			total[key] = step[key]
+	for flag in ["full_capture", "captured", "stolen", "removed", "last_frame_lost",
+			"knockout", "recovery_pending"]:
+		if bool(step.get(flag, false)):
+			total[flag] = true
+	for key in ["captured_thesis_ids", "captured_thickness", "recovery_available"]:
+		if step.has(key):
+			total[key] = step[key]
+	(total["removed_thesis_ids"] as Array).append_array(step.get("removed_thesis_ids", []))
+	(total["removed_thesis_steps"] as Array).append_array(step.get("removed_thesis_steps", []))
+	total["stolen_count"] = int(total.get("stolen_count", 0)) + int(step.get("stolen_count", 0))
+	total["damage_count"] = int(total.get("damage_count", 0)) + int(step.get("damage_count", 0))
+	(total["resolved_effects"] as Array).append({
+		"step": int(step.get("landing_step", -1)),
+		"name": String(step.get("landing_attack_name", "")),
+		"steals": bool(step.get("landing_attack_steals", false)),
+		"target_kind": String(step.get("landing_target_kind", "")),
+		"target_step": int(step.get("landing_target_step", -1)),
+		"effect": String(step.get("landing_effect", "")),
+		"affected_thesis_id": String(step.get("affected_thesis_id", "")),
+	})
+
+
+func _socratic_trap(attacker: String, defender: String, idx: int, info: Dictionary,
+		sequence: Array) -> void:
+	var target_step := -1
+	for i in sequence.size():
+		if String((sequence[i] as Dictionary).get("role", "")) == "defense":
+			target_step = i
+			break
+	info["socratic_target_step"] = target_step
+	if target_step < 0 or String((sequence[target_step] as Dictionary).get("result", "")) != "held":
+		info["socratic_expired"] = true
+		return
 	var dl: Array = sides[defender].lines
 	if idx < 0 or idx >= dl.size():
+		info["socratic_expired"] = true
 		return
 	var line: Dictionary = dl[idx]
-	line.theses = int(line.theses) - 1
-	_give_stolen(attacker, info)
+	var target_card: Dictionary = sequence[target_step]
+	var stolen_object := _take_thesis_object(line, String(target_card.get("thesis_id", "")))
+	if stolen_object.is_empty():
+		info["socratic_expired"] = true
+		return
+	_give_stolen(attacker, info, stolen_object)
 	info["socratic"] = true
+	info["stolen_count"] = int(info.get("stolen_count", 0)) + 1
+	(sequence[target_step] as Dictionary)["result"] = "stolen_by_socratic"
+	var removed_ids: Array = info.get("removed_thesis_ids", [])
+	removed_ids.append(String(stolen_object.get("thesis_id", "")))
+	info["removed_thesis_ids"] = removed_ids
+	var removed_steps: Array = info.get("removed_thesis_steps", [])
+	removed_steps.append(target_step)
+	info["removed_thesis_steps"] = removed_steps
 	if int(line.theses) <= 0:
 		_discard(defender, {"type": TYPE_USTANOVKA, "name": String(line.get("name", ""))})
 		dl.remove_at(idx)
 		info["removed"] = true
-	elif int(line.get("stolen", 0)) > int(line.theses):
-		line.stolen = int(line.theses)
+		_snapshot_last_frame_loss(defender, info)
+		info["final_thickness"] = 0
+	else:
+		info["final_thickness"] = int(line.theses)
 
 
 # Публичные обёртки для драйвера воли (сцена/ai сами ведут «разбор↔тезис»).
@@ -765,11 +1252,67 @@ func refill_side(side: String) -> void:
 	_refill(sides[side])
 
 
+## Публичная экономика рамок: UI показывает весь резерв в руке, но восстановить можно
+## только те U, которые находились там в точный момент потери последней рамки.
+func reserve_count(side: String) -> int:
+	var count := 0
+	for card in sides[side].hand:
+		if String(card.get("type", "")) == TYPE_USTANOVKA:
+			count += 1
+	return count
+
+
+func recovery_pending(side: String) -> bool:
+	return bool(sides[side].get("recovery_pending", false))
+
+
+func recovery_indices(side: String) -> Array:
+	var out: Array = []
+	var hand: Array = sides[side].hand
+	for i in hand.size():
+		if String(hand[i].get("type", "")) == TYPE_USTANOVKA \
+				and bool(hand[i].get("recovery_ready", false)):
+			out.append(i)
+	return out
+
+
+func play_redeploy(side: String, hand_index: int) -> Dictionary:
+	if game_over or not recovery_pending(side) or not hand_index in recovery_indices(side):
+		return {}
+	var card: Dictionary = sides[side].hand[hand_index]
+	# Восстановление нормализует любую U до голой рамки с 1 тезисом: твист именной Аксиомы
+	# здесь не срабатывает, потому что это аварийное возвращение в спор, а не обычный розыгрыш.
+	sides[side].hand.remove_at(hand_index)
+	sides[side]["recovery_pending"] = false
+	var line := {"theses": 1, "closed": false, "name": String(card.get("name", "Рамка")),
+		"stolen": 0}
+	_copy_claim(card, line)
+	sides[side].lines.append(line)
+	for held in sides[side].hand:
+		held.erase("recovery_ready")
+	_refill(sides[side])
+	turn_count += 1
+	var info := {"side": side, "type": TYPE_USTANOVKA, "name": String(card.get("name", "")),
+		"removed": false}
+	if card.has("named"):
+		info["named_suppressed"] = String(card.named)
+	info["redeploy"] = true
+	info["recovery_spent"] = true
+	return info
+
+
 # --- внутреннее ---
 
 func _refill(s: Dictionary) -> void:
 	Deck.refill(s, hand_size)
 	_try_second_wind(s)
+
+
+func _copy_claim(card: Dictionary, line: Dictionary) -> void:
+	for key in ["claim_id", "claim", "preferred_axes"]:
+		if card.has(key):
+			line[key] = card[key].duplicate(true) if card[key] is Array or card[key] is Dictionary \
+				else card[key]
 
 
 func _hand_has(side: String, type: String) -> bool:
