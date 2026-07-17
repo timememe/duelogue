@@ -11,10 +11,10 @@ extends Node
 ## (STATE_TEX) — новый персонаж = новый набор поз, ни строчки кода. Фолбэк по типу карты
 ## (_portrait_for) подбирает актуальный стейт по типу карты, пока mood не передан.
 
-const RulesCore := preload("res://duelogue/core/rules/rules_core.gd")
-const TYPE_TEZIS := RulesCore.TYPE_TEZIS
-const TYPE_RAZBOR := RulesCore.TYPE_RAZBOR
-const TYPE_USTANOVKA := RulesCore.TYPE_USTANOVKA
+const C := preload("res://duelogue/core/cards/card_types.gd")
+const TYPE_TEZIS := C.TYPE_TEZIS
+const TYPE_RAZBOR := C.TYPE_RAZBOR
+const TYPE_USTANOVKA := C.TYPE_USTANOVKA
 
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 

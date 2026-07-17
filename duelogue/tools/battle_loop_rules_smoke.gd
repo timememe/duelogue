@@ -418,7 +418,8 @@ func _check_capture_active_invariant() -> void:
 	target["closed"] = true
 	model.sides[RulesCore.SIDE_YOU].lines = [old_active]
 	model.sides[RulesCore.SIDE_OPP].lines = [
-		target, _object_line(1, "Defender active", "def_active")]
+		target, _object_line(1, "Defender reserve", "def_reserve"),
+		_object_line(1, "Defender active", "def_active")]
 	model.set_external_zal(-2, true)
 	model.sides[RulesCore.SIDE_YOU].hand = [
 		_card(RulesCore.TYPE_RAZBOR, "Capture K", true)]
@@ -459,18 +460,19 @@ func _check_capture_active_invariant() -> void:
 	for line in lines:
 		if not bool((line as Dictionary).get("closed", false)):
 			open_count += 1
-	_check(lines.size() == 3 and bool(lines[0].closed) and
+	_check(lines.size() == 4 and bool(lines[0].closed) and bool(lines[1].closed) and
 		String(lines[0].name) == "Closed target" and _stack_ids(lines[0]) == trophy_ids and
+		String(lines[1].name) == "Defender reserve" and
 		active_before == 1 and normal_t_on_active and stolen_t_on_active and
 		int(lines[0].theses) == 2 and open_count == 1 and
 		not bool(lines[-1].closed) and String(lines[-1].name) == "New active",
-		"closed capture trophy stays before active; later T, K-T-K and U preserve one active-last frame")
+		"closed capture trophies stay before active; later T, K-T-K and U preserve one active-last frame")
 
 
 func _run_base_k_t_x(final_steals: bool) -> Dictionary:
 	var model := _fresh(true)
 	model.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Атакующий")]
-	model.sides[RulesCore.SIDE_OPP].lines = [_line(1, "На последнем тезисе")]
+	model.sides[RulesCore.SIDE_OPP].lines = [_line(1, "Опорная"), _line(1, "Тыл")]
 	model.sides[RulesCore.SIDE_YOU].hand = [
 		_card(RulesCore.TYPE_RAZBOR, "Первая Кража", true),
 		_card(RulesCore.TYPE_RAZBOR, "Финальная Кража" if final_steals else "Финальный Разбор",
@@ -508,51 +510,63 @@ func _check_protected_thickness_and_full_loot() -> void:
 		int(direct_info.get("landing_step", -1)) == 0 and direct.capture_theses == 1,
 		"непогашенная Кража по рамке с 1 тезисом захватывает именно эту рамку")
 
-	# K–T–R: первая Кража погашена; последний объект Разбора снимает только ответный T.
+	# K–T–R: ответный T гасит Кражу лишь ВРЕМЕННО. Финальный Разбор сносит exact T в сброс
+	# (свою кражу он не наследует), после чего перестоявшая Кража доигрывает по рамке.
 	var ktr: Dictionary = _run_base_k_t_x(false)
 	var ktr_model: RefCounted = ktr.model
 	var ktr_result: Dictionary = ktr.result
 	var ktr_info: Dictionary = ktr_result.get("info", {})
 	var ktr_seq: Array = ktr_info.get("resolved_sequence", [])
-	_check(bool(ktr_result.get("landed", false)) and not ktr_info.get("captured", false) and
-		not ktr_info.get("removed", false) and int(ktr_info.get("stolen_count", 0)) == 0 and
-		not ktr_info.get("landing_attack_steals", true) and
-		String(ktr_info.get("landing_effect", "")) == "breakdown" and
-		String(ktr_info.get("landing_target_kind", "")) == "thesis" and
-		int(ktr_info.get("parried_steals", 0)) == 1 and ktr_seq.size() == 3 and
-		String(ktr_seq[0].get("result", "")) == "parried" and
+	var ktr_trophy: Dictionary = ktr_model.sides[RulesCore.SIDE_YOU].lines[0]
+	_check(bool(ktr_result.get("landed", false)) and bool(ktr_info.get("captured", false)) and
+		bool(ktr_info.get("capture_reactivated", false)) and
+		not bool(ktr_info.get("parried_capture", true)) and
+		int(ktr_info.get("stolen_count", 0)) == 0 and
+		String(ktr_info.get("landing_effect", "")) == "capture" and
+		String(ktr_info.get("landing_target_kind", "")) == "frame" and
+		String(_resolved_effect(ktr_info, 2).get("effect", "")) == "breakdown" and
+		int(ktr_info.get("parried_steals", 0)) == 0 and ktr_seq.size() == 3 and
+		(ktr_info.get("resolved_attack_steps", []) as Array) == [2, 0] and
+		String(ktr_seq[0].get("result", "")) == "captured" and
 		String(ktr_seq[1].get("result", "")) == "removed" and
 		String(ktr_seq[2].get("result", "")) == "landed" and
-		int(ktr_model.sides[RulesCore.SIDE_OPP].lines[0].theses) == 1 and
 		String(_discard_card(ktr_model.sides[RulesCore.SIDE_OPP],
 			"Защитный тезис").get("thesis_id", "")) ==
 			String(ktr_seq[1].get("thesis_id", "")) and
-		ktr_model.captures == 0 and ktr_model.capture_theses == 0,
-		"K–T–R не наследует Кражу: финальный Разбор отправляет точный защитный T в сброс")
+		ktr_model.sides[RulesCore.SIDE_OPP].lines.size() == 1 and
+		String(ktr_model.sides[RulesCore.SIDE_OPP].lines[0].name) == "Тыл" and
+		bool(ktr_trophy.closed) and int(ktr_trophy.theses) == 1 and
+		ktr_model.captures == 1 and ktr_model.capture_theses == 1,
+		"K–T–R: Разбор сносит exact T в сброс без кражи, перестоявшая Кража забирает рамку")
 
-	# K–T–K: первая Кража всё ещё погашена, а финальная крадёт только объект T под ней.
+	# K–T–K: финальная Кража крадёт exact ответный T себе, а перестоявшая первая Кража
+	# следом забирает саму рамку — обе добычи оказываются на доске атакующего.
 	var ktk: Dictionary = _run_base_k_t_x(true)
 	var ktk_model: RefCounted = ktk.model
 	var ktk_info: Dictionary = (ktk.result as Dictionary).get("info", {})
 	var ktk_seq: Array = ktk_info.get("resolved_sequence", [])
-	_check(not ktk_info.get("captured", false) and not ktk_info.get("capture_attempted", true) and
+	var ktk_you: Array = ktk_model.sides[RulesCore.SIDE_YOU].lines
+	_check(bool(ktk_info.get("captured", false)) and
+		bool(ktk_info.get("capture_attempted", false)) and
+		bool(ktk_info.get("capture_reactivated", false)) and
 		int(ktk_info.get("stolen_count", 0)) == 1 and
-		bool(ktk_info.get("landing_attack_steals", false)) and
-		String(ktk_info.get("landing_effect", "")) == "steal_thesis" and
-		String(ktk_info.get("landing_target_kind", "")) == "thesis" and
-		int(ktk_info.get("parried_steals", 0)) == 1 and ktk_seq.size() == 3 and
+		String(_resolved_effect(ktk_info, 2).get("effect", "")) == "steal_thesis" and
+		String(_resolved_effect(ktk_info, 2).get("target_kind", "")) == "thesis" and
+		int(ktk_info.get("parried_steals", 0)) == 0 and ktk_seq.size() == 3 and
 		String(ktk_seq[1].get("result", "")) == "stolen" and
-		int(ktk_model.sides[RulesCore.SIDE_OPP].lines[0].theses) == 1 and
-		int(ktk_model.sides[RulesCore.SIDE_YOU].lines[0].theses) == 2 and
-		String((ktk_model.sides[RulesCore.SIDE_YOU].lines[0].thesis_stack as Array)[-1].get(
+		ktk_you.size() == 2 and bool(ktk_you[0].closed) and
+		int(ktk_you[-1].theses) == 2 and
+		String((ktk_you[-1].thesis_stack as Array)[-1].get(
 			"thesis_id", "")) == String(ktk_seq[1].get("thesis_id", "")) and
+		ktk_model.sides[RulesCore.SIDE_OPP].lines.size() == 1 and
 		_discard_card(ktk_model.sides[RulesCore.SIDE_OPP], "Защитный тезис").is_empty(),
-		"K–T–K крадёт только ответный тезис; погашенная первая Кража не оживает")
+		"K–T–K: пресс-Кража крадёт exact T, перестоявшая первая Кража забирает рамку")
 
-	# Длинная цепь хранит адреса объектов: финальная K снимает последний T, ранний T остаётся.
+	# Длинная цепь хранит адреса объектов: K4 крадёт адресный T3, R2 сносит exact T1,
+	# освобождённая K0 доигрывает по своей цели-рамке и забирает её.
 	var stack := _fresh(true)
 	stack.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Атакующий")]
-	stack.sides[RulesCore.SIDE_OPP].lines = [_line(1, "Стековая рамка")]
+	stack.sides[RulesCore.SIDE_OPP].lines = [_line(1, "Стековая рамка"), _line(1, "Тыл")]
 	stack.sides[RulesCore.SIDE_YOU].hand = [
 		_card(RulesCore.TYPE_RAZBOR, "K0", true),
 		_card(RulesCore.TYPE_RAZBOR, "R2"),
@@ -574,17 +588,26 @@ func _check_protected_thickness_and_full_loot() -> void:
 	var stack_result: Dictionary = stack.clinch_submit("pass")
 	var stack_info: Dictionary = stack_result.get("info", {})
 	var stack_seq: Array = stack_info.get("resolved_sequence", [])
-	_check(stack_seq.size() == 5 and int(stack_info.get("landing_step", -1)) == 4 and
-		int(stack_info.get("landing_target_step", -1)) == 3 and
-		(stack_info.get("parried_steps", []) as Array) == [0, 2] and
+	_check(stack_seq.size() == 5 and
+		(stack_info.get("resolved_attack_steps", []) as Array) == [4, 2, 0] and
+		(stack_info.get("parried_steps", []) as Array).is_empty() and
 		String(stack_seq[0].get("target_kind", "")) == "frame" and
 		int(stack_seq[2].get("target_step", -1)) == 1 and
 		int(stack_seq[4].get("target_step", -1)) == 3 and
-		String(stack_seq[1].get("result", "")) == "held" and
+		String(stack_seq[0].get("result", "")) == "captured" and
+		String(stack_seq[1].get("result", "")) == "removed" and
 		String(stack_seq[3].get("result", "")) == "stolen" and
-		int(stack.sides[RulesCore.SIDE_OPP].lines[0].theses) == 2 and
-		int(stack.sides[RulesCore.SIDE_OPP].lines[0].stolen) == 0,
-		"K–T–R–T–K снимает адресный последний T; ранний T и его объект остаются")
+		String(_resolved_effect(stack_info, 4).get("affected_thesis_id", "")) ==
+			String(stack_seq[3].get("thesis_id", "")) and
+		String(_resolved_effect(stack_info, 2).get("affected_thesis_id", "")) ==
+			String(stack_seq[1].get("thesis_id", "")) and
+		bool(stack_info.get("captured", false)) and
+		String((stack.sides[RulesCore.SIDE_YOU].lines[-1].thesis_stack as Array)[-1].get(
+			"thesis_id", "")) == String(stack_seq[3].get("thesis_id", "")) and
+		stack.sides[RulesCore.SIDE_OPP].lines.size() == 1 and
+		_discard_has_thesis_id(stack.sides[RulesCore.SIDE_OPP],
+			String(stack_seq[1].get("thesis_id", ""))),
+		"K–T–R–T–K: каждый шаг бьёт свой exact объект, освобождённая Кража берёт рамку")
 
 	# Граница: открытая толщина 4 при reach 4 — Кража уводит всю рамку со всеми тезисами.
 	var captured := _fresh(true)
@@ -602,9 +625,11 @@ func _check_protected_thickness_and_full_loot() -> void:
 		not captured.game_over and captured.recovery_pending(RulesCore.SIDE_OPP),
 		"Кража на границе reach 4 переносит полную рамку толщиной 4, а не обрезанный остаток")
 
-	# На толстой рамке T парирует первую Кражу; поздняя K направлена уже только в этот T.
+	# На толстой шаткой рамке T лишь ОТКЛАДЫВАЕТ захват: поздняя K крадёт этот exact T,
+	# а перестоявшая первая Кража забирает рамку целиком «со всей силой».
 	var defended := _fresh(true)
 	_prime_reach_four(defended)
+	defended.sides[RulesCore.SIDE_OPP].lines.append(_line(1, "Тыл"))
 	defended.sides[RulesCore.SIDE_YOU].hand = [
 		_card(RulesCore.TYPE_RAZBOR, "Первая Кража", true),
 		_card(RulesCore.TYPE_RAZBOR, "Финальная Кража", true),
@@ -617,22 +642,23 @@ func _check_protected_thickness_and_full_loot() -> void:
 	defended.clinch_submit("play", true, 0)
 	var defended_result: Dictionary = defended.clinch_submit("pass")
 	var def_info: Dictionary = defended_result.get("info", {})
-	_check(not bool(def_info.get("captured", false)) and
-		not bool(def_info.get("capture_attempted", true)) and
-		int(def_info.get("parried_steals", 0)) == 1 and
+	_check(bool(def_info.get("captured", false)) and
+		bool(def_info.get("capture_reactivated", false)) and
 		int(def_info.get("stolen_count", 0)) == 1 and
-		String(def_info.get("landing_target_kind", "")) == "thesis" and
+		String(_resolved_effect(def_info, 2).get("effect", "")) == "steal_thesis" and
+		String(_resolved_effect(def_info, 2).get("target_kind", "")) == "thesis" and
 		int(def_info.get("opening_thickness", 0)) == 4 and
-		int(def_info.get("protected_thickness", 0)) == 5 and
+		int(def_info.get("captured_thickness", 0)) == 4 and
 		defended.sides[RulesCore.SIDE_OPP].lines.size() == 1 and
-		int(defended.sides[RulesCore.SIDE_OPP].lines[0].theses) == 4,
-		"T парирует захват толстой рамки, а финальная Кража забирает только этот T")
+		String(defended.sides[RulesCore.SIDE_OPP].lines[0].name) == "Тыл" and
+		defended.captures == 1 and defended.capture_theses == 4,
+		"толстая шаткая рамка: T оттягивает захват, но перестоявшая Кража берёт её целиком")
 
-	# Решающий отрицательный случай: даже при opening=1 и frozen reach=4 поздняя K
-	# адресована ответному T, поэтому capture_attempted обязан остаться false.
+	# Роли шагов различимы: поздняя K адресована ответному T (steal_thesis по объекту),
+	# и отдельно от неё перестоявшая первая Кража доигрывает по рамке в свой reach.
 	var in_reach := _fresh(true)
 	in_reach.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Андердог")]
-	in_reach.sides[RulesCore.SIDE_OPP].lines = [_line(1, "Шатается")]
+	in_reach.sides[RulesCore.SIDE_OPP].lines = [_line(1, "Шатается"), _line(1, "Тыл")]
 	in_reach.set_external_zal(-4, true)
 	in_reach.sides[RulesCore.SIDE_YOU].hand = [
 		_card(RulesCore.TYPE_RAZBOR, "K0", true),
@@ -648,18 +674,19 @@ func _check_protected_thickness_and_full_loot() -> void:
 	var in_reach_info: Dictionary = in_reach_result.get("info", {})
 	_check(int(in_reach_info.get("capture_reach", 0)) == 4 and
 		int(in_reach_info.get("opening_thickness", 0)) == 1 and
-		not bool(in_reach_info.get("capture_attempted", true)) and
-		not bool(in_reach_info.get("captured", false)) and
-		String(in_reach_info.get("affected_kind", "")) == "thesis" and
+		String(_resolved_effect(in_reach_info, 2).get("effect", "")) == "steal_thesis" and
+		String(_resolved_effect(in_reach_info, 2).get("target_kind", "")) == "thesis" and
 		int(in_reach_info.get("stolen_count", 0)) == 1 and
-		int(in_reach.sides[RulesCore.SIDE_OPP].lines[0].theses) == 1,
-		"opening 1/reach 4 K–T–K всё равно крадёт только объект T, не рамку")
+		bool(in_reach_info.get("captured", false)) and
+		in_reach.sides[RulesCore.SIDE_OPP].lines.size() == 1,
+		"opening 1/reach 4 K–T–K: пресс крадёт exact T, открывшаяся Кража берёт рамку")
 
-	# Укрепление — свойство рамки, не лежащего сверху T: press-K не отскакивает от него.
+	# Укрепление — свойство рамки, не лежащего сверху T: press-K не отскакивает от него,
+	# а освобождённый ОБЫЧНЫЙ opener добивает рамку до сброса (захвата без Кражи нет).
 	var fortified := _fresh(true)
 	fortified.fortify_threshold = 2
 	fortified.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Атакующий")]
-	fortified.sides[RulesCore.SIDE_OPP].lines = [_line(1, "Укрепляемая")]
+	fortified.sides[RulesCore.SIDE_OPP].lines = [_line(1, "Укрепляемая"), _line(1, "Тыл")]
 	fortified.sides[RulesCore.SIDE_YOU].hand = [
 		_card(RulesCore.TYPE_RAZBOR, "R0"),
 		_card(RulesCore.TYPE_RAZBOR, "K2", true),
@@ -671,25 +698,29 @@ func _check_protected_thickness_and_full_loot() -> void:
 	fortified.clinch_submit("play", false, 0)
 	fortified.clinch_submit("play", true, 0)
 	var fortified_info: Dictionary = fortified.clinch_submit("pass").get("info", {})
-	_check(String(fortified_info.get("landing_effect", "")) == "steal_thesis" and
+	_check(String(_resolved_effect(fortified_info, 2).get("effect", "")) == "steal_thesis" and
 		not bool(fortified_info.get("bounced", false)) and
-		int(fortified.sides[RulesCore.SIDE_OPP].lines[0].theses) == 1,
-		"укреплённая рамка не защищает отдельный ответный T от press-Кражи")
+		bool(fortified_info.get("removed", false)) and
+		not bool(fortified_info.get("captured", false)) and
+		fortified.sides[RulesCore.SIDE_OPP].lines.size() == 1 and
+		String(fortified.sides[RulesCore.SIDE_OPP].lines[0].name) == "Тыл",
+		"укрепление не отбивает press-K по T; обычный opener добивает рамку в сброс")
 
-	# Идентичность переживает границу клинча: украденный T лежит верхним объектом на рамке
-	# вора, и следующий opening-R снимает именно его, корректно обнуляя stolen.
+	# Идентичность переживает границу клинча: украденный T лежит верхним объектом на
+	# АКТИВНОЙ рамке вора, и следующий opening-R снимает именно его, корректно обнуляя stolen.
 	var moved_id := String(ktk_seq[1].get("thesis_id", ""))
 	ktk_model.sides[RulesCore.SIDE_OPP].hand = [_card(RulesCore.TYPE_RAZBOR, "Ответный R")]
 	ktk_model.sides[RulesCore.SIDE_OPP].draw = []
 	ktk_model.sides[RulesCore.SIDE_YOU].hand = []
 	ktk_model.sides[RulesCore.SIDE_YOU].draw = []
-	ktk_model.begin_clinch(RulesCore.SIDE_OPP, RulesCore.SIDE_YOU, 0, false, 0)
+	ktk_model.begin_clinch(RulesCore.SIDE_OPP, RulesCore.SIDE_YOU,
+		ktk_model.sides[RulesCore.SIDE_YOU].lines.size() - 1, false, 0)
 	var next_info: Dictionary = ktk_model.clinch_submit("pass").get("info", {})
 	var returned_card := _discard_card(ktk_model.sides[RulesCore.SIDE_YOU], "Защитный тезис")
 	_check(String(next_info.get("affected_thesis_id", "")) == moved_id and
 		String(returned_card.get("thesis_id", "")) == moved_id and
 		bool(returned_card.get("stolen", false)) and
-		int(ktk_model.sides[RulesCore.SIDE_YOU].lines[0].stolen) == 0,
+		int(ktk_model.sides[RulesCore.SIDE_YOU].lines[-1].stolen) == 0,
 		"следующий клинч снимает тот же украденный thesis_id, а не абстрактную единицу")
 
 
@@ -720,12 +751,46 @@ func _check_named_capture_object_fields() -> void:
 		"named Theft keeps reach bonus/trim on its card object and preserves active-last")
 
 
+func _check_plain_unwind() -> void:
+	# R–T–R без Краж и именных: атакующий перестоял — press снимает exact ответный T,
+	# освобождённый opener доигрывает по рамке; снятые объекты уходят в сброс защитника.
+	var model := _fresh(true)
+	model.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Attacker")]
+	model.sides[RulesCore.SIDE_OPP].lines = [_object_line(2, "Defense", "def")]
+	model.sides[RulesCore.SIDE_YOU].hand = [
+		_card(RulesCore.TYPE_RAZBOR, "Opener R"),
+		_card(RulesCore.TYPE_RAZBOR, "Press R")]
+	model.sides[RulesCore.SIDE_YOU].draw = []
+	model.sides[RulesCore.SIDE_OPP].hand = [_card(RulesCore.TYPE_TEZIS, "Hold T")]
+	model.sides[RulesCore.SIDE_OPP].draw = []
+	model.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
+	var hold: Dictionary = model.clinch_submit("play", false, 0)
+	var hold_id := String(hold.get("thesis_id", ""))
+	model.clinch_submit("play", false, 0)
+	var resolved: Dictionary = model.clinch_submit("pass")
+	var info: Dictionary = resolved.get("info", {})
+	var seq: Array = resolved.get("sequence", [])
+	var opp: Dictionary = model.sides[RulesCore.SIDE_OPP]
+	_check(bool(resolved.get("landed", false)) and seq.size() == 3 and hold_id != "" and
+		String((seq[0] as Dictionary).get("result", "")) == "landed" and
+		String((seq[1] as Dictionary).get("result", "")) == "removed" and
+		String((seq[2] as Dictionary).get("result", "")) == "landed",
+		"plain unwind: атака перестояла — ответный T снят, обе R легли")
+	_check((info.get("resolved_attack_steps", []) as Array) == [2, 0] and
+		String(_resolved_effect(info, 2).get("affected_thesis_id", "")) == hold_id and
+		String(_resolved_effect(info, 0).get("affected_thesis_id", "")) == "def_1",
+		"plain unwind: стек идёт сверху вниз, каждый шаг бьёт свой exact объект")
+	_check(_stack_ids(opp.lines[0]) == ["def_0"] and
+		_discard_has_thesis_id(opp, hold_id) and _discard_has_thesis_id(opp, "def_1"),
+		"plain unwind: на рамке остаётся нижний тезис, снятые объекты в сбросе защитника")
+
+
 func _check_socratic_object_target() -> void:
 	# S–T–R: финальный R уже потребил объект ответа. Ловушка не имеет права выбрать
 	# вместо него базовый тезис рамки.
 	var expired := _fresh(true)
 	expired.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Сократик")]
-	expired.sides[RulesCore.SIDE_OPP].lines = [_line(1, "Ответ")]
+	expired.sides[RulesCore.SIDE_OPP].lines = [_line(1, "Ответ"), _line(1, "Тыл")]
 	expired.sides[RulesCore.SIDE_YOU].hand = [
 		_named_card(RulesCore.TYPE_RAZBOR, "Сократический вопрос", "socratic", true),
 		_card(RulesCore.TYPE_RAZBOR, "R2"),
@@ -742,9 +807,11 @@ func _check_socratic_object_target() -> void:
 		not bool(expired_info.get("socratic", false)) and
 		int(expired_info.get("stolen_count", 0)) == 0 and expired_seq.size() == 3 and
 		String(expired_seq[1].get("result", "")) == "removed" and
-		int(expired.sides[RulesCore.SIDE_OPP].lines[0].theses) == 1 and
+		bool(expired_info.get("removed", false)) and
+		expired.sides[RulesCore.SIDE_OPP].lines.size() == 1 and
+		String(expired.sides[RulesCore.SIDE_OPP].lines[0].name) == "Тыл" and
 		int(expired.sides[RulesCore.SIDE_YOU].lines[0].theses) == 1,
-		"S–T–R: Сократик не перескакивает с уже снятого T на базовый тезис рамки")
+		"S–T–R: Сократик не перескакивает с уже снятого T на другой объект")
 
 	# S–T1–R–T2: обе атаки погашены, поэтому первый T всё ещё held. Ловушка снимает
 	# конкретно T1 из середины стека; T2 и его объект остаются сверху.
@@ -796,7 +863,7 @@ func _check_named_clinch_legality() -> void:
 	# Неверный индекс не может молча списать другую карту. Сначала отклоняем named T/R,
 	# затем тем же стейтом принимаем выбранные ванильные объекты.
 	var exact := _fresh(true)
-	exact.sides[RulesCore.SIDE_OPP].lines = [_line(1)]
+	exact.sides[RulesCore.SIDE_OPP].lines = [_line(2)]
 	exact.sides[RulesCore.SIDE_YOU].hand = [vanilla_r.duplicate(true),
 		socratic.duplicate(true), _card(RulesCore.TYPE_RAZBOR, "Press R")]
 	exact.sides[RulesCore.SIDE_YOU].draw = []
@@ -816,7 +883,7 @@ func _check_named_clinch_legality() -> void:
 		String(exact.sides[RulesCore.SIDE_YOU].hand[0].get("named", "")) == "socratic" and
 		String(exact.sides[RulesCore.SIDE_OPP].hand[0].get("named", "")) == "burden_shift" and
 		int(exact_info.get("clinch_t", 0)) == 1 and
-		int(exact.sides[RulesCore.SIDE_OPP].lines[0].theses) == before_line,
+		int(exact.sides[RulesCore.SIDE_OPP].lines[0].theses) == before_line - 1,
 		"illegal selected index ничего не мутирует и не подменяется другой картой")
 
 	var shot_open := _fresh(true)
@@ -895,12 +962,13 @@ func _check_ai_target_awareness() -> void:
 	model.clinch_submit("play", false, 0)
 	var spends_last_press: bool = ai.atk_will_clinch(model, RulesCore.SIDE_YOU,
 		model.sides[RulesCore.SIDE_OPP].lines[0])
-	# Для проверки второй defense-фазы вручную разыгрываем press, который smart сохранил бы.
 	model.clinch_submit("play", false, 0)
 	var feeds_press: bool = ai.def_will_clinch(model, RulesCore.SIDE_OPP,
 		model.sides[RulesCore.SIDE_OPP].lines[0])
-	_check(protects_frame and not spends_last_press and not feeds_press,
-		"smart AI отличает opener→frame от press→T и не кормит поздний press последним T")
+	# Летальный opener угрожает всю длину ралли: press снимет exact T и освободит его по
+	# последней рамке. Атакующий дожимает последней картой, защитник кормит последний T.
+	_check(protects_frame and spends_last_press and feeds_press,
+		"smart AI видит сквозную угрозу opener→рамка и дожимает/держит до конца ралли")
 
 
 func _check_clinch_context_snapshot() -> void:

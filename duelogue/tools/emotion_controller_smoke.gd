@@ -94,8 +94,10 @@ func _run_smoke() -> void:
 		"argument_lost", "frame_lost", "captured", "attack_stalled"],
 		"проверка получает уже разрешённый исход, а не шум ралли")
 
-	# Точная регрессия плейтеста: открывающая Кража погашена T; выбранный поверх неё
-	# обычный Разбор снимает только этот T и не наследует чужой карточный эффект.
+	# Точная регрессия плейтеста: открывающая Кража погашена T лишь временно. Обычный
+	# Разбор сносит exact T в сброс (кражу он НЕ наследует), после чего перестоявшая
+	# Кража доигрывает по рамке: толщина 2 вне reach 1 — захват блокирован, украден
+	# верхний тезис. Реплика без thesis_id (sentinel) при этом остаётся на рамке.
 	start_match()
 	spoken.clear()
 	emotion_event_calls.clear()
@@ -107,6 +109,7 @@ func _run_smoke() -> void:
 	model.sides[SIDE_YOU].draw = []
 	model.sides[SIDE_OPP].hand = [{"type": TYPE_TEZIS, "name": "Ответный тезис"}]
 	model.sides[SIDE_OPP].draw = []
+	model.sides[SIDE_OPP].lines[0]["theses"] = 2
 	model.sides[SIDE_OPP].lines[0]["statements"] = [
 		{"text": "Базовая реплика", "axis": "base", "device": "sentinel"},
 	]
@@ -120,14 +123,14 @@ func _run_smoke() -> void:
 		if String((event as Dictionary).get("ev", "")) == "clinch":
 			clinch_event = event
 	_check(not clinch_event.is_empty() and not clinch_event.get("captured", false) and
-		int(clinch_event.get("stolen_count", 0)) == 0 and
-		String(clinch_event.get("landing_effect", "")) == "breakdown" and
-		String(clinch_event.get("landing_target_kind", "")) == "thesis" and
-		bool(clinch_event.get("parried_capture", false)) and
+		bool(clinch_event.get("capture_blocked", false)) and
+		int(clinch_event.get("stolen_count", 0)) == 1 and
+		String(clinch_event.get("landing_effect", "")) == "steal_thesis" and
+		String(clinch_event.get("landing_target_kind", "")) == "frame" and
 		int(model.sides[SIDE_OPP].lines[0].theses) == 1 and
 		(model.sides[SIDE_OPP].lines[0].statements as Array).size() == 1 and
 		String(model.sides[SIDE_OPP].lines[0].statements[0].device) == "sentinel",
-		"контроллер: K–T–R снимает реплику точного T, но сохраняет базовую реплику рамки")
+		"контроллер: R сносит exact T в сброс, перестоявшая Кража крадёт верхний тезис рамки")
 
 	# Объектная ловушка в реальном контроллере: S–T1–R–T2 крадёт T1 из середины,
 	# поэтому его statement исчезает, а более поздний T2 остаётся верхней репликой.

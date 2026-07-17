@@ -6,7 +6,7 @@ extends Control
 ## рамки) пересобирается кодом в редактируемые контейнеры OppRow/YouRow/HandRow.
 ## Стенограмма — выезжающий справа ящик (кнопка-тумблер слева от меню). F6.
 
-const ZalV3 := preload("res://duelogue/core/rules/rules_core.gd")  ## ядро правил — константы SIDE_*/TYPE_*/ZAL_MAX
+const C := preload("res://duelogue/core/cards/card_types.gd")  ## общий контракт — константы SIDE_*/TYPE_*/ZAL_MAX
 const BattleController := preload("res://duelogue/app/battle_controller.gd")
 const CardScene := preload("res://duelogue/ui/card/card.tscn")  ## шаблон карты руки (слои правятся в card.tscn)
 const CardArt := preload("res://duelogue/core/cards/card_art.gd")
@@ -192,8 +192,8 @@ func _on_match_started(_info: Dictionary) -> void:
 
 
 func _on_utterance(side: String, text: String, meta: Dictionary) -> void:
-	var col := COL_YOU if side == ZalV3.SIDE_YOU else COL_OPP
-	var who := "Вы" if side == ZalV3.SIDE_YOU else "Оппонент"
+	var col := COL_YOU if side == C.SIDE_YOU else COL_OPP
+	var who := "Вы" if side == C.SIDE_YOU else "Оппонент"
 	var kind := String(meta.get("reaction_kind", ""))
 	var role := String(meta.get("stance", ""))
 	var bolt := ""
@@ -228,8 +228,8 @@ func _on_match_reported(report: Dictionary) -> void:
 	var board: Dictionary = report.get("board", {})
 	var audience: Dictionary = report.get("audience", {})
 	var emotion: Dictionary = report.get("emotion", {})
-	var you_emotion: Dictionary = emotion.get(ZalV3.SIDE_YOU, {})
-	var opp_emotion: Dictionary = emotion.get(ZalV3.SIDE_OPP, {})
+	var you_emotion: Dictionary = emotion.get(C.SIDE_YOU, {})
+	var opp_emotion: Dictionary = emotion.get(C.SIDE_OPP, {})
 	var winner := String(report.get("winner", "draw"))
 	_final_profile.text = "ПРОФИЛЬ · %s" % String(profile.get("label", "эксперимент"))
 	_final_rule.text = String(report.get("formula", ""))
@@ -254,16 +254,16 @@ func _on_match_reported(report: Dictionary) -> void:
 	var decision_threshold := maxi(1, int(audience.get("decision_threshold", 1)))
 	var crowd_winner := "draw"
 	if absi(lean) >= decision_threshold:
-		crowd_winner = ZalV3.SIDE_YOU if lean > 0 else ZalV3.SIDE_OPP
+		crowd_winner = C.SIDE_YOU if lean > 0 else C.SIDE_OPP
 	_final_audience_score.text = "КРЕН  %+d" % lean
 	var lean_text := "зал не выбрал сторону"
 	if lean == 1:
 		lean_text = "лёгкий крен к вам"
 	elif lean == -1:
 		lean_text = "лёгкий крен к оппоненту"
-	elif crowd_winner == ZalV3.SIDE_YOU:
+	elif crowd_winner == C.SIDE_YOU:
 		lean_text = "зал выбрал вас"
-	elif crowd_winner == ZalV3.SIDE_OPP:
+	elif crowd_winner == C.SIDE_OPP:
 		lean_text = "зал выбрал оппонента"
 	_final_audience_detail.text = "АЗАРТ %d/%d\n%s" % [
 		heat, int(audience.get("heat_max", 0)), lean_text]
@@ -285,12 +285,12 @@ func _on_match_reported(report: Dictionary) -> void:
 		_final_split.text = "ЗАЛ НЕ ВЫБРАЛ СТОРОНУ"
 		_final_split.add_theme_color_override("font_color", Color.html("#" + COL_DIM))
 	elif board_winner == "draw":
-		var hall_side := "К ВАМ" if crowd_winner == ZalV3.SIDE_YOU else "К ОППОНЕНТУ"
+		var hall_side := "К ВАМ" if crowd_winner == C.SIDE_YOU else "К ОППОНЕНТУ"
 		_final_split.text = "ДОСКА: НИЧЬЯ · ЗАЛ СКЛОНИЛСЯ %s" % hall_side
 		_final_split.add_theme_color_override("font_color", Color.html("#" + COL_GOLD))
 	else:
 		_final_split.text = "ДОСКА И ЗАЛ СОГЛАСНЫ"
-		var agreement_color := COL_YOU if board_winner == ZalV3.SIDE_YOU else COL_OPP
+		var agreement_color := COL_YOU if board_winner == C.SIDE_YOU else COL_OPP
 		_final_split.add_theme_color_override("font_color", Color.html("#" + agreement_color))
 	_final_verdict.text = String(report.get("verdict", ""))
 	_final_description.text = String(profile.get("description", ""))
@@ -313,19 +313,19 @@ func _log(s: String) -> void:
 func _refresh() -> void:
 	if model == null:
 		return
-	var you_n: int = model.score(ZalV3.SIDE_YOU)
-	var opp_n: int = model.score(ZalV3.SIDE_OPP)
+	var you_n: int = model.score(C.SIDE_YOU)
+	var opp_n: int = model.score(C.SIDE_OPP)
 	var live_report: Dictionary = controller.outcome_report()
 	var live_board: Dictionary = live_report.get("board", {})
 	_score_label.text = "ДОСКА B %+d  ·  рамки %d:%d  ·  тезисы %d:%d  ·  РЕЗЕРВ U %d:%d  (опп:вы)" % [
 		int(live_board.get("score", 0)), opp_n, you_n,
 		int(live_board.get("opp_theses", 0)), int(live_board.get("you_theses", 0)),
-		int(model.reserve_count(ZalV3.SIDE_OPP)), int(model.reserve_count(ZalV3.SIDE_YOU))]
+		int(model.reserve_count(C.SIDE_OPP)), int(model.reserve_count(C.SIDE_YOU))]
 	var audience: Dictionary = controller.audience_state()
 	var z: int = int(audience.get("lean", model.zal()))
 	# Зал-гейт: фаворит зала — под прицелом (его тонкие рамки захватываемы целиком).
-	var my_reach: int = model.capture_threshold(ZalV3.SIDE_YOU)   # моя сила захвата
-	var opp_reach: int = model.capture_threshold(ZalV3.SIDE_OPP)  # его сила захвата
+	var my_reach: int = model.capture_threshold(C.SIDE_YOU)   # моя сила захвата
+	var opp_reach: int = model.capture_threshold(C.SIDE_OPP)  # его сила захвата
 	var gate_note := ""
 	if opp_reach >= 2:
 		gate_note = "  ·  вы фаворит: ваши рамки ≤%d ШАТАЮТСЯ" % opp_reach
@@ -333,8 +333,8 @@ func _refresh() -> void:
 		gate_note = "  ·  фаворит — оппонент: его рамки ≤%d ШАТАЮТСЯ" % my_reach
 	# «Счёт судьи» зал-нокаута перекрывает гейт-заметку: у черты это главный факт на столе.
 	if int(model.zal_ko) > 0:
-		var sy := int(model.crowd_streak.get(ZalV3.SIDE_YOU, 0))
-		var so := int(model.crowd_streak.get(ZalV3.SIDE_OPP, 0))
+		var sy := int(model.crowd_streak.get(C.SIDE_YOU, 0))
+		var so := int(model.crowd_streak.get(C.SIDE_OPP, 0))
 		if sy > 0:
 			gate_note = "  ·  ЗАЛ СКАНДИРУЕТ ЗА ВАС: %d/%d" % [sy, int(model.zal_hold)]
 		elif so > 0:
@@ -347,12 +347,12 @@ func _refresh() -> void:
 	_update_bar(z)
 	_update_emotion_hud()
 	var input_mode := String(controller.input_mode())
-	_rebuild_frames(_opp_row, board_lines_for_mode(model.sides[ZalV3.SIDE_OPP].lines,
+	_rebuild_frames(_opp_row, board_lines_for_mode(model.sides[C.SIDE_OPP].lines,
 		input_mode), false, _opp_sep0)
-	_rebuild_frames(_you_row, board_lines_for_mode(model.sides[ZalV3.SIDE_YOU].lines,
+	_rebuild_frames(_you_row, board_lines_for_mode(model.sides[C.SIDE_YOU].lines,
 		input_mode), true, _you_sep0)
 	_rebuild_hand()
-	_draw_count.text = str(model.sides[ZalV3.SIDE_YOU].draw.size())
+	_draw_count.text = str(model.sides[C.SIDE_YOU].draw.size())
 	_update_controls()
 
 
@@ -363,9 +363,9 @@ static func board_lines_for_mode(lines: Array, input_mode: String) -> Array:
 
 
 func _update_emotion_hud() -> void:
-	_render_strain(controller.emotion_state(ZalV3.SIDE_YOU), _you_strain_bg,
+	_render_strain(controller.emotion_state(C.SIDE_YOU), _you_strain_bg,
 		_you_strain_fill, _you_strain_label, "ВЫ")
-	_render_strain(controller.emotion_state(ZalV3.SIDE_OPP), _opp_strain_bg,
+	_render_strain(controller.emotion_state(C.SIDE_OPP), _opp_strain_bg,
 		_opp_strain_fill, _opp_strain_label, "ОПП")
 
 
@@ -417,7 +417,7 @@ func _update_bar(z: int) -> void:
 	var bar_h := _bar_bg.size.y
 	# Шкала бара = черта зал-нокаута (край достижим и означает TKO); без TKO — ZAL_MAX.
 	var audience: Dictionary = controller.audience_state()
-	var zmax := maxi(1, int(audience.get("lean_cap", ZalV3.ZAL_MAX)))
+	var zmax := maxi(1, int(audience.get("lean_cap", C.ZAL_MAX)))
 	var t := clampf(float(z) / float(zmax), -1.0, 1.0)
 	var center := bar_x + bar_w / 2.0
 	var mx := center + t * (bar_w / 2.0)
@@ -658,7 +658,7 @@ func _frame_trailing_pad(is_you: bool, idx: int) -> float:
 	var cl: Dictionary = model.clinch
 	if cl.is_empty():
 		return trailing
-	var side := ZalV3.SIDE_YOU if is_you else ZalV3.SIDE_OPP
+	var side := C.SIDE_YOU if is_you else C.SIDE_OPP
 	if String(cl.get("defender", "")) != side or int(cl.get("idx", -1)) != idx:
 		return trailing
 	var sequence := _clinch_sequence(cl)
@@ -673,7 +673,7 @@ func _display_thesis_count(line: Dictionary, is_you: bool, idx: int) -> int:
 	var cl: Dictionary = model.clinch
 	if cl.is_empty():
 		return count
-	var side := ZalV3.SIDE_YOU if is_you else ZalV3.SIDE_OPP
+	var side := C.SIDE_YOU if is_you else C.SIDE_OPP
 	if String(cl.get("defender", "")) == side and int(cl.get("idx", -1)) == idx:
 		count -= int(cl.get("t_added", 0))
 	return maxi(0, count)
@@ -692,9 +692,9 @@ func _clinch_sequence(cl: Dictionary) -> Array:
 		# Старый стейт надёжно знает только объект первой атаки; эффект поздней карты
 		# нельзя восстанавливать из агрегата без нарушения карточной семантики.
 		var steals := bool(cl.get("init_steals", false)) if i == 0 else false
-		fallback.append({"type": ZalV3.TYPE_RAZBOR, "steals": steals})
+		fallback.append({"type": C.TYPE_RAZBOR, "steals": steals})
 		if i < theses:
-			fallback.append({"type": ZalV3.TYPE_TEZIS, "stolen": false})
+			fallback.append({"type": C.TYPE_TEZIS, "stolen": false})
 	return fallback
 
 
@@ -750,7 +750,7 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 	var contested := false
 	var razbors := 0
 	if not cl.is_empty():
-		var my_side := ZalV3.SIDE_YOU if is_you else ZalV3.SIDE_OPP
+		var my_side := C.SIDE_YOU if is_you else C.SIDE_OPP
 		contested = (int(cl.idx) == idx) and (String(cl.defender) == my_side)
 		razbors = int(cl.r_count)
 	var thesis_tokens := visible_thesis_tokens(line,
@@ -759,7 +759,7 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 	var targetable: bool = String(controller.input_mode()) == "target" and not is_you
 	# View reads the exact object thickness and the single public audience-only reach.
 	# Temporary/permanent frame protection remains a separate eligibility flag.
-	var owner := ZalV3.SIDE_YOU if is_you else ZalV3.SIDE_OPP
+	var owner := C.SIDE_YOU if is_you else C.SIDE_OPP
 	var threat: Dictionary = controller.frame_threat(owner, idx)
 	var shaky: bool = not contested and bool(threat.get("shaky", false))
 
@@ -773,7 +773,7 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 
 	# Карта-установка показывает claim (позицию-топик), если он назначен.
 	var claim_txt: String = String(line.get("claim", line.name))
-	var uc := _mkcard({"type": ZalV3.TYPE_USTANOVKA, "steals": false},
+	var uc := _mkcard({"type": C.TYPE_USTANOVKA, "steals": false},
 		COL_USTAN, closed, contested)
 	uc.set_meta("board_card", true)
 	uc.set_meta("board_role", "frame")
@@ -801,14 +801,14 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 		if spoken != "":
 			frame_info += "\n\nСКАЖЕТЕ:\n%s" % spoken
 	_attach_card_bubble(uc, "Рамка", frame_info,
-		{"type": ZalV3.TYPE_USTANOVKA, "steals": false})
+		{"type": C.TYPE_USTANOVKA, "steals": false})
 	root.add_child(uc)
 
 	for j in shown:
 		var thesis_token: Dictionary = thesis_tokens[j]
 		var is_st := bool(thesis_token.get("stolen", false))
 		# Украденный тезис сохраняет тезисную пиктограмму; золото живёт только в окантовке.
-		var tc := _mkcard({"type": ZalV3.TYPE_TEZIS, "steals": false},
+		var tc := _mkcard({"type": C.TYPE_TEZIS, "steals": false},
 			(COL_GOLD if is_st else COL_TEZIS), closed, false)
 		tc.set_meta("board_stolen", is_st)
 		tc.set_meta("thesis_id", String(thesis_token.get("thesis_id", "")))
@@ -833,10 +833,10 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 		var sequence := _clinch_sequence(cl)
 		for k in sequence.size():
 			var played: Dictionary = sequence[k]
-			var played_type := String(played.get("type", ZalV3.TYPE_RAZBOR))
-			var is_theft := played_type == ZalV3.TYPE_RAZBOR and bool(played.get("steals", false))
-			var is_stolen_thesis := played_type == ZalV3.TYPE_TEZIS and bool(played.get("stolen", false))
-			var border_col := COL_TEZIS if played_type == ZalV3.TYPE_TEZIS else COL_RAZBOR
+			var played_type := String(played.get("type", C.TYPE_RAZBOR))
+			var is_theft := played_type == C.TYPE_RAZBOR and bool(played.get("steals", false))
+			var is_stolen_thesis := played_type == C.TYPE_TEZIS and bool(played.get("stolen", false))
+			var border_col := COL_TEZIS if played_type == C.TYPE_TEZIS else COL_RAZBOR
 			if is_theft or is_stolen_thesis:
 				border_col = COL_GOLD
 			var rc := _mkcard({"type": played_type, "steals": is_theft}, border_col, false, false)
@@ -915,9 +915,9 @@ func _rebuild_hand() -> void:
 		_rebuild_opening_hand()
 		_layout_hand()
 		return
-	var hand: Array = model.sides[ZalV3.SIDE_YOU].hand
-	var recovery: Array = model.recovery_indices(ZalV3.SIDE_YOU) if mode == "reframe" else []
-	var legal: Array = model.legal_types(ZalV3.SIDE_YOU) if mode == "move" else []
+	var hand: Array = model.sides[C.SIDE_YOU].hand
+	var recovery: Array = model.recovery_indices(C.SIDE_YOU) if mode == "reframe" else []
+	var legal: Array = model.legal_types(C.SIDE_YOU) if mode == "move" else []
 	for i in hand.size():
 		var card: Dictionary = hand[i]
 		var enabled := false
@@ -938,7 +938,7 @@ func _rebuild_hand() -> void:
 		# Установки имеют собственные названия (Рамка / Тезис дня / Позиция), поэтому не
 		# схлопываем их все в одинаковый заголовок «Установка».
 		var title: String = String(card.get("name", "")) if is_named or \
-			card.type == ZalV3.TYPE_USTANOVKA else nar.device_label(card)
+			card.type == C.TYPE_USTANOVKA else nar.device_label(card)
 		if bool(card.get("opening_reserve", false)):
 			title = "Резервная рамка"
 		var body: String = String(card.get("text", "")) if is_named else controller.hand_preview(i)
@@ -951,7 +951,7 @@ func _rebuild_hand() -> void:
 		var bubble_body := String(card.get("text", "")) if is_named else "СКАЖЕТЕ:\n%s" % body
 		if is_named:
 			bubble_body = "Именной приём\n\n" + bubble_body
-		if mode == "reframe" and not enabled and card.type == ZalV3.TYPE_USTANOVKA:
+		if mode == "reframe" and not enabled and card.type == C.TYPE_USTANOVKA:
 			bubble_body += "\n\nЭта рамка пришла после падения и сейчас не может спасти позицию."
 		_attach_card_bubble(btn, bubble_title, bubble_body, card)
 		_attach_hand_motion(btn)
@@ -966,7 +966,7 @@ func _rebuild_opening_hand() -> void:
 	for option in controller.opening_options():
 		var axes: Array = nar.axis_tags(option.get("preferred_axes", []))
 		var focus := "" if axes.is_empty() else "Фокус: %s" % " · ".join(axes)
-		var card := {"type": ZalV3.TYPE_USTANOVKA,
+		var card := {"type": C.TYPE_USTANOVKA,
 			"name": ("Резерв" if reserve_stage else "Активная рамка"), "steals": false}
 		var body := "«%s»" % String(option.get("text", ""))
 		if focus != "":
@@ -1062,9 +1062,9 @@ func _show_card_bubble(owner: Control, title: String, body: String, card: Dictio
 	_card_bubble_body.text = body
 	var border := Color.html("#" + COL_TEZIS)
 	match String(card.get("type", "")):
-		ZalV3.TYPE_RAZBOR:
+		C.TYPE_RAZBOR:
 			border = Color.html("#" + (COL_GOLD if bool(card.get("steals", false)) else COL_RAZBOR))
-		ZalV3.TYPE_USTANOVKA:
+		C.TYPE_USTANOVKA:
 			border = Color.html("#" + COL_USTAN)
 	_card_bubble.add_theme_stylebox_override("panel",
 		_card_style(Color.html("#111722"), border, 2))

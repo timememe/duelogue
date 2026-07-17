@@ -5,6 +5,7 @@ extends RefCounted
 ## Вынесено из zal_v3_model.gd (_new_side / _mk / _refill + *_NAMES).
 
 const C := preload("res://duelogue/core/cards/card_types.gd")
+const Grammar := preload("res://duelogue/core/cards/grammar.gd")
 const TYPE_TEZIS := C.TYPE_TEZIS
 const TYPE_RAZBOR := C.TYPE_RAZBOR
 const TYPE_USTANOVKA := C.TYPE_USTANOVKA
@@ -15,13 +16,37 @@ const USTANOVKA_NAMES := ["Рамка", "Тезис дня", "Позиция", "
 
 
 ## Карта колоды по типу и порядковому индексу (имя берётся по кругу из *_NAMES).
+## Карта рождается уже протегированной онтологией (grammar.gd): scheme/suit у Тезиса,
+## device/hook у Разбора — авторитет данных на самой карте, а не пересчёт по имени.
 static func make_card(type: String, i: int) -> Dictionary:
 	var nm := ""
 	match type:
 		TYPE_TEZIS: nm = TEZIS_NAMES[i % TEZIS_NAMES.size()]
 		TYPE_RAZBOR: nm = RAZBOR_NAMES[i % RAZBOR_NAMES.size()]
 		TYPE_USTANOVKA: nm = USTANOVKA_NAMES[i % USTANOVKA_NAMES.size()]
-	return {"type": type, "name": nm, "steals": false}
+	var card := {"type": type, "name": nm, "steals": false}
+	match type:
+		TYPE_TEZIS:
+			var scheme := String(Grammar.CARD_SCHEME.get(nm, ""))
+			if scheme != "":
+				card["scheme"] = scheme
+				card["suit"] = String(Grammar.SUIT_OF.get(scheme, ""))
+				card["combo_eligible"] = true
+		TYPE_RAZBOR:
+			var device := String(Grammar.CARD_DEVICE.get(nm, ""))
+			if device != "":
+				card["device"] = device
+				card["hook"] = String(Grammar.HOOK_OF.get(device, ""))
+				card["combo_eligible"] = true
+	return card
+
+
+## Технический тезис без карты (стартовые тезисы Базы, ленивые токены стека). Схемы НЕТ
+## и combo_eligible=false осознанно (§1.3 грамматики): иначе каждая База случайно стала бы
+## конкретной схемой и начала собирать маршруты. Имя совпадает с прежним фабричным.
+static func filler_thesis() -> Dictionary:
+	return {"type": TYPE_TEZIS, "name": TEZIS_NAMES[0], "steals": false,
+		"combo_eligible": false}
 
 
 ## Собрать сторону: колода (n_t тезисов, n_r атак из них steal_cards Краж, n_u установок),

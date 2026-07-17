@@ -19,6 +19,7 @@ const DefaultReactions := preload("res://duelogue/core/emotion/reaction_decks/vo
 const AudienceCore := preload("res://duelogue/core/audience/audience_core.gd")
 const OutcomeProfiles := preload("res://duelogue/core/outcome/outcome_profiles.gd")
 const OutcomeEvaluator := preload("res://duelogue/core/outcome/outcome_evaluator.gd")
+const MatchLog := preload("res://duelogue/app/match_log.gd")
 const PineappleTheme := preload("res://duelogue/core/narrative/themes/theme_pineapple.gd")
 const ShawarmaTheme := preload("res://duelogue/core/narrative/themes/theme_shawarma.gd")
 const EvangelionTheme := preload("res://duelogue/core/narrative/themes/theme_evangelion.gd")
@@ -70,8 +71,6 @@ const CLINCH_STEP_DELAY := 0.45
 ## Начальная реакция + максимум два звена ответа. Cooldown почти всегда гасит второе звено,
 ## но жёсткий cap сохраняет безопасность при будущих архетипах с другой разрядкой.
 const MAX_REACTION_REPLIES := 2
-const LOG_PATH := "res://duelogue/tools/playtest_log.jsonl"
-const TX_PATH := "res://duelogue/tools/narrative_transcript.md"
 
 signal _clinch_decided(decision: Dictionary)  ## внутр.: решение игрока в клинче (из play_hand/clinch_pass)
 
@@ -82,7 +81,12 @@ var emotion: RefCounted
 var audience: RefCounted
 var outcome: RefCounted
 var match_id := 0
-var logging_enabled := true     ## smoke/preview могут выключить файловые побочные эффекты
+var _log: RefCounted = MatchLog.new()  ## writer транскрипта и JSONL (app/match_log.gd)
+## smoke/preview могут выключить файловые побочные эффекты (сеттер синхронизирует writer)
+var logging_enabled := true:
+	set(v):
+		logging_enabled = v
+		_log.enabled = v
 var _epoch := 0          ## поколение матча; протухшие await прошлой партии выходят по нему
 var _theme_data: Dictionary
 var _mode := "locked"    ## ввод: locked | opening | move | reframe | target | clinch_defend | clinch_attack
@@ -390,6 +394,7 @@ func start_match() -> void:
 	_opp_style = _profile_opp_style()
 	ai.set_style(SIDE_OPP, _opp_style)
 	match_id = int(Time.get_unix_time_from_system())
+	_log.match_id = match_id
 	nar.start(_theme_data, match_id, {"you": "contra", "opp": "pro"})
 	emotion.start(DefaultReactions.data(), match_id ^ 0x5EED, [SIDE_YOU, SIDE_OPP])
 	_draw0 = maxi(1, _draw_left())
@@ -1505,7 +1510,9 @@ func _used_axes(line: Dictionary) -> Array:
 	return out
 
 
-# --- общий транскрипт (нарратив ↔ действия в одном файле, в порядке исполнения) ---
+# --- запись катки: файлы пишет app/match_log.gd. _emit и _tx_write — намеренный шов:
+# интеграционные смоуки переопределяют их (перехват событий / глушение транскрипта),
+# поэтому весь вывод обязан проходить через эти две функции, а не в _log напрямую. ---
 
 func _tx_header(first: String) -> void:
 	_tx_write("")
@@ -1524,22 +1531,12 @@ func _tx(tag: String, body: String) -> void:
 
 
 func _tx_write(s: String) -> void:
-	if not logging_enabled:
-		return
-	var f: FileAccess
-	if FileAccess.file_exists(TX_PATH):
-		f = FileAccess.open(TX_PATH, FileAccess.READ_WRITE)
-		if f:
-			f.seek_end()
-	else:
-		f = FileAccess.open(TX_PATH, FileAccess.WRITE)
-	if f == null:
-		return
-	f.store_line(s)
-	f.close()
+	_log.tx_write(s)
 
 
-# --- запись катки (JSONL) ---
+func _emit(d: Dictionary) -> void:
+	_log.emit(d)
+
 
 func _econ() -> Dictionary:
 	var y: Dictionary = model.sides[SIDE_YOU]
@@ -1552,20 +1549,3 @@ func _econ() -> Dictionary:
 		"you_hand": y.hand.size(), "opp_hand": o.hand.size(),
 		"you_deck": y.draw.size(), "opp_deck": o.draw.size(),
 	}
-
-
-func _emit(d: Dictionary) -> void:
-	if not logging_enabled:
-		return
-	d["m"] = match_id
-	var f: FileAccess
-	if FileAccess.file_exists(LOG_PATH):
-		f = FileAccess.open(LOG_PATH, FileAccess.READ_WRITE)
-		if f:
-			f.seek_end()
-	else:
-		f = FileAccess.open(LOG_PATH, FileAccess.WRITE)
-	if f == null:
-		return
-	f.store_line(JSON.stringify(d))
-	f.close()

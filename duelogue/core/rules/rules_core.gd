@@ -154,7 +154,7 @@ func _next_thesis_id() -> String:
 
 
 func _thesis_token(card: Dictionary = {}) -> Dictionary:
-	var token: Dictionary = card if not card.is_empty() else Deck.make_card(TYPE_TEZIS, 0)
+	var token: Dictionary = card if not card.is_empty() else Deck.filler_thesis()
 	token["type"] = TYPE_TEZIS
 	if String(token.get("name", "")) == "":
 		token["name"] = "Тезис"
