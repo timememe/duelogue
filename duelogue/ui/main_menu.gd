@@ -18,6 +18,7 @@ func _ready() -> void:
 	%BattleBtn.pressed.connect(_go.bind("res://duelogue/ui/debate_screen.tscn"))
 	%RunBtn.pressed.connect(_go.bind("res://duelogue/ui/run_map_screen.tscn"))
 	%DeckBtn.pressed.connect(_go.bind("res://duelogue/ui/deck_editor.tscn"))
+	%ComboBtn.pressed.connect(_go.bind("res://duelogue/ui/combo_catalog.tscn"))
 	%SettingsBtn.pressed.connect(_open_settings)
 	%QuitBtn.pressed.connect(func() -> void: get_tree().quit())
 	%CloseSettingsBtn.pressed.connect(func() -> void: _settings_panel.visible = false)

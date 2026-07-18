@@ -13,6 +13,7 @@ extends RefCounted
 
 const Cards := preload("res://duelogue/core/cards/card_types.gd")
 const Deck := preload("res://duelogue/core/cards/deck.gd")
+const Grammar := preload("res://duelogue/core/cards/grammar.gd")
 
 const TYPE_TEZIS := Cards.TYPE_TEZIS
 const TYPE_RAZBOR := Cards.TYPE_RAZBOR
@@ -955,6 +956,24 @@ func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bo
 		named_played[attacker] = int(named_played.get(attacker, 0)) + 1
 	_discard(attacker, initc)
 	turn_count += 1
+	# Комбо-грамматика (§2 combo_grammar_v0.2): opening_anchor — снапшот EXACT верхнего
+	# Тезиса рамки в момент объявления. Matcher не перепрыгивает через неeligible объект
+	# (техническую Базу) к схеме ниже. Пока чистая телеметрия — механику клинча не меняет.
+	var opening_anchor := {}
+	var combo_route := {}
+	var opening_stack := _ensure_thesis_stack(lines[idx])
+	if not opening_stack.is_empty():
+		var top_thesis: Dictionary = opening_stack[-1]
+		if Grammar.eligible(top_thesis):
+			opening_anchor = {
+				"thesis_id": String(top_thesis.get("thesis_id", "")),
+				"scheme": String(top_thesis.get("scheme", "")),
+				"suit": String(top_thesis.get("suit", "")),
+				"frame_owner": defender, "frame_index": idx,
+				"hit": Grammar.hit(top_thesis, initc),
+				"card": top_thesis.duplicate(true),
+			}
+			combo_route = Grammar.route(top_thesis, initc)
 	clinch = {
 		"attacker": attacker, "defender": defender, "idx": idx,
 		"t_added": 0, "r_count": 1,
@@ -965,6 +984,13 @@ func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bo
 		"opening_capture_eligible": opening_capture_eligible,
 		"named": String(initc.get("named", "")),
 		"sequence": [initc.duplicate(true)],
+		"opening_anchor": opening_anchor,
+		"opening_hook": Grammar.hook_of(initc),
+		"combo_route": combo_route,
+		"combo_state": "link" if not combo_route.is_empty() else "none",
+		"combo_owner": "",
+		"closer_step": -1,
+		"closer_thesis_id": "",
 	}
 	return {"card": initc, "is_callback": bool(lines[idx].closed)}
 
@@ -1015,6 +1041,17 @@ func clinch_submit(decision: String, prefer_steal: bool = true, hand_index: int 
 		var sequence: Array = clinch.get("sequence", [])
 		sequence.append(token.duplicate(true))
 		clinch["sequence"] = sequence
+		# Комбо §4: ПЕРВЫЙ защитный ответ на открытый LINK может вооружить тройку. Owner и
+		# closer после этого зафиксированы; дальнейшие hold/press — обычный клинч и их
+		# не переписывают (реверс — отдельный будущий COUNTER_CLAIM, не скрытая автоматика).
+		if String(clinch.get("combo_state", "")) == "link" and int(clinch.t_added) == 1:
+			var anchor_card: Dictionary = (clinch.get("opening_anchor", {}) as Dictionary).get(
+				"card", {})
+			if Grammar.answers(anchor_card, sequence[0], token):
+				clinch.combo_state = "armed"
+				clinch.combo_owner = String(clinch.defender)
+				clinch.closer_step = sequence.size() - 1
+				clinch.closer_thesis_id = String(token.get("thesis_id", ""))
 		if not clinch_freeze:
 			_refill(sides[clinch.defender])
 		clinch.phase = "await_attack"
@@ -1043,6 +1080,13 @@ func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = ""
 	var t_added: int = clinch.t_added
 	var r_count: int = clinch.r_count
 	var named: String = String(clinch.get("named", ""))
+	var combo_state: String = String(clinch.get("combo_state", "none"))
+	var combo_route: Dictionary = clinch.get("combo_route", {})
+	var combo_owner: String = String(clinch.get("combo_owner", ""))
+	var closer_step: int = int(clinch.get("closer_step", -1))
+	var closer_thesis_id: String = String(clinch.get("closer_thesis_id", ""))
+	var opening_anchor: Dictionary = (clinch.get("opening_anchor", {}) as Dictionary) \
+		.duplicate(true)
 	var sequence: Array = clinch.get("sequence", []).duplicate(true)
 	var reach: int = int(clinch.get("capture_reach", 1))
 	var capture_audience_favor: int = int(clinch.get("capture_audience_favor", 0))
@@ -1139,6 +1183,28 @@ func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = ""
 	# уходит атакующему, только если именно этот объект всё ещё лежит на рамке.
 	if named == "socratic" and t_added > 0:
 		_socratic_trap(attacker, defender, idx, info, sequence)
+	# Комбо-settlement (§4): строго ПОСЛЕ полного unwind и именных post-resolve твистов и
+	# ДО рефилла. CONFIRMED = вооружённая тройка, owner победил клинч, exact closer держит
+	# result=held и его объект всё ещё стоит на рамке; сорванная ARMED-ставка — BREAK.
+	# Незакрытый LINK комбо не считается. Payoff не применяется до выбора бумагой A0 —
+	# поля ниже чистая телеметрия и не меняют доску/руки/ход.
+	opening_anchor.erase("card")
+	info["opening_anchor"] = opening_anchor
+	info["combo_state"] = combo_state
+	info["combo_route_id"] = String(combo_route.get("route_id", ""))
+	info["combo_name"] = String(combo_route.get("combo_name", ""))
+	info["combo_owner"] = combo_owner
+	info["combo_result"] = "none"
+	info["combo_payoff"] = ""
+	if combo_state == "armed":
+		var closer_held: bool = closer_step >= 0 and closer_step < sequence.size() and \
+			String((sequence[closer_step] as Dictionary).get("result", "")) == "held"
+		var closer_on_frame := false
+		if idx >= 0 and idx < sides[defender].lines.size():
+			closer_on_frame = _thesis_ids(sides[defender].lines[idx]).has(closer_thesis_id)
+		var owner_won := not attacker_won   # v0.2: owner — всегда защитник-финишер
+		info["combo_result"] = "confirmed" if owner_won and closer_held and closer_on_frame \
+			else "break"
 	info["resolved_sequence"] = sequence.duplicate(true)
 	# Снимок KO/резерва уже сделан внутри резолва; только теперь разрешён добор.
 	_refill(sides[attacker])

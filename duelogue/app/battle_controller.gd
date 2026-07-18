@@ -20,6 +20,7 @@ const AudienceCore := preload("res://duelogue/core/audience/audience_core.gd")
 const OutcomeProfiles := preload("res://duelogue/core/outcome/outcome_profiles.gd")
 const OutcomeEvaluator := preload("res://duelogue/core/outcome/outcome_evaluator.gd")
 const MatchLog := preload("res://duelogue/app/match_log.gd")
+const Grammar := preload("res://duelogue/core/cards/grammar.gd")
 const PineappleTheme := preload("res://duelogue/core/narrative/themes/theme_pineapple.gd")
 const ShawarmaTheme := preload("res://duelogue/core/narrative/themes/theme_shawarma.gd")
 const EvangelionTheme := preload("res://duelogue/core/narrative/themes/theme_evangelion.gd")
@@ -81,6 +82,9 @@ var emotion: RefCounted
 var audience: RefCounted
 var outcome: RefCounted
 var match_id := 0
+## Драйв-полигон комбо (цифровая «бумага A0», §9): обе обоймы заряжаются маршрутом №1
+## «Исключение учтено». Ставит debate_screen из сцены tools/combo_drill.tscn.
+var combo_drill := false
 var _log: RefCounted = MatchLog.new()  ## writer транскрипта и JSONL (app/match_log.gd)
 ## smoke/preview могут выключить файловые побочные эффекты (сеттер синхронизирует writer)
 var logging_enabled := true:
@@ -230,6 +234,53 @@ func target_preview(index: int) -> String:
 	return String(nar.preview_refute_exact(SIDE_YOU, claim, _top_stmt(line), card,
 		bool(line.get("closed", false)), line).text)
 
+
+## Комбо-заметка на цели при выборе рамки (§7): вход в известный маршрут — осознанный
+## риск атакующего. "" — грамматике сказать нечего (не Разбор / техтезис / MISS).
+func target_combo_note(index: int) -> String:
+	if _mode != "target" or index < 0 or index >= model.sides[SIDE_OPP].lines.size():
+		return ""
+	var hand: Array = model.sides[SIDE_YOU].hand
+	var hand_index := _pending_hand if _pending_hand >= 0 else _pending_named
+	if hand_index < 0 or hand_index >= hand.size():
+		return ""
+	var card: Dictionary = hand[hand_index]
+	if String(card.get("type", "")) != TYPE_RAZBOR:
+		return ""
+	var stack: Array = model.sides[SIDE_OPP].lines[index].get("thesis_stack", [])
+	if stack.is_empty() or not Grammar.eligible(stack[-1]):
+		return ""
+	var top: Dictionary = stack[-1]
+	var route: Dictionary = Grammar.route(top, card)
+	if not route.is_empty():
+		return "⚡ РИСК: открывает маршрут «%s» — у схемы «%s» есть известный ответ" % [
+			String(route.get("combo_name", "")), String(top.get("scheme", ""))]
+	if Grammar.hit(top, card):
+		return "Чистое попадание по схеме «%s»: известного контр-маршрута нет" % \
+			String(top.get("scheme", ""))
+	if Grammar.hook_of(card) == "":
+		return "Безопасный укол: без зацепки LINK не откроется, но и финишера не будет"
+	return ""
+
+
+## Подсветка правильного ответа в руке при открытом LINK (§12): светится, но НЕ автоплей.
+## Окно — только первый защитный ответ; после него грамматика решение уже не меняет.
+func combo_answer_glow(index: int) -> bool:
+	if _mode != "clinch_defend" or model.clinch.is_empty():
+		return false
+	if String(model.clinch.get("combo_state", "")) != "link" \
+			or int(model.clinch.get("t_added", 0)) != 0:
+		return false
+	var hand: Array = model.sides[SIDE_YOU].hand
+	if index < 0 or index >= hand.size():
+		return false
+	var anchor_card: Dictionary = (model.clinch.get("opening_anchor", {}) as Dictionary) \
+		.get("card", {})
+	var sequence: Array = model.clinch.get("sequence", [])
+	if sequence.is_empty():
+		return false
+	return Grammar.answers(anchor_card, sequence[0], hand[index])
+
 func theme_list() -> Array:
 	var out: Array = []
 	for t in THEMES:
@@ -276,9 +327,15 @@ func frame_threat(owner: String, index: int) -> Dictionary:
 	var audience_snapshot := audience_state()
 	var capturable: bool = int(model.capture_mode) > 0 and thickness <= reach \
 		and not bool(line.get("braced", false)) and not model.is_fortified(line)
+	# Комбо §12: «на рамке читается схема верхнего Тезиса» — только eligible-объект;
+	# техтезис Базы схемы не имеет и потому не рекламирует ложный setup.
+	var top_scheme := ""
+	var stack: Array = line.get("thesis_stack", [])
+	if not stack.is_empty() and Grammar.eligible(stack[-1]):
+		top_scheme = String((stack[-1] as Dictionary).get("scheme", ""))
 	return {
 		"owner": owner, "raider": raider, "reach": reach, "thickness": thickness,
-		"capturable": capturable,
+		"capturable": capturable, "top_scheme": top_scheme,
 		# A one-thesis frame is baseline-exposed; SHAKY is the extra crowd-opened risk.
 		"shaky": capturable and thickness > 1,
 		"lean": int(audience_snapshot.get("lean", model.zal())),
@@ -387,6 +444,9 @@ func start_match() -> void:
 	model.sides[SIDE_YOU] = DeckLib.build_side(int(d.u), int(d.t), int(d.r), BASE_THESES, int(d.steals), HAND)
 	NamedCards.inject(model.sides[SIDE_YOU], d.get("named", []))
 	NamedCards.inject(model.sides[SIDE_OPP], NAMED_OPP)
+	if combo_drill:
+		_stack_combo_drill(model.sides[SIDE_YOU])
+		_stack_combo_drill(model.sides[SIDE_OPP])
 	DeckLib.prepare_opening_reserve(model.sides[SIDE_YOU], HAND)
 	DeckLib.prepare_opening_reserve(model.sides[SIDE_OPP], HAND)
 	_gate_told = {}
@@ -422,6 +482,26 @@ func start_match() -> void:
 
 func restart() -> void:
 	start_match()
+
+
+## Обойма драйва: плотность маршрута №1 искусственно высока — Аналогия-наживка (Уточнение),
+## Авторитет-финишер (Ссылка), Контрпример-вход и safe poke «И что?». Полигон ощущений A0,
+## не баланс: естественную частоту меряет сим §10 уже ПОСЛЕ вердикта по фану.
+func _stack_combo_drill(side: Dictionary) -> void:
+	var draw: Array = []
+	for i in [3, 3, 5, 5, 4, 0]:   # Уточнение×2 (Аналогия), Ссылка×2 (Авторитет), Пример, Довод
+		draw.append(DeckLib.make_card(TYPE_TEZIS, i))
+	for i in [2, 2, 2, 4]:          # Контрпример×3 (вход в маршрут), Источник? (обычная атака)
+		draw.append(DeckLib.make_card(TYPE_RAZBOR, i))
+	draw.append(DeckLib.safe_poke())
+	draw.append({"type": TYPE_RAZBOR, "name": "Кража", "steals": true})
+	for i in 3:
+		draw.append(DeckLib.make_card(TYPE_USTANOVKA, i))
+	draw.shuffle()
+	side["hand"] = []
+	side["draw"] = draw
+	side["discard"] = []
+	DeckLib.refill(side, HAND)
 
 
 # --------------------------------------------------------------- flow ---------
@@ -821,6 +901,10 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 			decision = "play" if will else "pass"
 			if not is_defend:
 				pref = ai.atk_prefer_steal(model, side, defender, idx)
+			elif decision == "play" and ai.has_method("def_answer_index"):
+				# ИИ-защитник закрывает открытый LINK точной картой ответа (иначе -1: вслепую).
+				# has_method — шов для scripted-стабов интеграционных смоуков.
+				chosen_hand_index = ai.def_answer_index(model, side)
 			await _wait_pace(CLINCH_STEP_DELAY)
 			if my_epoch != _epoch:
 				return
@@ -839,6 +923,13 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 				await _say(defender, stmt.text, "    hold %s [%s]" % [defender, stmt.axis], TYPE_TEZIS, false, nar.last_mood())
 				if my_epoch != _epoch:
 					return
+				# Комбо §4: этот hold вооружил тройку — короткая отметка ARMED. Обещание,
+				# а не награда: ставка обязана пережить весь клинч до settlement.
+				if String(model.clinch.get("combo_state", "")) == "armed" and \
+						int(model.clinch.get("closer_step", -1)) == int(res.get("step", -1)):
+					_narrate("⚡ Тройка «%s» вооружена: ответ закрыл маршрут — теперь его надо отстоять." % \
+						String((model.clinch.get("combo_route", {}) as Dictionary) \
+							.get("combo_name", "")), "    combo armed")
 				_changed()
 			"press":
 				var ac: Dictionary = res.card
@@ -903,6 +994,15 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	_narrate(nar.resolve_text(landed, info.get("removed", false), target_claim,
 		int(info.get("stolen_count", 0)), not landed, info),
 		resolve_debug)
+	# Комбо §12: разные короткие кульминации CONFIRMED и BREAK. Payoff не применяется до
+	# выбора бумагой A0 — это только читаемый итог ставки.
+	match String(info.get("combo_result", "none")):
+		"confirmed":
+			_narrate("⚡ КОМБО «%s» ПОДТВЕРЖДЕНО: финишер пережил клинч." % \
+				String(info.get("combo_name", "")), "    combo confirmed")
+		"break":
+			_narrate("Комбо «%s» разбито: атакующий перестоял ставку." % \
+				String(info.get("combo_name", "")), "    combo break")
 	_sync_removed_statements(defender, info)
 	var ev := {
 		"ev": "clinch", "attacker": attacker, "defender": defender,
@@ -948,6 +1048,12 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 		"socratic": info.get("socratic", false),
 		"socratic_expired": info.get("socratic_expired", false),
 		"socratic_target_step": info.get("socratic_target_step", -1),
+		"combo_state": info.get("combo_state", "none"),
+		"combo_result": info.get("combo_result", "none"),
+		"combo_route_id": info.get("combo_route_id", ""),
+		"combo_name": info.get("combo_name", ""),
+		"combo_owner": info.get("combo_owner", ""),
+		"opening_anchor": info.get("opening_anchor", {}),
 		"sequence": info.get("resolved_sequence", resolved.get("sequence", [])),
 		"stop_reason": stop_reason,
 		"stop_side": info.get("stop_side", resolved.get("stop_side", "")),
@@ -1003,6 +1109,15 @@ func _ask_clinch(mode: String) -> Dictionary:
 			hint_text = "КЛИНЧ · %s направлен в последний ответный тезис. Если пропустить, он снимет ответ и освободит всю цепь до исходной атаки." % incoming_name
 	else:
 		hint_text = "КЛИНЧ · последний ТЕЗИС прикрыл рамку. РАЗБОР снимет только его; КРАЖА украдёт только его и не захватит рамку."
+	# Комбо §12: временный индикатор состояния над клинчем — LINK-окно первого ответа
+	# и вооружённая ставка (для обеих сторон: атакующий решает, перестаивать ли её).
+	var combo_state := String(model.clinch.get("combo_state", "none"))
+	var combo_name := String((model.clinch.get("combo_route", {}) as Dictionary) \
+		.get("combo_name", ""))
+	if combo_state == "link" and mode == "defend" and int(model.clinch.get("t_added", 0)) == 0:
+		hint_text += " ⚡ Открыт маршрут «%s»: правильный ответ (подсвечен) вооружит комбо." % combo_name
+	elif combo_state == "armed":
+		hint_text += " ⚡ Ставка «%s» на кону: финишер должен пережить клинч." % combo_name
 	_changed()
 	var d: Dictionary = await _clinch_decided
 	if my_epoch != _epoch:

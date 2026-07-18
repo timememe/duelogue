@@ -10,6 +10,7 @@ const RulesCore := preload("res://duelogue/core/rules/rules_core.gd")
 const Deck := preload("res://duelogue/core/cards/deck.gd")
 const Grammar := preload("res://duelogue/core/cards/grammar.gd")
 const NarEngine := preload("res://duelogue/core/narrative/narrative_engine.gd")
+const AiCore := preload("res://duelogue/core/ai/ai.gd")
 
 var failures := 0
 
@@ -25,6 +26,7 @@ func _run() -> void:
 	_check_guards()
 	_check_narrative_equivalence()
 	_check_fields_survive_zones()
+	_check_state_machine()
 	print("=== COMBO GRAMMAR: %s ===\n" % ("OK" if failures == 0 else "FAIL (%d)" % failures))
 	get_tree().call_deferred("quit", 0 if failures == 0 else 1)
 
@@ -105,11 +107,31 @@ func _check_matcher_routes() -> void:
 			and Grammar.triple(setup, opener, answer)
 	_check(all_ok, "три маршрута §5 собираются: HIT → ROUTE → ANSWERS → TRIPLE")
 
-	# Содержательный HIT без записи ANSWER_OF — сильный Разбор, но LINK не открывает.
-	var authority := _thesis("Авторитет")
-	var source := _attack("Источник?")
-	_check(Grammar.hit(authority, source) and not Grammar.has_route(authority, source),
-		"HIT без записи ANSWER_OF не обещает ответа (неполный срез маршрутов честен)")
+	# Полный каталог: КАЖДАЯ содержательная пара OPEN_HOOKS имеет маршрут с валидными
+	# схемами ответов, route_id уникальны и каждая схема хотя бы где-то является ответом —
+	# любая карта обоймы участвует в комбо той или иной стороной.
+	var full := true
+	var route_ids := {}
+	var answer_cover := {}
+	var pair_count := 0
+	for scheme in Grammar.OPEN_HOOKS:
+		for hook in Grammar.OPEN_HOOKS[scheme]:
+			pair_count += 1
+			var rec: Dictionary = (Grammar.ANSWER_OF.get(scheme, {}) as Dictionary) \
+				.get(hook, {})
+			full = full and not rec.is_empty()
+			var rid := String(rec.get("route_id", ""))
+			full = full and rid != "" and not route_ids.has(rid) and \
+				String(rec.get("combo_name", "")) != ""
+			route_ids[rid] = true
+			var answer_list: Array = rec.get("answer_schemes", [])
+			full = full and not answer_list.is_empty()
+			for ans in answer_list:
+				full = full and Grammar.SUIT_OF.has(String(ans))
+				answer_cover[String(ans)] = true
+	full = full and pair_count == 20 and route_ids.size() == 20 and \
+		answer_cover.size() == Grammar.SUIT_OF.size()
+	_check(full, "полный каталог: 20 пар покрыты, route_id уникальны, все схемы бывают ответом")
 
 	# MISS: зацепка не берёт схему — маршрута нет тем более.
 	var tradition := _thesis("Традиция")
@@ -163,6 +185,139 @@ func _check_narrative_equivalence() -> void:
 		var bare := {"type": Deck.TYPE_RAZBOR, "name": tagged.name, "steals": false}
 		all_equal = all_equal and nar.device_label(tagged) == nar.device_label(bare)
 	_check(all_equal, "поле карты ≡ name-fallback для всех имён колоды (реплики прежние)")
+
+
+## Модель со включённым клинчем (те же параметры, что боевой смоук).
+func _combo_model() -> RefCounted:
+	var model := RulesCore.new()
+	model.reset(RulesCore.SIDE_YOU, 3, 8, 9, 5, 1, 0, 2, 0, true, true,
+		1, 2, 4, 0, 1, 0, 1, true)
+	return model
+
+
+func _plain_line(name: String) -> Dictionary:
+	return {"theses": 1, "closed": false, "name": name, "stolen": 0}
+
+
+## Рамка с протегированным setup-Тезисом сверху (§2: верхняя карта — публичный довод).
+func _setup_frame(scheme: String, thesis_id: String) -> Dictionary:
+	var top := _thesis(scheme)
+	top["thesis_id"] = thesis_id
+	return {"theses": 1, "closed": false, "name": "Setup", "stolen": 0,
+		"thesis_stack": [top]}
+
+
+## Собрать доску сценария §9: атакующий YOU с заготовленной рукой против setup-рамки.
+func _scenario(setup_scheme: String, you_hand: Array, opp_hand: Array) -> RefCounted:
+	var model := _combo_model()
+	model.sides[RulesCore.SIDE_YOU].lines = [_plain_line("Атакующий")]
+	model.sides[RulesCore.SIDE_OPP].lines = [
+		_setup_frame(setup_scheme, "setup_top"), _plain_line("Тыл")]
+	model.sides[RulesCore.SIDE_YOU].hand = you_hand
+	model.sides[RulesCore.SIDE_YOU].draw = []
+	model.sides[RulesCore.SIDE_OPP].hand = opp_hand
+	model.sides[RulesCore.SIDE_OPP].draw = []
+	model.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
+	return model
+
+
+## Машина состояний §4 на сценариях бумаги A0 (§9). Payoff пока не применяется:
+## проверяем только LINK/ARMED/CONFIRMED/BREAK, owner, exact closer и телеметрию.
+func _check_state_machine() -> void:
+	# Сценарий 1 — минимальная тройка: LINK → правильный ответ → ARMED → пас → CONFIRMED.
+	var s1: RefCounted = _scenario("Аналогия", [_attack("Контрпример")], [_thesis("Авторитет")])
+	var s1_link: bool = String(s1.clinch.get("combo_state", "")) == "link"
+	var s1_hold: Dictionary = s1.clinch_submit("play", false, 0)
+	var s1_armed: bool = String(s1.clinch.get("combo_state", "")) == "armed" and \
+		String(s1.clinch.get("combo_owner", "")) == RulesCore.SIDE_OPP and \
+		String(s1.clinch.get("closer_thesis_id", "")) == String(s1_hold.get("thesis_id", ""))
+	var s1_info: Dictionary = s1.clinch_submit("pass").get("info", {})
+	_check(s1_link and s1_armed and
+		String(s1_info.get("combo_result", "")) == "confirmed" and
+		String(s1_info.get("combo_owner", "")) == RulesCore.SIDE_OPP and
+		String(s1_info.get("combo_name", "")) == "Исключение учтено" and
+		String(s1_info.get("combo_route_id", "")) == "exception_noted" and
+		String((s1_info.get("opening_anchor", {}) as Dictionary).get(
+			"thesis_id", "")) == "setup_top",
+		"сценарий 1: LINK → ARMED → CONFIRMED; owner и exact closer зафиксированы")
+
+	# Сценарий 2 — незакрытый LINK: неправильный ответ не вооружает, комбо нет.
+	var s2: RefCounted = _scenario("Аналогия", [_attack("Контрпример")], [_thesis("Статистика")])
+	s2.clinch_submit("play", false, 0)
+	var s2_link_kept: bool = String(s2.clinch.get("combo_state", "")) == "link"
+	var s2_info: Dictionary = s2.clinch_submit("pass").get("info", {})
+	_check(s2_link_kept and String(s2_info.get("combo_result", "")) == "none" and
+		String(s2_info.get("combo_state", "")) == "link",
+		"сценарий 2: неправильный ответ оставляет незакрытый LINK — комбо не считается")
+
+	# Сценарий 3 — dropped combo: атакующий перестоял ARMED, exact closer снят → BREAK.
+	var s3: RefCounted = _scenario("Аналогия",
+		[_attack("Контрпример"), _attack("Источник?")], [_thesis("Авторитет")])
+	s3.clinch_submit("play", false, 0)
+	s3.clinch_submit("play", false, 0)
+	var s3_resolved: Dictionary = s3.clinch_submit("pass")
+	var s3_info: Dictionary = s3_resolved.get("info", {})
+	var s3_seq: Array = s3_info.get("resolved_sequence", [])
+	_check(String(s3_info.get("combo_result", "")) == "break" and
+		bool(s3_resolved.get("landed", false)) and
+		String((s3_seq[1] as Dictionary).get("result", "")) == "removed",
+		"сценарий 3: перестоял ARMED — exact closer снят, ставка сгорает в BREAK")
+
+	# Сценарий 4 — донести финишер: доп. обычный T защищает ставку, owner не переписан.
+	var s4: RefCounted = _scenario("Аналогия",
+		[_attack("Контрпример"), _attack("Источник?")],
+		[_thesis("Авторитет"), _thesis("Статистика")])
+	var s4_hold: Dictionary = s4.clinch_submit("play", false, 0)
+	s4.clinch_submit("play", false, 0)
+	s4.clinch_submit("play", false, 0)
+	var s4_closer_kept: bool = String(s4.clinch.get("closer_thesis_id", "")) == \
+		String(s4_hold.get("thesis_id", ""))
+	var s4_info: Dictionary = s4.clinch_submit("pass").get("info", {})
+	_check(s4_closer_kept and String(s4_info.get("combo_result", "")) == "confirmed" and
+		String(s4_info.get("combo_owner", "")) == RulesCore.SIDE_OPP,
+		"сценарий 4: вложенный T доносит ставку — CONFIRMED, owner остаётся у финишера")
+
+	# Сторожа §12 на машине: Кража не открывает LINK; техтезис сверху гасит anchor;
+	# HIT без маршрута ANSWER_OF остаётся сильным Разбором без LINK.
+	var g1: RefCounted = _scenario("Аналогия",
+		[{"type": Deck.TYPE_RAZBOR, "name": "Кража", "steals": true}], [])
+	var g1_none: bool = String(g1.clinch.get("combo_state", "")) == "none"
+	g1.clinch_submit("pass")
+	var g2 := _combo_model()
+	g2.sides[RulesCore.SIDE_YOU].lines = [_plain_line("Атакующий")]
+	var buried := _setup_frame("Аналогия", "buried_scheme")
+	var filler: Dictionary = Deck.filler_thesis()
+	filler["thesis_id"] = "filler_top"
+	(buried.thesis_stack as Array).append(filler)
+	buried["theses"] = 2
+	g2.sides[RulesCore.SIDE_OPP].lines = [buried, _plain_line("Тыл")]
+	g2.sides[RulesCore.SIDE_YOU].hand = [_attack("Контрпример")]
+	g2.sides[RulesCore.SIDE_YOU].draw = []
+	g2.sides[RulesCore.SIDE_OPP].hand = []
+	g2.sides[RulesCore.SIDE_OPP].draw = []
+	g2.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
+	var g2_no_anchor: bool = (g2.clinch.get("opening_anchor", {}) as Dictionary).is_empty() \
+		and String(g2.clinch.get("combo_state", "")) == "none"
+	g2.clinch_submit("pass")
+	var g3: RefCounted = _scenario("Аналогия", [_attack("Передёрг")], [])
+	var g3_anchor: Dictionary = g3.clinch.get("opening_anchor", {})
+	var g3_miss_no_link: bool = not g3_anchor.is_empty() and \
+		not bool(g3_anchor.get("hit", true)) and \
+		String(g3.clinch.get("combo_state", "")) == "none"
+	g3.clinch_submit("pass")
+	_check(g1_none and g2_no_anchor and g3_miss_no_link,
+		"сторожа: Кража, техтезис и MISS-зацепка не открывают LINK")
+
+	# Мини-шаг ступени 4: ИИ-защитник выбирает exact правильный ответ на открытый LINK.
+	var picker: RefCounted = AiCore.new()
+	var s5: RefCounted = _scenario("Аналогия", [_attack("Контрпример")],
+		[_thesis("Статистика"), _thesis("Авторитет")])
+	var pick: int = picker.def_answer_index(s5, RulesCore.SIDE_OPP)
+	s5.clinch_submit("play", false, pick)
+	var s5_armed: bool = String(s5.clinch.get("combo_state", "")) == "armed"
+	s5.clinch_submit("pass")
+	_check(pick == 1 and s5_armed,
+		"ИИ-защитник закрывает LINK exact правильной картой и вооружает ставку")
 
 
 func _check_fields_survive_zones() -> void:

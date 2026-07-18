@@ -6,6 +6,7 @@ extends RefCounted
 ## авто-разрешение клинча для сима (_auto_resolve) и полная симуляция матча (simulate).
 
 const Cards := preload("res://duelogue/core/cards/card_types.gd")
+const Grammar := preload("res://duelogue/core/cards/grammar.gd")
 const TYPE_TEZIS := Cards.TYPE_TEZIS
 const TYPE_RAZBOR := Cards.TYPE_RAZBOR
 const TYPE_USTANOVKA := Cards.TYPE_USTANOVKA
@@ -159,6 +160,29 @@ func def_will_clinch(r: RefCounted, defender: String, line: Dictionary) -> bool:
 			and r.reserve_count(defender) == 0:
 		return true
 	return randf() < 0.75
+
+
+## Точная карта ответа на открытый LINK (мини-шаг ступени 4, §12 AI): защитник любого
+## стиля закрывает известный маршрут правильной схемой, если она в руке. Окно — только
+## первый ответ; -1 — правильной карты нет, играть как раньше (вслепую).
+func def_answer_index(r: RefCounted, defender: String) -> int:
+	if not r.clinch_active() or String(r.clinch.get("combo_state", "")) != "link":
+		return -1
+	if int(r.clinch.get("t_added", 0)) != 0:
+		return -1
+	var anchor_card: Dictionary = (r.clinch.get("opening_anchor", {}) as Dictionary) \
+		.get("card", {})
+	var sequence: Array = r.clinch.get("sequence", [])
+	if sequence.is_empty():
+		return -1
+	var hand: Array = r.sides[defender].hand
+	for i in hand.size():
+		var card: Dictionary = hand[i]
+		if not r.clinch_card_legal(card, "await_defend"):
+			continue
+		if Grammar.answers(anchor_card, sequence[0], card):
+			return i
+	return -1
 
 
 func atk_will_clinch(r: RefCounted, attacker: String, line: Dictionary) -> bool:

@@ -49,6 +49,14 @@ static func filler_thesis() -> Dictionary:
 		"combo_eligible": false}
 
 
+## Нейтральный safe poke «И что?» (§5 combo_grammar_v0.2): обычный эффект Разбора, но
+## зацепки НЕТ — LINK не открывает и финишер не получает. Осознанный отказ атакующего от
+## комбо-потенциала. device задан только голосу нарратива (процедурная манера).
+static func safe_poke() -> Dictionary:
+	return {"type": TYPE_RAZBOR, "name": "И что?", "steals": false,
+		"device": "Не в кассу", "combo_eligible": false}
+
+
 ## Собрать сторону: колода (n_t тезисов, n_r атак из них steal_cards Краж, n_u установок),
 ## стартовая рамка «База» с base_theses тезисов, пустая рука добитая до hand_size.
 static func build_side(n_u: int, n_t: int, n_r: int, base_theses: int, steal_cards: int, hand_size: int) -> Dictionary:

@@ -51,6 +51,9 @@ const CLINCH_STACK_PITCH := 18.0
 const BOARD_EDGE_APPROACH := 12.0
 
 @export var playtest_logging_enabled := true
+## Драйв-полигон комбо (цифровая «бумага A0», §9): обе обоймы заряжаются маршрутом №1.
+## Включается сценой tools/combo_drill.tscn, обычная катка не трогается.
+@export var combo_drill := false
 
 var _drawer_closed_x := 0.0  ## закрытое (за правым краем) положение ящика — из ширины экрана
 var _drawer_open_x := 0.0    ## открытое положение — из ширины экрана И ширины самого ящика
@@ -116,6 +119,7 @@ func _ready() -> void:
 	controller = BattleController.new()
 	add_child(controller)  # _ready контроллера создаёт model/nar/ai
 	controller.logging_enabled = playtest_logging_enabled
+	controller.combo_drill = combo_drill
 	model = controller.model
 	nar = controller.nar
 	# Ядро персонажей кладёт актёров в слой сцены и режиссирует мини-сцену реакции.
@@ -779,6 +783,9 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 	uc.set_meta("board_role", "frame")
 	uc.position = Vector2(board_card_position_x(0.0, width, trailing_pad, reverse), y0)
 	var frame_info := claim_txt
+	var top_scheme := String(threat.get("top_scheme", ""))
+	if top_scheme != "":
+		frame_info += "\n\nСВЕРХУ: %s" % top_scheme
 	if shaky:
 		frame_info += "\n\n⚠ ШАТАЕТСЯ · КРАЖА ДО %d\nКрен к владельцу %+d · толщина %d" % [
 			int(threat.get("reach", 1)), int(threat.get("owner_favor", 0)),
@@ -790,6 +797,16 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 		warn.add_theme_color_override("font_color", Color.html("#" + COL_RAZBOR))
 		warn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		root.add_child(warn)
+	elif top_scheme != "":
+		# Комбо §12: схема верхнего Тезиса читается прямо на рамке (шаткость приоритетнее —
+		# оба лейбла делят одну строку над рамкой).
+		var scheme_tag := Label.new()
+		scheme_tag.text = top_scheme.to_upper()
+		scheme_tag.position = Vector2(uc.position.x - 2.0, y0 - 18.0)
+		scheme_tag.add_theme_font_size_override("font_size", 10)
+		scheme_tag.add_theme_color_override("font_color", Color.html("#" + COL_TEZIS))
+		scheme_tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		root.add_child(scheme_tag)
 	if bool(threat.get("last_frame", false)) and bool(model.board_ko_enabled):
 		frame_info += "\n\nЕсли рамка падёт: %s · резерв %d" % [
 			("НОКАУТ" if bool(threat.get("lethal", false)) else "восстановление следующим ходом"),
@@ -797,6 +814,9 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 	if targetable:
 		uc.disabled = false
 		uc.pressed.connect(_on_target_pressed.bind(idx))
+		var combo_note: String = controller.target_combo_note(idx)
+		if combo_note != "":
+			frame_info += "\n\n%s" % combo_note
 		var spoken: String = controller.target_preview(idx)
 		if spoken != "":
 			frame_info += "\n\nСКАЖЕТЕ:\n%s" % spoken
@@ -953,6 +973,11 @@ func _rebuild_hand() -> void:
 			bubble_body = "Именной приём\n\n" + bubble_body
 		if mode == "reframe" and not enabled and card.type == C.TYPE_USTANOVKA:
 			bubble_body += "\n\nЭта рамка пришла после падения и сейчас не может спасти позицию."
+		# Комбо §12: правильный ответ на открытый LINK светится золотом, но НЕ автоплей —
+		# решение (и цена хранения финишера) остаются за игроком.
+		if mode == "clinch_defend" and controller.combo_answer_glow(i):
+			btn.self_modulate = Color.html("#" + COL_GOLD)
+			bubble_body += "\n\n⚡ ПРАВИЛЬНЫЙ ОТВЕТ: закроет маршрут и вооружит комбо-ставку."
 		_attach_card_bubble(btn, bubble_title, bubble_body, card)
 		_attach_hand_motion(btn)
 		btn.pressed.connect(_on_hand_pressed.bind(i))
