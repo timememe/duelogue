@@ -478,11 +478,37 @@ legacy combo_route/combo_owner/closer
 
 ### Шаг R0 — identity only
 
+**Статус: ВЫПОЛНЕН 2026-07-20.** В `RulesCore`: три serial-счётчика; `frame_id` живёт
+на объекте рамки (минт при создании + ленивый сторож `_ensure_frame_id` по образцу
+`_ensure_thesis_stack` — тестовые/ран-слойные рамки догоняются при первом касании) и
+переживает захват; `action_id` минтится на четырёх точках входа (`play_action`,
+`play_named`, `begin_clinch` — одно на всё ралли, `play_redeploy`); записи
+`clinch.sequence` получают `play_id/actor/role/step` сразу при play (settlement лишь
+дописывает result/effect). Телеметрия: `action_id/play_id` в каждом info,
+`target_frame_id` у single-razbor и клинча, `captured_frame_id` у захвата, `frame_id`
+в `opening_anchor`. Сторожа — `_check_r0_identity` в combo_grammar_smoke; все 8
+smoke-сцен зелёные, combo behavior не изменён.
+
 - добавить `frame_id/action_id/play_id`;
 - записывать actor/ordinal в sequence сразу при play;
 - ничего не менять в combo behavior.
 
 ### Шаг R1 — relation trace
+
+**Статус: ВЫПОЛНЕН 2026-07-20.** В `RulesCore`: фабрика `_relation_fact` (форма §2.3:
+id/type/from/to/scope_refs/provenance="rules"); эмиссия в момент розыгрыша — opener
+`targets`→frame + exact верхний тезис (независимо от eligibility: ребро — физический
+факт), hold `responds_to`→предыдущий нажим + `materializes_as`→thesis_id, press
+`targets`→exact материализованный T; на settlement (после unwind и сократика)
+single-assign `outcome{result, effect, affected}` на каждую запись sequence;
+`info["relations"]` уходит в телеметрию. Гейт пройден: мини-вывод в smoke
+(`_derive_combo_from_trace`) воспроизводит CONFIRMED/BREAK/LINK/NONE, owner и closer
+только из трейса+outcome+якоря, не читая mutable combo-полей; все 8 smoke-сцен зелёные.
+
+**Шов §7 зафиксирован: вариант 2** — controller добавляет content-RelationFacts после
+физического play, до matcher milestone/settlement; ядро исполняет общий relation
+contract и не знает риторических route names. Вариант 1 (binder до play intent)
+остаётся целевым для AI-предпросмотра позже.
 
 - поверх нынешнего sequence эмитить `targets/responds_to/materializes_as`;
 - на settlement single-assign outcome;
@@ -490,17 +516,85 @@ legacy combo_route/combo_owner/closer
 
 ### Шаг R2 — один recipe вместо старого matcher
 
+**Статус: ВЫПОЛНЕН 2026-07-20.** Новый модуль `core/rules/combo_register.gd`: рецепт
+`P_G01_GUARD` — GDScript-словарь в форме §4 (path/where/claim.confirm), интерпретатор
+покрывает ровно используемые constraint-типы (anchor_route, responds_to по свежим
+рёбрам R1, bind materializes_as, grammar_answers; confirm: winner/outcome/
+board_contains). `RulesCore` владеет одним регистром на матч (append-only runs);
+инлайновый matcher удалён — LINK/ARMED/settlement решает register, а клинч и info
+получают прежние ключи `combo_*`/`closer_*` только как проекцию `legacy_view()`
+(маппинг терминалов: expired→link, confirmed/break→armed). Вооружает только ответ
+с ребром `responds_to` на exact опенер — факт-эквивалент старого «t_added == 1».
+Гейт пройден: сценарии §4 и сторожа смоука ассертят прежние значения на всех
+milestone'ах побитно; AI/UI/контроллер не менялись; все 8 smoke-сцен зелёные.
+Новая телеметрия: `info["combo_run"]` — снапшот терминализированного run'а.
+
 - перенести G-01 GUARD в Pattern;
 - `legacy_view()` обязан побитно совпасть с нынешними telemetry fields;
 - AI/UI пока продолжают читать legacy view.
 
 ### Шаг R3 — две стороны
 
+**Статус: ВЫПОЛНЕН 2026-07-20.** Каталог регистра: `P_X01_TRAP` («Ложная
+независимость», seed=$setup board-atom + двухзвенный path, owner A) и
+`P_P01_PRESSURE` («Эксперт по делу?», трёхзвенный path без чтения схемы T₀, owner A).
+Окна жёсткие по §2 топологий: $reply — ровно step 1, $press — ровно step 2. Оба
+рецепта вооружаются только при content-RelationFact по своему content-атому
+(X-01: supports с {claimed_lineage: independent, lineage: dependent};
+P-01: undercuts с {reason: domain_mismatch}); новый публичный API
+`RulesCore.add_content_relation()` — шов §7 вариант 2 (controller эмитит после
+физического play, provenance="content", факт ложится в общий trace). Структурно
+полный кандидат без семантики терминализируется UNRESOLVED (неизвестность не
+наказывается), недостроенный — expired. Settlement стал scope-wide
+(`settle_action`), наружу уходят `info["combo_events"]` — по событию на run
+(pattern/topology/combo_name/owner/terminal/slots, payoff всегда "") — и
+дублируются в JSONL клинча контроллера. Stake/owner readability подтверждена
+смоуком: SPRUNG-ралли несёт две читаемые ставки двух владельцев (X-01 confirmed
+атакующему, G-01 break защитнику). G-01 остаётся структурным (20 маршрутов —
+guard-only резерв, §11 топологий); verdict-гейтинг GUARD и арбитраж
+(supersede/CONTESTED) — R4. Все 8 smoke-сцен зелёные, легаси-поля не изменились.
+
 - добавить X-01 и P-01;
 - выводить `combo_events[]` без численного payoff;
 - проверить stake/owner readability.
 
 ### Шаг R4 — arbitration и frame scope
+
+**Статус: ВЫПОЛНЕН 2026-07-20.** Каталог получил explicit contested-пару
+G-04/X-04 над одной тройкой `Аналогия → Ложная аналогия → Определение`: две authored
+content-relations связывают ответ с разными exact `subclaim` (`shared_core` и
+`scope_qualifier`), поэтому CONTESTED остаётся производной двух `armed_once` runs
+разных владельцев, а не mutable verdict. X-04 подтверждается только если первый press
+дополнительно имеет content-ребро `targets` на exact trap-basis.
+
+Для уже мигрированной пары G-01/X-01 добавлен semantic G-01 `source_backed`. Старый
+structural G-01 на этой exact тройке становится только shadow legacy-проекции:
+`lineage=independent` подтверждает semantic GUARD, dependent — вооружает X-01, а
+неизвестность оставляет обе ветви UNRESOLVED. Поэтому победа защитника больше не может
+превратить зависимый источник в правильный GUARD. Неперенесённые маршруты `ANSWER_OF`
+по-прежнему используют structural reserve без изменения поведения.
+
+У каждого pattern появился общий `arbitration {channel,tier,priority}`. Более высокий
+tier того же owner/channel single-assign терминализирует нижний run как `superseded`;
+нижний не возвращается после BREAK верхнего. Реальный гейт — P-06 «Двойной аудит»
+жёстко повышает X-01. После settlement priority оставляет максимум один `confirmed`
+run на payoff-channel; generic G-01 уступает семантически точному G-04, а
+`legacy_view()` следует победившему run, не меняя старый UI/AI-контракт.
+
+Frame-scope реализован одним F3-10 «Вверх и обратно». Карты exact authored-заготовки
+несут namespaced `rhetoric.frame_recipe_id`; одного случайного совпадения схем
+недостаточно. Register хранит только origin `thesis_id → action/play/actor/frame`, а
+authoritative порядок получает снимком на `board_stable` после любого полного action.
+Matcher читает новый top-suffix `Пример → Определение → Пример`, требует origin от
+текущего владельца на этой рамке и хотя бы один T из closing action; снятие/захват не
+вскрывают старую тройку как новую. Completion `(frame_id, pattern_id)` one-shot переживает
+снятие, повторную укладку и перенос рамки. Frame-events идут тем же `combo_events[]` в
+move/named/redeploy/clinch telemetry.
+
+Гейт `_check_r4_arbitration_frame_scope`: оба исхода CONTESTED, distinct basis,
+priority-suppression legacy G-01, P-06 BREAK без X-01 fallback, authored guard F3,
+stable-boundary и one-shot. `combo_grammar_smoke` и `battle_loop_rules_smoke` зелёные.
+Численный payoff намеренно остаётся пустым: его подключение — следующий этап после R4.
 
 - добавить contested G-04/X-04, tier-supersede и один защитный 3T;
 - только затем подключать payoff и расширять каталог.

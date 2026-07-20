@@ -775,7 +775,7 @@ func _perform_redeploy(side: String, index: int) -> bool:
 		"t%d %s reframe reserve=%d" % [model.turn_count, side, model.reserve_count(side)],
 		TYPE_USTANOVKA, false, nar.last_mood())
 	var rev := {"ev": "redeploy", "side": side, "claim_id": String(line.get("claim_id", "")),
-		"reserve_left": model.reserve_count(side)}
+		"reserve_left": model.reserve_count(side), "combo_events": info.get("combo_events", [])}
 	rev.merge(_econ())
 	_emit(rev)
 	_audience_quiet()
@@ -1053,6 +1053,7 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 		"combo_route_id": info.get("combo_route_id", ""),
 		"combo_name": info.get("combo_name", ""),
 		"combo_owner": info.get("combo_owner", ""),
+		"combo_events": info.get("combo_events", []),
 		"opening_anchor": info.get("opening_anchor", {}),
 		"sequence": info.get("resolved_sequence", resolved.get("sequence", [])),
 		"stop_reason": stop_reason,
@@ -1445,7 +1446,8 @@ func _log_action(info: Dictionary) -> void:
 	if info.is_empty():
 		return
 	var my_epoch := _epoch
-	var ev := {"ev": "move", "side": info.side, "type": info.type, "name": info.get("name", "")}
+	var ev := {"ev": "move", "side": info.side, "type": info.type,
+		"name": info.get("name", ""), "combo_events": info.get("combo_events", [])}
 	ev.merge(_econ())
 	_emit(ev)
 	var side: String = info.side
@@ -1507,6 +1509,7 @@ func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
 		"captured": info.get("captured", false),
 		"affected_thesis_id": info.get("affected_thesis_id", ""),
 		"removed_thesis_ids": info.get("removed_thesis_ids", []),
+		"combo_events": info.get("combo_events", []),
 		"conduct_relative": int(conduct.relative), "conduct_signed": int(conduct.signed)}
 	ev.merge(_econ())
 	_emit(ev)

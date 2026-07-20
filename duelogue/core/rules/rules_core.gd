@@ -14,6 +14,7 @@ extends RefCounted
 const Cards := preload("res://duelogue/core/cards/card_types.gd")
 const Deck := preload("res://duelogue/core/cards/deck.gd")
 const Grammar := preload("res://duelogue/core/cards/grammar.gd")
+const ComboRegister := preload("res://duelogue/core/rules/combo_register.gd")
 
 const TYPE_TEZIS := Cards.TYPE_TEZIS
 const TYPE_RAZBOR := Cards.TYPE_RAZBOR
@@ -92,6 +93,21 @@ var named_played := {}
 ## остаются совместимым read-model для UI и старых симов; авторитетный порядок хранится
 ## в line.thesis_stack (снизу вверх), а thesis_id связывает карту, реплику и цель эффекта.
 var _thesis_serial := 0
+## R0 комбо-регистра (combo_register_architecture §7/§9): три минимальные identity.
+## frame_id живёт на объекте рамки и переживает перенос/захват; action_id — один полный
+## игровой action (у клинча — всё ралли целиком); play_id — occurrence розыгрыша карты
+## в матче (одна и та же карта после recycle получает новый play_id). Пока чистая
+## телеметрия: комбо-поведение и решения ядра эти id не читают.
+var _frame_serial := 0
+var _action_serial := 0
+var _play_serial := 0
+## R1 регистра: механический relation trace клинча. Ребро — физический факт розыгрыша
+## («кто, когда, куда»), НЕ семантический вердикт: eligibility и маршруты решает matcher.
+## Content-relations (supports/undercuts…) по шву §7 добавит controller тем же контрактом.
+var _relation_serial := 0
+## R2: единственный ComboRegister матча (§3) — Pattern-каталог и derived runs. Легаси-поля
+## combo_*/closer_* клинча и info пишутся ТОЛЬКО из его legacy_view() (§7).
+var combo_register := ComboRegister.new()
 
 
 func reset(
@@ -123,6 +139,11 @@ func reset(
 	external_zal_cap = ZAL_MAX
 	named_played = {SIDE_YOU: 0, SIDE_OPP: 0}
 	_thesis_serial = 0
+	_frame_serial = 0
+	_action_serial = 0
+	_play_serial = 0
+	_relation_serial = 0
+	combo_register = ComboRegister.new()
 	captures = 0
 	capture_theses = 0
 	clinch = {}
@@ -135,6 +156,9 @@ func reset(
 		SIDE_YOU: Deck.build_side(n_u, n_t, n_r, base_theses, steal_cards, hand_size),
 		SIDE_OPP: Deck.build_side(n_u, n_t, n_r, base_theses, steal_cards, hand_size),
 	}
+	for side_key in [SIDE_YOU, SIDE_OPP]:
+		for ln in sides[side_key].lines:
+			_ensure_frame_id(ln)
 	# Коми: ходящий вторым получает фору на стартовой рамке (компенсация темпа).
 	if komi > 0:
 		sides[other(first_side)].lines[0].theses += komi
@@ -154,6 +178,83 @@ func _next_thesis_id() -> String:
 	return "thesis_%d" % _thesis_serial
 
 
+func _next_frame_id() -> String:
+	_frame_serial += 1
+	return "frame_%d" % _frame_serial
+
+
+func _next_action_id() -> String:
+	_action_serial += 1
+	return "action_%d" % _action_serial
+
+
+func _next_play_id() -> String:
+	_play_serial += 1
+	return "play_%d" % _play_serial
+
+
+## Ленивый сторож по образцу _ensure_thesis_stack: рамки создают и ядро, и тесты/ран-слой
+## напрямую — identity догоняет объект при первом касании. Сам объект переносится при
+## захвате целиком, поэтому frame_id постоянен на всю жизнь рамки.
+func _ensure_frame_id(line: Dictionary) -> String:
+	if String(line.get("frame_id", "")) == "":
+		line["frame_id"] = _next_frame_id()
+	return String(line["frame_id"])
+
+
+## RelationFact (§2.3 архитектуры): типизированное ребро между exact ссылками.
+## Механические связи (provenance="rules") эмитит ядро в момент розыгрыша;
+## content-рёбра приходят через add_content_relation (шов §7, вариант 2).
+func _relation_fact(type: String, from_kind: String, from_id: String,
+		to_kind: String, to_id: String, action_id: String,
+		provenance: String = "rules", attrs: Dictionary = {}) -> Dictionary:
+	_relation_serial += 1
+	return {"id": "rel_%d" % _relation_serial, "type": type,
+		"from": {"kind": from_kind, "id": from_id},
+		"to": {"kind": to_kind, "id": to_id},
+		"scope_refs": [{"kind": "action", "id": action_id}],
+		"provenance": provenance,
+		"attrs": attrs.duplicate(true)}
+
+
+## Шов §7 (вариант 2): controller добавляет content-RelationFact ПОСЛЕ физического play
+## и ДО settlement. Ядро не знает риторических route names — только общий контракт ребра;
+## register сам решает, вооружает ли факт какой-нибудь content-гейт рецепта. R3: только
+## clinch-scope (единственный потребитель — A3-рецепты).
+func add_content_relation(type: String, from_kind: String, from_id: String,
+		to_kind: String, to_id: String, attrs: Dictionary = {}) -> Dictionary:
+	if clinch.is_empty():
+		return {}
+	var action_id := String(clinch.get("action_id", ""))
+	var rel := _relation_fact(type, from_kind, from_id, to_kind, to_id, action_id,
+		"content", attrs)
+	var relations: Array = clinch.get("relations", [])
+	relations.append(rel)
+	clinch["relations"] = relations
+	combo_register.on_content_relation(action_id, rel)
+	return rel
+
+
+## Authoritative stable-board snapshot для frame-scoped recipes. Register не хранит
+## копию доски: получает exact рамки/порядок только на boundary полного action.
+func _combo_board_snapshot() -> Array:
+	var out: Array = []
+	for side in [SIDE_YOU, SIDE_OPP]:
+		for raw in sides[side].lines:
+			var line: Dictionary = raw
+			out.append({"frame_id": _ensure_frame_id(line), "owner": side,
+				"thesis_stack": _ensure_thesis_stack(line).duplicate(true)})
+	return out
+
+
+func _settle_frame_combo_events(info: Dictionary) -> void:
+	var action_id := String(info.get("action_id", ""))
+	if action_id == "":
+		return
+	combo_register.board_stable(action_id, _combo_board_snapshot())
+	info["combo_events"] = combo_register.events_for_action(action_id)
+
+
 func _thesis_token(card: Dictionary = {}) -> Dictionary:
 	var token: Dictionary = card if not card.is_empty() else Deck.filler_thesis()
 	token["type"] = TYPE_TEZIS
@@ -168,6 +269,7 @@ func _thesis_token(card: Dictionary = {}) -> Dictionary:
 ## напрямую поправил совместимый скаляр, стек один раз догоняет его; все штатные мутации
 ## ниже меняют объект и тут же пересчитывают скаляры обратно.
 func _ensure_thesis_stack(line: Dictionary) -> Array:
+	_ensure_frame_id(line)
 	var wanted := maxi(0, int(line.get("theses", 0)))
 	var wanted_stolen := clampi(int(line.get("stolen", 0)), 0, wanted)
 	var stack: Array = line.get("thesis_stack", [])
@@ -342,6 +444,7 @@ func _capture_frame(attacker: String, defender: String, idx: int,
 	if idx < 0 or idx >= dl.size():
 		return {}
 	var captured: Dictionary = dl[idx]
+	info["captured_frame_id"] = _ensure_frame_id(captured)
 	var captured_stack := _ensure_thesis_stack(captured)
 	dl.remove_at(idx)
 	if capture_loot == 1:
@@ -529,14 +632,19 @@ func play_action(side: String, type: String, target: int = -1, hand_index: int =
 		var selected: Array = sides[side].hand
 		if hand_index >= selected.size() or String(selected[hand_index].get("type", "")) != type:
 			return {}
-	var info := {"side": side, "type": type, "name": "", "removed": false}
+	var info := {"side": side, "type": type, "name": "", "removed": false,
+		"action_id": _next_action_id(), "play_id": _next_play_id()}
 	var s: Dictionary = sides[side]
 	match type:
 		TYPE_TEZIS:
 			var c := _remove_selected_card(side, TYPE_TEZIS, hand_index)
 			info.name = c.get("name", "")
-			var token := _put_thesis(s.lines[-1], c)
+			var thesis_frame: Dictionary = s.lines[-1]
+			var token := _put_thesis(thesis_frame, c)
 			info["thesis_id"] = String(token.get("thesis_id", ""))
+			info["frame_id"] = _ensure_frame_id(thesis_frame)
+			combo_register.record_thesis_origin(String(info.action_id), String(info.play_id),
+				side, String(info.frame_id), String(info.thesis_id))
 		TYPE_USTANOVKA:
 			var c := _remove_selected_card(side, TYPE_USTANOVKA, hand_index)
 			info.name = c.get("name", "")
@@ -544,6 +652,7 @@ func play_action(side: String, type: String, target: int = -1, hand_index: int =
 				s.lines[-1].closed = true
 			var new_line := {"theses": 1, "closed": false, "name": info.name, "stolen": 0}
 			_copy_claim(c, new_line)
+			info["frame_id"] = _ensure_frame_id(new_line)
 			s.lines.append(new_line)
 		TYPE_RAZBOR:
 			var c: Dictionary
@@ -563,6 +672,7 @@ func play_action(side: String, type: String, target: int = -1, hand_index: int =
 				_resolve_single_razbor(side, opp, target, info, init_steals)
 	_refill(s)
 	turn_count += 1
+	_settle_frame_combo_events(info)
 	return info
 
 
@@ -574,6 +684,7 @@ func _resolve_single_razbor(attacker: String, defender: String, target: int, inf
 	if init_steals and not will_steal:
 		info["bounced"] = true
 	info["target_name"] = line.name
+	info["target_frame_id"] = _ensure_frame_id(line)
 	# Захват (базовый порог 1 = рамка на последнем тезисе; зал-гейт поднимает до 2/3).
 	# braced — именной «Перенос бремени»: рамка временно не захватывается (тезис снять можно).
 	if will_steal and int(line.theses) <= capture_threshold(attacker) and not line.get("braced", false):
@@ -623,7 +734,8 @@ func play_named(side: String, hand_index: int, target: int = -1) -> Dictionary:
 	s.hand.remove_at(hand_index)
 	named_played[side] = int(named_played.get(side, 0)) + 1
 	var info := {"side": side, "type": String(card.type), "name": String(card.name),
-		"named": id, "removed": false}
+		"named": id, "removed": false,
+		"action_id": _next_action_id(), "play_id": _next_play_id()}
 	match id:
 		"gish_gallop":
 			_discard(side, card)
@@ -638,6 +750,9 @@ func play_named(side: String, hand_index: int, target: int = -1) -> Dictionary:
 			var line: Dictionary = s.lines[-1]
 			var token := _put_thesis(line, card)
 			info["thesis_id"] = String(token.get("thesis_id", ""))
+			info["frame_id"] = _ensure_frame_id(line)
+			combo_register.record_thesis_origin(String(info.action_id), String(info.play_id),
+				side, String(info.frame_id), String(info.thesis_id))
 			line.braced = true   # не захватывается до начала хода владельца (begin_turn снимет)
 			info["braced"] = true
 		"axiom":
@@ -646,11 +761,13 @@ func play_named(side: String, hand_index: int, target: int = -1) -> Dictionary:
 			var axiom_line := {"theses": 2, "closed": false, "name": String(card.name),
 				"stolen": 0, "no_defend": true}
 			_copy_claim(card, axiom_line)
+			info["frame_id"] = _ensure_frame_id(axiom_line)
 			s.lines.append(axiom_line)
 		_:
 			pass
 	_refill(s)
 	turn_count += 1
+	_settle_frame_combo_events(info)
 	return info
 
 
@@ -945,6 +1062,10 @@ func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bo
 	var initc := _take_clinch_card(attacker, "open", prefer_steal, hand_index)
 	if initc.is_empty():
 		return {}
+	# R0: клинч — один полный action; его action_id — будущий scope id регистра. frame_id
+	# цели фиксируется здесь же: индекс idx может сместиться, сам объект рамки — нет.
+	var action_id := _next_action_id()
+	var frame_id := _ensure_frame_id(lines[idx])
 	var init_steals: bool = initc.get("steals", false)
 	var capture_reach := frame_capture_reach(defender)
 	var capture_audience_favor := audience_favor_for(defender)
@@ -960,7 +1081,6 @@ func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bo
 	# Тезиса рамки в момент объявления. Matcher не перепрыгивает через неeligible объект
 	# (техническую Базу) к схеме ниже. Пока чистая телеметрия — механику клинча не меняет.
 	var opening_anchor := {}
-	var combo_route := {}
 	var opening_stack := _ensure_thesis_stack(lines[idx])
 	if not opening_stack.is_empty():
 		var top_thesis: Dictionary = opening_stack[-1]
@@ -969,13 +1089,34 @@ func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bo
 				"thesis_id": String(top_thesis.get("thesis_id", "")),
 				"scheme": String(top_thesis.get("scheme", "")),
 				"suit": String(top_thesis.get("suit", "")),
-				"frame_owner": defender, "frame_index": idx,
+				"frame_owner": defender, "frame_index": idx, "frame_id": frame_id,
 				"hit": Grammar.hit(top_thesis, initc),
 				"card": top_thesis.duplicate(true),
 			}
-			combo_route = Grammar.route(top_thesis, initc)
+	# R0: запись sequence — де-факто PlayFact; actor/role/step/play_id ставятся сразу при
+	# play, а не на settlement (settlement лишь дописывает result/effect).
+	var opener_play: Dictionary = initc.duplicate(true)
+	opener_play["play_id"] = _next_play_id()
+	opener_play["actor"] = attacker
+	opener_play["role"] = "attack"
+	opener_play["step"] = 0
+	# R1: опенер физически объявлен на рамку; exact верхний тезис в момент объявления —
+	# второе ребро НЕЗАВИСИМО от eligibility (техническая База — тоже факт цели).
+	var relations: Array = []
+	relations.append(_relation_fact("targets", "play", String(opener_play.play_id),
+		"frame", frame_id, action_id))
+	if not opening_stack.is_empty():
+		relations.append(_relation_fact("targets", "play", String(opener_play.play_id),
+			"thesis", String((opening_stack[-1] as Dictionary).get("thesis_id", "")),
+			action_id))
+	# R2: LINK решает register по Pattern G-01, а не инлайновый matcher; клинч хранит
+	# только run_id + проекцию legacy_view (прежний контракт для AI/UI/телеметрии).
+	var combo_run_id := combo_register.open_action_run(action_id, frame_id,
+		attacker, defender, opening_anchor, opener_play)
+	var combo_view: Dictionary = combo_register.legacy_view(combo_run_id)
 	clinch = {
 		"attacker": attacker, "defender": defender, "idx": idx,
+		"action_id": action_id, "frame_id": frame_id,
 		"t_added": 0, "r_count": 1,
 		"init_steals": init_steals, "phase": "await_defend",
 		"capture_reach": capture_reach,
@@ -983,16 +1124,19 @@ func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bo
 		"opening_thickness": opening_thickness,
 		"opening_capture_eligible": opening_capture_eligible,
 		"named": String(initc.get("named", "")),
-		"sequence": [initc.duplicate(true)],
+		"sequence": [opener_play],
+		"relations": relations,
 		"opening_anchor": opening_anchor,
 		"opening_hook": Grammar.hook_of(initc),
-		"combo_route": combo_route,
-		"combo_state": "link" if not combo_route.is_empty() else "none",
-		"combo_owner": "",
-		"closer_step": -1,
-		"closer_thesis_id": "",
+		"combo_run_id": combo_run_id,
+		"combo_route": combo_view.combo_route,
+		"combo_state": combo_view.combo_state,
+		"combo_owner": combo_view.combo_owner,
+		"closer_step": combo_view.closer_step,
+		"closer_thesis_id": combo_view.closer_thesis_id,
 	}
-	return {"card": initc, "is_callback": bool(lines[idx].closed)}
+	return {"card": initc, "is_callback": bool(lines[idx].closed),
+		"action_id": action_id, "play_id": String(opener_play.play_id)}
 
 
 func clinch_active() -> bool:
@@ -1039,24 +1183,43 @@ func clinch_submit(decision: String, prefer_steal: bool = true, hand_index: int 
 		var token := _put_thesis(line, dc)
 		clinch.t_added = int(clinch.t_added) + 1
 		var sequence: Array = clinch.get("sequence", [])
-		sequence.append(token.duplicate(true))
+		var hold_play: Dictionary = token.duplicate(true)
+		hold_play["play_id"] = _next_play_id()
+		hold_play["actor"] = String(clinch.defender)
+		hold_play["role"] = "defense"
+		hold_play["step"] = sequence.size()
+		sequence.append(hold_play)
 		clinch["sequence"] = sequence
-		# Комбо §4: ПЕРВЫЙ защитный ответ на открытый LINK может вооружить тройку. Owner и
-		# closer после этого зафиксированы; дальнейшие hold/press — обычный клинч и их
-		# не переписывают (реверс — отдельный будущий COUNTER_CLAIM, не скрытая автоматика).
-		if String(clinch.get("combo_state", "")) == "link" and int(clinch.t_added) == 1:
-			var anchor_card: Dictionary = (clinch.get("opening_anchor", {}) as Dictionary).get(
-				"card", {})
-			if Grammar.answers(anchor_card, sequence[0], token):
-				clinch.combo_state = "armed"
-				clinch.combo_owner = String(clinch.defender)
-				clinch.closer_step = sequence.size() - 1
-				clinch.closer_thesis_id = String(token.get("thesis_id", ""))
+		# R1: ответ парирует exact предыдущий нажим и материализуется в стабильный thesis_id
+		# (единственный мост play → тезис; нахождение на рамке трейс не дублирует).
+		var relations: Array = clinch.get("relations", [])
+		var prev_attack: Dictionary = sequence[int(hold_play.step) - 1]
+		var responds_rel := _relation_fact("responds_to", "play", String(hold_play.play_id),
+			"play", String(prev_attack.get("play_id", "")), String(clinch.get("action_id", "")))
+		var mat_rel := _relation_fact("materializes_as", "play", String(hold_play.play_id),
+			"thesis", String(token.get("thesis_id", "")), String(clinch.get("action_id", "")))
+		relations.append(responds_rel)
+		relations.append(mat_rel)
+		clinch["relations"] = relations
+		# Комбо §4 через register: вооружает только ответ с ребром на exact опенер (факт-
+		# эквивалент прежнего «первый T на открытый LINK»). Owner и closer зафиксированы
+		# в run'е; дальнейшие hold/press его не переписывают (реверс — будущий
+		# COUNTER_CLAIM, не скрытая автоматика). Клинч получает свежую проекцию.
+		combo_register.on_response(String(clinch.get("action_id", "")), hold_play,
+			[responds_rel, mat_rel],
+			(clinch.get("opening_anchor", {}) as Dictionary).get("card", {}), sequence[0])
+		var combo_view: Dictionary = combo_register.legacy_view(
+			String(clinch.get("combo_run_id", "")))
+		clinch.combo_state = combo_view.combo_state
+		clinch.combo_owner = combo_view.combo_owner
+		clinch.closer_step = combo_view.closer_step
+		clinch.closer_thesis_id = combo_view.closer_thesis_id
 		if not clinch_freeze:
 			_refill(sides[clinch.defender])
 		clinch.phase = "await_attack"
 		return {"event": "hold", "card": token, "step": sequence.size() - 1,
-			"thesis_id": String(token.get("thesis_id", ""))}
+			"thesis_id": String(token.get("thesis_id", "")),
+			"play_id": String(hold_play.play_id)}
 	else:
 		var ac := _take_clinch_card(clinch.attacker, "await_attack", prefer_steal, hand_index)
 		if ac.is_empty():
@@ -1064,12 +1227,28 @@ func clinch_submit(decision: String, prefer_steal: bool = true, hand_index: int 
 		_discard(clinch.attacker, ac)
 		clinch.r_count = int(clinch.r_count) + 1
 		var sequence: Array = clinch.get("sequence", [])
-		sequence.append(ac.duplicate(true))
+		var press_play: Dictionary = ac.duplicate(true)
+		press_play["play_id"] = _next_play_id()
+		press_play["actor"] = String(clinch.attacker)
+		press_play["role"] = "attack"
+		press_play["step"] = sequence.size()
+		sequence.append(press_play)
 		clinch["sequence"] = sequence
+		# R1: press целится в exact материализованный тезис предыдущего ответа.
+		var relations: Array = clinch.get("relations", [])
+		var prev_defense: Dictionary = sequence[int(press_play.step) - 1]
+		var press_rel := _relation_fact("targets", "play", String(press_play.play_id),
+			"thesis", String(prev_defense.get("thesis_id", "")),
+			String(clinch.get("action_id", "")))
+		relations.append(press_rel)
+		clinch["relations"] = relations
+		# R3: RTR-вахты регистра видят press как milestone (закрытие трёхзвенного path).
+		combo_register.on_press(String(clinch.get("action_id", "")), press_play, [press_rel])
 		if not clinch_freeze:
 			_refill(sides[clinch.attacker])
 		clinch.phase = "await_defend"
-		return {"event": "press", "card": ac}
+		return {"event": "press", "card": ac, "step": int(press_play.step),
+			"play_id": String(press_play.play_id)}
 
 
 ## Закрыть клинч: применить исход (clinch_finalize), очистить стейт, вернуть итог.
@@ -1077,17 +1256,16 @@ func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = ""
 	var attacker: String = clinch.attacker
 	var defender: String = clinch.defender
 	var idx: int = clinch.idx
+	var action_id: String = String(clinch.get("action_id", ""))
+	var target_frame_id: String = String(clinch.get("frame_id", ""))
 	var t_added: int = clinch.t_added
 	var r_count: int = clinch.r_count
 	var named: String = String(clinch.get("named", ""))
-	var combo_state: String = String(clinch.get("combo_state", "none"))
-	var combo_route: Dictionary = clinch.get("combo_route", {})
-	var combo_owner: String = String(clinch.get("combo_owner", ""))
-	var closer_step: int = int(clinch.get("closer_step", -1))
-	var closer_thesis_id: String = String(clinch.get("closer_thesis_id", ""))
+	var combo_run_id: String = String(clinch.get("combo_run_id", ""))
 	var opening_anchor: Dictionary = (clinch.get("opening_anchor", {}) as Dictionary) \
 		.duplicate(true)
 	var sequence: Array = clinch.get("sequence", []).duplicate(true)
+	var relations: Array = clinch.get("relations", []).duplicate(true)
 	var reach: int = int(clinch.get("capture_reach", 1))
 	var capture_audience_favor: int = int(clinch.get("capture_audience_favor", 0))
 	var opening_thickness: int = int(clinch.get("opening_thickness", 0))
@@ -1121,6 +1299,7 @@ func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = ""
 					initially_countered_theft_steps.append(latest_attack)
 	var attacker_won := r_count > t_added
 	var info := {"side": attacker, "type": TYPE_RAZBOR,
+		"action_id": action_id, "target_frame_id": target_frame_id,
 		"capture_reach": reach, "capture_audience_favor": capture_audience_favor,
 		"opening_thickness": opening_thickness,
 		"peak_thickness": peak_thickness, "protected_thickness": peak_thickness,
@@ -1183,28 +1362,49 @@ func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = ""
 	# уходит атакующему, только если именно этот объект всё ещё лежит на рамке.
 	if named == "socratic" and t_added > 0:
 		_socratic_trap(attacker, defender, idx, info, sequence)
-	# Комбо-settlement (§4): строго ПОСЛЕ полного unwind и именных post-resolve твистов и
-	# ДО рефилла. CONFIRMED = вооружённая тройка, owner победил клинч, exact closer держит
-	# result=held и его объект всё ещё стоит на рамке; сорванная ARMED-ставка — BREAK.
-	# Незакрытый LINK комбо не считается. Payoff не применяется до выбора бумагой A0 —
-	# поля ниже чистая телеметрия и не меняют доску/руки/ход.
+	# R1: single-assignment outcome (§2.2) — одна нормализованная запись на розыгрыш,
+	# строго после полного unwind и именных твистов; дальше не переписывается.
+	for raw in sequence:
+		var entry: Dictionary = raw
+		if entry.has("outcome"):
+			continue
+		var outcome := {"result": String(entry.get("result", ""))}
+		if String(entry.get("role", "")) == "attack":
+			outcome["effect"] = String(entry.get("effect", ""))
+			match String(entry.get("affected_kind", "")):
+				"thesis":
+					outcome["affected"] = {"kind": "thesis",
+						"id": String(entry.get("affected_thesis_id", ""))}
+				"frame":
+					outcome["affected"] = {"kind": "frame", "id": target_frame_id}
+				_:
+					outcome["affected"] = {}
+		else:
+			outcome["affected"] = {"kind": "thesis", "id": String(entry.get("thesis_id", ""))}
+		entry["outcome"] = outcome
+	info["relations"] = relations
+	# Комбо-settlement (§4) через register: строго ПОСЛЕ полного unwind и именных
+	# post-resolve твистов и ДО рефилла. Run терминализируется по claim.confirm рецепта
+	# (CONFIRMED = owner победил + exact closer held + его тезис на рамке; сорванная
+	# ARMED-ставка — BREAK; незакрытый LINK истекает и не считается). Payoff не
+	# применяется до выбора бумагой A0 — поля ниже чистая телеметрия.
 	opening_anchor.erase("card")
 	info["opening_anchor"] = opening_anchor
-	info["combo_state"] = combo_state
-	info["combo_route_id"] = String(combo_route.get("route_id", ""))
-	info["combo_name"] = String(combo_route.get("combo_name", ""))
-	info["combo_owner"] = combo_owner
-	info["combo_result"] = "none"
+	var settle_frame_ids: Array = []
+	if idx >= 0 and idx < sides[defender].lines.size():
+		settle_frame_ids = _thesis_ids(sides[defender].lines[idx])
+	combo_register.settle_action(action_id, attacker_won, sequence, settle_frame_ids)
+	var combo_view: Dictionary = combo_register.legacy_view(combo_run_id)
+	info["combo_state"] = String(combo_view.combo_state)
+	info["combo_route_id"] = String((combo_view.combo_route as Dictionary).get("route_id", ""))
+	info["combo_name"] = String((combo_view.combo_route as Dictionary).get("combo_name", ""))
+	info["combo_owner"] = String(combo_view.combo_owner)
+	info["combo_result"] = String(combo_view.combo_result)
 	info["combo_payoff"] = ""
-	if combo_state == "armed":
-		var closer_held: bool = closer_step >= 0 and closer_step < sequence.size() and \
-			String((sequence[closer_step] as Dictionary).get("result", "")) == "held"
-		var closer_on_frame := false
-		if idx >= 0 and idx < sides[defender].lines.size():
-			closer_on_frame = _thesis_ids(sides[defender].lines[idx]).has(closer_thesis_id)
-		var owner_won := not attacker_won   # v0.2: owner — всегда защитник-финишер
-		info["combo_result"] = "confirmed" if owner_won and closer_held and closer_on_frame \
-			else "break"
+	info["combo_run"] = combo_register.run_view(combo_run_id)
+	# R4: после action-settlement тот же boundary проверяет stable board; наружу одним
+	# массивом выходят action- и frame-scoped runs, payoff пока всегда пуст.
+	_settle_frame_combo_events(info)
 	info["resolved_sequence"] = sequence.duplicate(true)
 	# Снимок KO/резерва уже сделан внутри резолва; только теперь разрешён добор.
 	_refill(sides[attacker])
@@ -1359,11 +1559,13 @@ func play_redeploy(side: String, hand_index: int) -> Dictionary:
 	_refill(sides[side])
 	turn_count += 1
 	var info := {"side": side, "type": TYPE_USTANOVKA, "name": String(card.get("name", "")),
-		"removed": false}
+		"removed": false, "action_id": _next_action_id(), "play_id": _next_play_id(),
+		"frame_id": _ensure_frame_id(line)}
 	if card.has("named"):
 		info["named_suppressed"] = String(card.named)
 	info["redeploy"] = true
 	info["recovery_spent"] = true
+	_settle_frame_combo_events(info)
 	return info
 
 
