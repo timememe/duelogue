@@ -1381,6 +1381,10 @@ var completions := {}
 var thesis_origins := {}
 var _events_by_action := {}
 var _run_serial := 0
+## Тестовый seam: пустой по умолчанию, ничего не меняет ни в одном существующем пути.
+## Изолированные эксперименты (см. tools/combo_archetype_probe.gd) подсаживают сюда
+## recipe-словари той же формы, что A3_CATALOG, до первого open_action_run.
+var extra_a3_catalog: Array = []
 
 
 func _pattern(pattern_id: String) -> Dictionary:
@@ -1491,6 +1495,10 @@ func _pattern(pattern_id: String) -> Dictionary:
 			return P_P05_PRESSURE
 		"f3_10_ascent_return":
 			return P_F310_FRAME
+	for raw in extra_a3_catalog:
+		var extra: Dictionary = raw
+		if String(extra.get("id", "")) == pattern_id:
+			return extra
 	return {}
 
 
@@ -1599,7 +1607,7 @@ func open_action_run(action_id: String, frame_id: String, attacker: String,
 				"terminal": "",        # confirmed | break | expired | superseded
 			}
 			scope.g01 = run_id
-	for raw_pattern in A3_CATALOG:
+	for raw_pattern in (A3_CATALOG + extra_a3_catalog):
 		var pattern: Dictionary = raw_pattern
 		var path: Array = pattern.get("path", [])
 		if not _card_matches(opener_play, (path[0] as Dictionary).get("card", {})):

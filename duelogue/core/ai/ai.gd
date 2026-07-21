@@ -347,7 +347,12 @@ func _auto_resolve(r: RefCounted, attacker: String, defender: String, idx: int, 
 			continue
 		# side == defender → фаза защиты (await_defend), иначе — добивание (await_attack).
 		var play := def_will_clinch(r, side, line) if side == defender else atk_will_clinch(r, side, line)
-		last = r.clinch_submit("play" if play else "pass", atk_prefer_steal(r, attacker, defender, idx))
+		# Тот же шов, что battle_controller.gd (await_defend + play → точный ответ, иначе
+		# -1/вслепую): без этого сим недооценивал бы частоту относительно живой игры,
+		# где защитник любого стиля уже закрывает известный маршрут осознанно.
+		var hand_index := def_answer_index(r, side) if (side == defender and play) else -1
+		last = r.clinch_submit("play" if play else "pass", atk_prefer_steal(r, attacker, defender, idx),
+			hand_index)
 	return last
 
 
