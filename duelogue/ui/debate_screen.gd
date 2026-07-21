@@ -784,8 +784,11 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 	uc.position = Vector2(board_card_position_x(0.0, width, trailing_pad, reverse), y0)
 	var frame_info := claim_txt
 	var top_scheme := String(threat.get("top_scheme", ""))
+	var combo_bait := bool(threat.get("combo_bait", false))
 	if top_scheme != "":
 		frame_info += "\n\nСВЕРХУ: %s" % top_scheme
+		if combo_bait:
+			frame_info += "\n\n⚡ В РУКЕ ЕСТЬ ОТКРЫВАЮЩИЙ ПРИЁМ"
 	if shaky:
 		frame_info += "\n\n⚠ ШАТАЕТСЯ · КРАЖА ДО %d\nКрен к владельцу %+d · толщина %d" % [
 			int(threat.get("reach", 1)), int(threat.get("owner_favor", 0)),
@@ -799,12 +802,14 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 		root.add_child(warn)
 	elif top_scheme != "":
 		# Комбо §12: схема верхнего Тезиса читается прямо на рамке (шаткость приоритетнее —
-		# оба лейбла делят одну строку над рамкой).
+		# оба лейбла делят одну строку над рамкой). combo_bait — та же золотая подсветка,
+		# что и у правильного ответа в клинче (combo_answer_glow), для симметрии подсказки.
 		var scheme_tag := Label.new()
-		scheme_tag.text = top_scheme.to_upper()
+		scheme_tag.text = ("⚡ " + top_scheme.to_upper()) if combo_bait else top_scheme.to_upper()
 		scheme_tag.position = Vector2(uc.position.x - 2.0, y0 - 18.0)
 		scheme_tag.add_theme_font_size_override("font_size", 10)
-		scheme_tag.add_theme_color_override("font_color", Color.html("#" + COL_TEZIS))
+		scheme_tag.add_theme_color_override("font_color",
+			Color.html("#" + (COL_GOLD if combo_bait else COL_TEZIS)))
 		scheme_tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		root.add_child(scheme_tag)
 	if bool(threat.get("last_frame", false)) and bool(model.board_ko_enabled):
@@ -978,6 +983,15 @@ func _rebuild_hand() -> void:
 		if mode == "clinch_defend" and controller.combo_answer_glow(i):
 			btn.self_modulate = Color.html("#" + COL_GOLD)
 			bubble_body += "\n\n⚡ ПРАВИЛЬНЫЙ ОТВЕТ: закроет маршрут и вооружит комбо-ставку."
+		if mode == "move" and controller.combo_opener_glow(i):
+			btn.self_modulate = Color.html("#" + COL_GOLD)
+			var opener_targets: Array = controller.combo_opener_targets(i)
+			var target_bits: Array = []
+			for t in opener_targets:
+				var closes: String = "/".join(t.get("answer_schemes", []) as Array)
+				target_bits.append("(%s) («%s») (закроет: %s)" % [
+					String(t.get("scheme", "")), String(t.get("name", "")), closes])
+			bubble_body += "\n\n⚡ ОТКРЫВАЕТ МАРШРУТ → %s" % ", ".join(target_bits)
 		_attach_card_bubble(btn, bubble_title, bubble_body, card)
 		_attach_hand_motion(btn)
 		btn.pressed.connect(_on_hand_pressed.bind(i))
@@ -1093,7 +1107,21 @@ func _show_card_bubble(owner: Control, title: String, body: String, card: Dictio
 			border = Color.html("#" + COL_USTAN)
 	_card_bubble.add_theme_stylebox_override("panel",
 		_card_style(Color.html("#111722"), border, 2))
+	_resize_card_bubble_to_body()
 	_card_bubble.visible = true
+
+
+## Тело описания — переменной длины (комбо-подсказки теперь могут перечислять несколько
+## рамок), рамка тянется под текст вместо фиксированной высоты, которая его обрезала.
+func _resize_card_bubble_to_body() -> void:
+	var body_width := _card_bubble_body.offset_right - _card_bubble_body.offset_left
+	var font: Font = _card_bubble_body.get_theme_font("font")
+	var font_size := _card_bubble_body.get_theme_font_size("font_size")
+	var needed_h: float = clampf(font.get_multiline_string_size(_card_bubble_body.text,
+		HORIZONTAL_ALIGNMENT_LEFT, body_width, font_size).y, 24.0, 500.0)
+	var body_bottom := _card_bubble_body.offset_top + needed_h + 6.0
+	_card_bubble_body.offset_bottom = body_bottom
+	_card_bubble.offset_bottom = _card_bubble.offset_top + body_bottom + 14.0
 
 
 func _hide_card_bubble(owner: Control) -> void:

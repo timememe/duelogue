@@ -51,6 +51,13 @@ func _ready() -> void:
 	_check(model.turn_count == 0, "opening не расходует ход")
 	_check(model.score(SIDE_YOU) == 1 and model.score(SIDE_OPP) == 1,
 		"opening сохраняет симметричную Базу 1:1")
+	# Сторона игрока пересобирается из профиля ПОСЛЕ reset() (start_match) отдельным
+	# Deck.build_side() — экономика рамок обязана досеваться и там же, не только в reset().
+	var you_base: Dictionary = (model.sides[SIDE_YOU].lines[0].thesis_stack[0] as Dictionary)
+	var opp_base: Dictionary = (model.sides[SIDE_OPP].lines[0].thesis_stack[0] as Dictionary)
+	_check(bool(you_base.get("combo_eligible", false)) and String(you_base.get("scheme", "")) != "" and
+		bool(opp_base.get("combo_eligible", false)) and String(opp_base.get("scheme", "")) != "",
+		"стартовая База обеих сторон несёт настоящий тезис, не ленивый filler")
 	_check((model.sides[SIDE_YOU].hand as Array).size() == hand_before and
 		(model.sides[SIDE_YOU].draw as Array).size() == draw_before,
 		"opening не меняет размер H5 или число карт в доборе")
@@ -78,6 +85,7 @@ func _ready() -> void:
 	_check_pinned_reserve_does_not_shift_installations()
 	_check_installation_variants()
 	_check_frame_threat_contract()
+	_check_combo_opener_hint()
 	await _check_reframe_input_filter()
 	_finish_smoke()
 
@@ -207,6 +215,35 @@ func _check_frame_threat_contract() -> void:
 	var insured: Dictionary = frame_threat(SIDE_OPP, 0)
 	_check(int(insured.get("reserve", 0)) == 1 and not bool(insured.get("lethal", true)),
 		"тот же threat-контракт различает KO и восстановление по публичному резерву")
+
+
+## Комбо-подсказка: рамка оппонента и рука игрока светятся зеркально, только когда в
+## руке реально есть Разбор, чей hook открывает известный маршрут против eligible-верха.
+func _check_combo_opener_hint() -> void:
+	start_match()
+	_mode = "move"
+	model.sides[SIDE_OPP].lines = [{"theses": 1, "closed": false, "name": "Тезис",
+		"stolen": 0, "thesis_stack": [{"type": TYPE_TEZIS, "name": "Ссылка",
+			"scheme": "Авторитет", "combo_eligible": true, "thesis_id": "opp_top"}]}]
+	model.sides[SIDE_YOU].hand = [
+		{"type": TYPE_RAZBOR, "name": "Источник?", "device": "Источник?", "hook": "источник",
+			"combo_eligible": true, "steals": false},
+		{"type": TYPE_RAZBOR, "name": "Передёрг", "device": "Передёрг", "hook": "подмена",
+			"combo_eligible": true, "steals": false},
+	]
+	_check(bool(frame_threat(SIDE_OPP, 0).get("combo_bait", false)),
+		"combo_bait светит на рамке оппонента, когда в руке есть открывающий hook")
+	_check(combo_opener_glow(0) and not combo_opener_glow(1),
+		"combo_opener_glow светит только exact карте руки с открывающим hook'ом")
+	var targets0: Array = combo_opener_targets(0)
+	_check(targets0.size() == 1 and int(targets0[0].get("index", -1)) == 0 and
+		String(targets0[0].get("scheme", "")) == "Авторитет" and
+		String(targets0[0].get("name", "")) == "Тезис" and combo_opener_targets(1).is_empty(),
+		"combo_opener_targets называет exact рамку и схему — «куда класть», а не просто факт")
+	model.sides[SIDE_YOU].hand = [model.sides[SIDE_YOU].hand[1]]
+	_check(not bool(frame_threat(SIDE_OPP, 0).get("combo_bait", false)) and
+		not combo_opener_glow(0),
+		"без подходящего hook'а в руке подсказка не светит ни на рамке, ни на карте")
 
 
 func _check(ok: bool, label: String) -> void:

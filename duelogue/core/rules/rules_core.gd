@@ -162,6 +162,21 @@ func reset(
 	# Коми: ходящий вторым получает фору на стартовой рамке (компенсация темпа).
 	if komi > 0:
 		sides[other(first_side)].lines[0].theses += komi
+	# Та же экономика рамок, что и у розыгрыша Установки в игре: стартовая База получает
+	# реальные случайные тезисы с первого хода, а не ленивый filler (§ правка «Заявка»).
+	seed_starting_theses(SIDE_YOU)
+	seed_starting_theses(SIDE_OPP)
+
+
+## Публичная: reset() зовёт это для обеих сторон сразу после сборки. Дополнительно нужна
+## вызывающему коду, который пересобирает sides[side] напрямую через Deck.build_side()
+## ПОСЛЕ reset() (battle_controller — сторона игрока из профиля редактора колоды) —
+## такая пересборка минует reset() и снова оставляет ленивый filler, если не досеять руками.
+func seed_starting_theses(side: String) -> void:
+	for ln in sides[side].lines:
+		var want := int(ln.get("theses", 1))
+		for i in want:
+			_seed_frame_thesis(side, ln)
 
 
 func other(side: String) -> String:
@@ -327,6 +342,35 @@ func _put_thesis(line: Dictionary, card: Dictionary = {}) -> Dictionary:
 	line["thesis_stack"] = stack
 	_sync_thesis_scalars(line)
 	return token
+
+
+## Случайная карта заданного типа из стопки (добор/сброс), с изъятием. {} — подходящих нет.
+func _take_random_of_type(pile: Array, type: String) -> Dictionary:
+	var idx: Array = []
+	for i in pile.size():
+		if String((pile[i] as Dictionary).get("type", "")) == type:
+			idx.append(i)
+	if idx.is_empty():
+		return {}
+	var pick: int = idx[randi() % idx.size()]
+	var card: Dictionary = pile[pick]
+	pile.remove_at(pick)
+	return card
+
+
+## Экономика открытия рамки: первый тезис — не ленивый filler, а случайная настоящая
+## карта. Источник по приоритету: свой добор → свой сброс (Тезисов в доборе не осталось) →
+## filler (крайний случай — ни одного Тезиса не осталось нигде, весь пул уже на досках).
+## Раздачу руки не трогает: это отдельный от руки источник, добор идёт после как обычно.
+func _seed_frame_thesis(side: String, line: Dictionary) -> void:
+	var s: Dictionary = sides[side]
+	var card := _take_random_of_type(s.draw, TYPE_TEZIS)
+	if card.is_empty():
+		card = _take_random_of_type(s.discard, TYPE_TEZIS)
+	var stack: Array = line.get("thesis_stack", [])
+	stack.append(_thesis_token(card))
+	line["thesis_stack"] = stack
+	_sync_thesis_scalars(line)
 
 
 func _take_top_thesis(line: Dictionary) -> Dictionary:
@@ -654,6 +698,7 @@ func play_action(side: String, type: String, target: int = -1, hand_index: int =
 			_copy_claim(c, new_line)
 			info["frame_id"] = _ensure_frame_id(new_line)
 			s.lines.append(new_line)
+			_seed_frame_thesis(side, new_line)
 		TYPE_RAZBOR:
 			var c: Dictionary
 			if hand_index >= 0:
@@ -763,6 +808,8 @@ func play_named(side: String, hand_index: int, target: int = -1) -> Dictionary:
 			_copy_claim(card, axiom_line)
 			info["frame_id"] = _ensure_frame_id(axiom_line)
 			s.lines.append(axiom_line)
+			_seed_frame_thesis(side, axiom_line)
+			_seed_frame_thesis(side, axiom_line)
 		_:
 			pass
 	_refill(s)
@@ -1554,6 +1601,7 @@ func play_redeploy(side: String, hand_index: int) -> Dictionary:
 		"stolen": 0}
 	_copy_claim(card, line)
 	sides[side].lines.append(line)
+	_seed_frame_thesis(side, line)
 	for held in sides[side].hand:
 		held.erase("recovery_ready")
 	_refill(sides[side])

@@ -70,8 +70,6 @@ const P_G01_SOURCE := {
 		{"kind": "targets", "from": "$ask", "to": "$setup"},
 		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
 		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
-		{"kind": "content", "rel": "supports", "from": "$reply", "to_kind": "claim",
-			"attrs": {"lineage": "independent"}},
 	],
 	"claim": {"owner": "B", "confirm": [
 		{"kind": "winner", "role": "B"},
@@ -101,8 +99,6 @@ const P_X01_TRAP := {
 		{"kind": "targets", "from": "$ask", "to": "$setup"},
 		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
 		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
-		{"kind": "content", "rel": "supports", "from": "$reply", "to_kind": "claim",
-			"attrs": {"claimed_lineage": "independent", "lineage": "dependent"}},
 	],
 	"claim": {
 		"owner": "A",
@@ -136,8 +132,6 @@ const P_P01_PRESSURE := {
 		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
 		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
 		{"kind": "targets", "from": "$press", "to": "$reply_thesis"},
-		{"kind": "content", "rel": "undercuts", "from": "$press", "to_slot": "$reply",
-			"attrs": {"reason": "domain_mismatch"}},
 	],
 	"claim": {
 		"owner": "A",
@@ -170,9 +164,6 @@ const P_G04_GUARD := {
 		{"kind": "targets", "from": "$ask", "to": "$setup"},
 		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
 		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
-		{"kind": "content", "rel": "supports", "from": "$reply", "to_kind": "subclaim",
-			"bind_to": "$basis", "attrs": {"role": "shared_core",
-				"relevant_to_claim": true, "grounded": true}},
 	],
 	"claim": {"owner": "B", "confirm": [
 		{"kind": "winner", "role": "B"},
@@ -197,17 +188,986 @@ const P_X04_TRAP := {
 		{"kind": "targets", "from": "$ask", "to": "$setup"},
 		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
 		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
-		{"kind": "content", "rel": "supports", "from": "$reply", "to_kind": "subclaim",
-			"bind_to": "$basis", "attrs": {"role": "scope_qualifier", "post_hoc": true,
-				"independently_grounded": false, "relevant_to_claim": false}},
 	],
 	"claim": {"owner": "A", "confirm": [
 		{"kind": "winner", "role": "A"},
 		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
 		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
 		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
-		{"kind": "relation", "rel": "targets", "from": "$press", "to_bind": "$basis",
-			"provenance": "content"},
+	]},
+}
+
+## Остальные 16 из 20 маршрутов ANSWER_OF раскрыты той же формой, что source_backed/
+## shared_core выше: GUARD и TRAP над одной тройкой — гонка за один и тот же exact
+## $reply без content-гейта. Оба вооружаются чисто структурно (тот же setup+hook+ответ,
+## что и generic G-01); какой из них реально подтвердится на settlement, решает не
+## авторская разметка, а физика клинча — held vs removed/stolen exact $reply. Это тот же
+## contested-по-факту принцип, что уже был у explicit G-04/X-04, просто без ручного
+## authored $basis: тут различать нечего заранее, потому что сама тройка уже узкая
+## (exact setup-схема + exact hook + exact ответ-схема). exception_noted и about_people
+## осознанно не мигрируют (combo_a3_topologies §3: «остаются guard-only… не входят в
+## первый тест»).
+const P_DOMAIN_MATCH_GUARD := {
+	"id": "domain_match_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Эксперт по делу", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Авторитет"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "уместность"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Определение"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_DOMAIN_MATCH_TRAP := {
+	"id": "domain_match_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Область подогнана", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Авторитет"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "уместность"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Определение"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_EXPERT_CONSENSUS_GUARD := {
+	"id": "expert_consensus_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Консенсус сильнее", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Авторитет"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_EXPERT_CONSENSUS_TRAP := {
+	"id": "expert_consensus_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Голоса не по делу", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Авторитет"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_VOUCHED_NUMBERS_GUARD := {
+	"id": "vouched_numbers_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Цифры с подписью", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Авторитет"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_VOUCHED_NUMBERS_TRAP := {
+	"id": "vouched_numbers_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Подпись без проверки", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Авторитет"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_MECHANISM_SHOWN_GUARD := {
+	"id": "mechanism_shown_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Механизм на столе", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "связь"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Пример"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_MECHANISM_SHOWN_TRAP := {
+	"id": "mechanism_shown_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Иллюстрация вместо механизма", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "связь"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Пример"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_OUTLIER_DISMISSED_GUARD := {
+	"id": "outlier_dismissed_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Исключение — не правило", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Здравый смысл"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_OUTLIER_DISMISSED_TRAP := {
+	"id": "outlier_dismissed_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Отмахнулись нормой", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Здравый смысл"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_TYPICAL_CASE_GUARD := {
+	"id": "typical_case_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Пример типичен", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Пример"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_TYPICAL_CASE_TRAP := {
+	"id": "typical_case_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Выборка мимо тезиса", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Пример"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_DOCUMENTED_CASE_GUARD := {
+	"id": "documented_case_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Случай задокументирован", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Пример"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Авторитет"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_DOCUMENTED_CASE_TRAP := {
+	"id": "documented_case_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Свидетель понаслышке", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Пример"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Авторитет"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_SAME_CLASS_GUARD := {
+	"id": "same_class_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Тот же класс", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Пример"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "сходство"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Определение"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_SAME_CLASS_TRAP := {
+	"id": "same_class_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Класс подогнан", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Пример"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "сходство"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Определение"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_BORDERS_RESTORED_GUARD := {
+	"id": "borders_restored_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Возвращаю границы", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Традиция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Определение"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_BORDERS_RESTORED_TRAP := {
+	"id": "borders_restored_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Граница после удара", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Традиция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Определение"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_LIVING_TRADITION_GUARD := {
+	"id": "living_tradition_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Традиция жива", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Традиция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "уместность"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Пример"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_LIVING_TRADITION_TRAP := {
+	"id": "living_tradition_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Ностальгия вместо довода", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Традиция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "уместность"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Пример"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_COMMONLY_MEASURED_GUARD := {
+	"id": "commonly_measured_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Общее место измерено", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Здравый смысл"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_COMMONLY_MEASURED_TRAP := {
+	"id": "commonly_measured_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Опрос не о том", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Здравый смысл"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_MEASURED_SENSE_GUARD := {
+	"id": "measured_sense_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Здравая мера", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Здравый смысл"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Аналогия"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_MEASURED_SENSE_TRAP := {
+	"id": "measured_sense_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Мера на словах", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Здравый смысл"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Аналогия"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_GROUNDED_FEELING_GUARD := {
+	"id": "grounded_feeling_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Чувство с фактурой", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Эмоция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "подмена"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_GROUNDED_FEELING_TRAP := {
+	"id": "grounded_feeling_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Цифры для вида", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Эмоция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "подмена"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_BY_THE_BOOK_GUARD := {
+	"id": "by_the_book_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "По словарю", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Определение"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "подмена"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Авторитет"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_BY_THE_BOOK_TRAP := {
+	"id": "by_the_book_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Не тот словарь", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Определение"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "подмена"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Авторитет"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_SANE_BOUNDS_GUARD := {
+	"id": "sane_bounds_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Границы очевидны", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Определение"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Здравый смысл"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_SANE_BOUNDS_TRAP := {
+	"id": "sane_bounds_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Придуманная граница", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Определение"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Здравый смысл"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_ESTABLISHED_USAGE_GUARD := {
+	"id": "established_usage_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Устоявшееся значение", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Определение"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Традиция"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_ESTABLISHED_USAGE_TRAP := {
+	"id": "established_usage_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Личная привычка", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Определение"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Традиция"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+## Второй принятый ответ у четырёх маршрутов: ANSWER_OF в grammar.gd изначально
+## разрешает две закрывающие схемы, но первый проход миграции взял только первую
+## (не трогать интерпретатор _card_matches). Тот же route_id/combo_name — это то же
+## риторическое чтение, просто ещё одна карта, которая его честно закрывает.
+const P_MECHANISM_SHOWN_ANALOGY_GUARD := {
+	"id": "mechanism_shown_analogy_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Механизм на столе", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "связь"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Аналогия"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_MECHANISM_SHOWN_ANALOGY_TRAP := {
+	"id": "mechanism_shown_analogy_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Иллюстрация вместо механизма", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "связь"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Аналогия"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_OUTLIER_DISMISSED_STATS_GUARD := {
+	"id": "outlier_dismissed_stats_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Исключение — не правило", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_OUTLIER_DISMISSED_STATS_TRAP := {
+	"id": "outlier_dismissed_stats_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Отмахнулись нормой", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_LIVING_TRADITION_EMOTION_GUARD := {
+	"id": "living_tradition_emotion_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Традиция жива", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Традиция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "уместность"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Эмоция"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_LIVING_TRADITION_EMOTION_TRAP := {
+	"id": "living_tradition_emotion_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Ностальгия вместо довода", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Традиция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "уместность"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Эмоция"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
+	]},
+}
+
+const P_MEASURED_SENSE_COMMONSENSE_GUARD := {
+	"id": "measured_sense_commonsense_guard", "version": 1, "family": "A3", "topology": "trt_guard",
+	"combo_name": "Здравая мера", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Здравый смысл"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Здравый смысл"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": [
+		{"kind": "winner", "role": "B"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["held"]},
+		{"kind": "board_contains", "bind": "$reply_thesis"},
+	]},
+}
+const P_MEASURED_SENSE_COMMONSENSE_TRAP := {
+	"id": "measured_sense_commonsense_trap", "version": 1, "family": "A3", "topology": "trt_trap",
+	"combo_name": "Мера на словах", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Здравый смысл"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Здравый смысл"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$reply", "results": ["removed", "stolen"]},
+		{"kind": "outcome_in", "slot": "$ask", "results": ["landed", "captured"]},
+		{"kind": "effect_in", "slot": "$ask", "effects": ["breakdown", "capture"]},
 	]},
 }
 
@@ -230,8 +1190,135 @@ const P_P06_PRESSURE := {
 		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
 		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
 		{"kind": "targets", "from": "$press", "to": "$reply_thesis"},
-		{"kind": "content", "rel": "undercuts", "from": "$press", "to_slot": "$reply",
-			"attrs": {"reason": "correlation_to_cause"}},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$press", "results": ["landed"]},
+		{"kind": "effect_in", "slot": "$press", "effects": ["breakdown", "steal_thesis"]},
+		{"kind": "affected_is", "slot": "$press", "bind": "$reply_thesis"},
+	]},
+}
+
+## P-02…P-05 из каталога combo_a3_topologies §5 — та же content-free гонка: путь узкий
+## (exact hook → exact scheme → exact hook), settlement решает через уже отработавшие
+## outcome/effect/affected_is confirm-атомы P-01/P-06.
+const P_P02_PRESSURE := {
+	"id": "p02_moving_goalposts", "version": 1, "family": "A3", "topology": "rtr_pressure",
+	"combo_name": "Определение на ходу", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 20},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Определение"},
+			"selector": "next"},
+		{"slot": "$press", "role": "A", "card": {"type": "R", "hook": "подмена"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+		{"kind": "targets", "from": "$press", "to": "$reply_thesis"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$press", "results": ["landed"]},
+		{"kind": "effect_in", "slot": "$press", "effects": ["breakdown", "steal_thesis"]},
+		{"kind": "affected_is", "slot": "$press", "bind": "$reply_thesis"},
+	]},
+}
+
+const P_P03_PRESSURE := {
+	"id": "p03_reductio_check", "version": 1, "family": "A3", "topology": "rtr_pressure",
+	"combo_name": "Закрепил — проверил предел", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 20},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "подмена"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Определение"},
+			"selector": "next"},
+		{"slot": "$press", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+		{"kind": "targets", "from": "$press", "to": "$reply_thesis"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$press", "results": ["landed"]},
+		{"kind": "effect_in", "slot": "$press", "effects": ["breakdown", "steal_thesis"]},
+		{"kind": "affected_is", "slot": "$press", "bind": "$reply_thesis"},
+	]},
+}
+
+## Два варианта одного «Механизм не выдержал кейса»: T₁ может быть Примером или
+## Аналогией, у каждого свой правильный контр-hook (§5 таблицы).
+const P_P04A_PRESSURE := {
+	"id": "p04a_mechanism_example", "version": 1, "family": "A3", "topology": "rtr_pressure",
+	"combo_name": "Механизм не выдержал кейса", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 20},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "связь"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Пример"},
+			"selector": "next"},
+		{"slot": "$press", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+		{"kind": "targets", "from": "$press", "to": "$reply_thesis"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$press", "results": ["landed"]},
+		{"kind": "effect_in", "slot": "$press", "effects": ["breakdown", "steal_thesis"]},
+		{"kind": "affected_is", "slot": "$press", "bind": "$reply_thesis"},
+	]},
+}
+const P_P04B_PRESSURE := {
+	"id": "p04b_mechanism_analogy", "version": 1, "family": "A3", "topology": "rtr_pressure",
+	"combo_name": "Механизм не выдержал кейса", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 20},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "связь"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Аналогия"},
+			"selector": "next"},
+		{"slot": "$press", "role": "A", "card": {"type": "R", "hook": "сходство"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+		{"kind": "targets", "from": "$press", "to": "$reply_thesis"},
+	],
+	"claim": {"owner": "A", "confirm": [
+		{"kind": "winner", "role": "A"},
+		{"kind": "outcome_in", "slot": "$press", "results": ["landed"]},
+		{"kind": "effect_in", "slot": "$press", "effects": ["breakdown", "steal_thesis"]},
+		{"kind": "affected_is", "slot": "$press", "bind": "$reply_thesis"},
+	]},
+}
+
+const P_P05_PRESSURE := {
+	"id": "p05_show_the_sample", "version": 1, "family": "A3", "topology": "rtr_pressure",
+	"combo_name": "Покажи выборку", "scope": "action",
+	"arbitration": {"channel": "clinch", "tier": 3, "priority": 20},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+		{"slot": "$press", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+		{"kind": "targets", "from": "$press", "to": "$reply_thesis"},
 	],
 	"claim": {"owner": "A", "confirm": [
 		{"kind": "winner", "role": "A"},
@@ -258,8 +1345,30 @@ const P_F310_FRAME := {
 }
 
 ## A3-вахты, открываемые опенером (G-01 создаётся отдельной старой дорожкой).
-const A3_CATALOG := [P_G01_SOURCE, P_X01_TRAP, P_P01_PRESSURE, P_G04_GUARD, P_X04_TRAP,
-	P_P06_PRESSURE]
+const A3_CATALOG := [
+	P_G01_SOURCE, P_X01_TRAP, P_P01_PRESSURE, P_G04_GUARD, P_X04_TRAP, P_P06_PRESSURE,
+	P_DOMAIN_MATCH_GUARD, P_DOMAIN_MATCH_TRAP,
+	P_EXPERT_CONSENSUS_GUARD, P_EXPERT_CONSENSUS_TRAP,
+	P_VOUCHED_NUMBERS_GUARD, P_VOUCHED_NUMBERS_TRAP,
+	P_MECHANISM_SHOWN_GUARD, P_MECHANISM_SHOWN_TRAP,
+	P_OUTLIER_DISMISSED_GUARD, P_OUTLIER_DISMISSED_TRAP,
+	P_TYPICAL_CASE_GUARD, P_TYPICAL_CASE_TRAP,
+	P_DOCUMENTED_CASE_GUARD, P_DOCUMENTED_CASE_TRAP,
+	P_SAME_CLASS_GUARD, P_SAME_CLASS_TRAP,
+	P_BORDERS_RESTORED_GUARD, P_BORDERS_RESTORED_TRAP,
+	P_LIVING_TRADITION_GUARD, P_LIVING_TRADITION_TRAP,
+	P_COMMONLY_MEASURED_GUARD, P_COMMONLY_MEASURED_TRAP,
+	P_MEASURED_SENSE_GUARD, P_MEASURED_SENSE_TRAP,
+	P_GROUNDED_FEELING_GUARD, P_GROUNDED_FEELING_TRAP,
+	P_BY_THE_BOOK_GUARD, P_BY_THE_BOOK_TRAP,
+	P_SANE_BOUNDS_GUARD, P_SANE_BOUNDS_TRAP,
+	P_ESTABLISHED_USAGE_GUARD, P_ESTABLISHED_USAGE_TRAP,
+	P_MECHANISM_SHOWN_ANALOGY_GUARD, P_MECHANISM_SHOWN_ANALOGY_TRAP,
+	P_OUTLIER_DISMISSED_STATS_GUARD, P_OUTLIER_DISMISSED_STATS_TRAP,
+	P_LIVING_TRADITION_EMOTION_GUARD, P_LIVING_TRADITION_EMOTION_TRAP,
+	P_MEASURED_SENSE_COMMONSENSE_GUARD, P_MEASURED_SENSE_COMMONSENSE_TRAP,
+	P_P02_PRESSURE, P_P03_PRESSURE, P_P04A_PRESSURE, P_P04B_PRESSURE, P_P05_PRESSURE,
+]
 const FRAME_CATALOG := [P_F310_FRAME]
 
 ## Все runs матча (append-only, терминальные остаются как доказательство для телеметрии).
@@ -290,6 +1399,96 @@ func _pattern(pattern_id: String) -> Dictionary:
 			return P_X04_TRAP
 		"p06_double_audit":
 			return P_P06_PRESSURE
+		"domain_match_guard":
+			return P_DOMAIN_MATCH_GUARD
+		"domain_match_trap":
+			return P_DOMAIN_MATCH_TRAP
+		"expert_consensus_guard":
+			return P_EXPERT_CONSENSUS_GUARD
+		"expert_consensus_trap":
+			return P_EXPERT_CONSENSUS_TRAP
+		"vouched_numbers_guard":
+			return P_VOUCHED_NUMBERS_GUARD
+		"vouched_numbers_trap":
+			return P_VOUCHED_NUMBERS_TRAP
+		"mechanism_shown_guard":
+			return P_MECHANISM_SHOWN_GUARD
+		"mechanism_shown_trap":
+			return P_MECHANISM_SHOWN_TRAP
+		"outlier_dismissed_guard":
+			return P_OUTLIER_DISMISSED_GUARD
+		"outlier_dismissed_trap":
+			return P_OUTLIER_DISMISSED_TRAP
+		"typical_case_guard":
+			return P_TYPICAL_CASE_GUARD
+		"typical_case_trap":
+			return P_TYPICAL_CASE_TRAP
+		"documented_case_guard":
+			return P_DOCUMENTED_CASE_GUARD
+		"documented_case_trap":
+			return P_DOCUMENTED_CASE_TRAP
+		"same_class_guard":
+			return P_SAME_CLASS_GUARD
+		"same_class_trap":
+			return P_SAME_CLASS_TRAP
+		"borders_restored_guard":
+			return P_BORDERS_RESTORED_GUARD
+		"borders_restored_trap":
+			return P_BORDERS_RESTORED_TRAP
+		"living_tradition_guard":
+			return P_LIVING_TRADITION_GUARD
+		"living_tradition_trap":
+			return P_LIVING_TRADITION_TRAP
+		"commonly_measured_guard":
+			return P_COMMONLY_MEASURED_GUARD
+		"commonly_measured_trap":
+			return P_COMMONLY_MEASURED_TRAP
+		"measured_sense_guard":
+			return P_MEASURED_SENSE_GUARD
+		"measured_sense_trap":
+			return P_MEASURED_SENSE_TRAP
+		"grounded_feeling_guard":
+			return P_GROUNDED_FEELING_GUARD
+		"grounded_feeling_trap":
+			return P_GROUNDED_FEELING_TRAP
+		"by_the_book_guard":
+			return P_BY_THE_BOOK_GUARD
+		"by_the_book_trap":
+			return P_BY_THE_BOOK_TRAP
+		"sane_bounds_guard":
+			return P_SANE_BOUNDS_GUARD
+		"sane_bounds_trap":
+			return P_SANE_BOUNDS_TRAP
+		"established_usage_guard":
+			return P_ESTABLISHED_USAGE_GUARD
+		"established_usage_trap":
+			return P_ESTABLISHED_USAGE_TRAP
+		"mechanism_shown_analogy_guard":
+			return P_MECHANISM_SHOWN_ANALOGY_GUARD
+		"mechanism_shown_analogy_trap":
+			return P_MECHANISM_SHOWN_ANALOGY_TRAP
+		"outlier_dismissed_stats_guard":
+			return P_OUTLIER_DISMISSED_STATS_GUARD
+		"outlier_dismissed_stats_trap":
+			return P_OUTLIER_DISMISSED_STATS_TRAP
+		"living_tradition_emotion_guard":
+			return P_LIVING_TRADITION_EMOTION_GUARD
+		"living_tradition_emotion_trap":
+			return P_LIVING_TRADITION_EMOTION_TRAP
+		"measured_sense_commonsense_guard":
+			return P_MEASURED_SENSE_COMMONSENSE_GUARD
+		"measured_sense_commonsense_trap":
+			return P_MEASURED_SENSE_COMMONSENSE_TRAP
+		"p02_moving_goalposts":
+			return P_P02_PRESSURE
+		"p03_reductio_check":
+			return P_P03_PRESSURE
+		"p04a_mechanism_example":
+			return P_P04A_PRESSURE
+		"p04b_mechanism_analogy":
+			return P_P04B_PRESSURE
+		"p05_show_the_sample":
+			return P_P05_PRESSURE
 		"f3_10_ascent_return":
 			return P_F310_FRAME
 	return {}
@@ -427,7 +1626,8 @@ func open_action_run(action_id: String, frame_id: String, attacker: String,
 			"reply_thesis": "",
 			"frame_id": frame_id,
 			"structural_complete": false,
-			"content_ok": false,
+			# Паттерн без content-атомов не ждёт add_content_relation — вооружается чисто структурно.
+			"content_ok": _content_atoms(pattern).is_empty(),
 			"armed_once": false,
 			"superseded_by": "",
 			"state": "watching",   # watching | link | armed | terminal

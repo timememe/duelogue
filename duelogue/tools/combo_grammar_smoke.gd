@@ -619,8 +619,8 @@ func _check_r2_pattern_run() -> void:
 	var second_run := String(m.clinch.get("combo_run_id", ""))
 	m.clinch_submit("pass")
 	_check(first_run != "" and second_run != "" and first_run != second_run and
-		m.combo_register.runs.size() == 2,
-		"R2: регистр матча append-only — каждый клинч получает собственный run")
+		m.combo_register.runs.has(first_run) and m.combo_register.runs.has(second_run),
+		"R2: регистр матча append-only — каждый клинч получает собственный run, старые не исчезают")
 
 
 func _event_of(info: Dictionary, pattern_id: String) -> Dictionary:
@@ -638,44 +638,48 @@ func _run_of(model: RefCounted, pattern_id: String) -> Dictionary:
 	return {}
 
 
-## Шаг R3 регистра (§9): X-01 TRAP + P-01 RTR-PRESSURE, combo_events[] без payoff,
-## content-гейт по шву §7 (смоук играет роль controller'а через add_content_relation).
-## Сценарии — бумага A3 §9: A3-2 (SPRUNG), кандидат без семантики (UNRESOLVED),
-## A3-4 (RTR без якоря), A3-5 (RTR парирован).
+## Шаг R3 регистра (§9): X-01 TRAP + P-01 RTR-PRESSURE, combo_events[] без payoff.
+## GUARD и TRAP над одной тройкой вооружаются чисто структурно — content-гейт снят
+## (авторская content-разметка требовала бы отдельного тега на каждую карточную копию,
+## а колода внутри одной схемы фунгибельна). Какая из двух ставок реально подтвердится,
+## решает не разметка, а физика клинча: settlement читает только actual outcome exact
+## $reply (held vs removed/stolen). Сценарии — бумага A3 §9: A3-2 (SPRUNG), зеркальный
+## A3-1 (DEFENDED), A3-4 (RTR без якоря), A3-5 (RTR парирован).
 func _check_r3_two_sides() -> void:
-	# A3-2 — чистый TRAP: G-01 и X-01 над одной тройкой, две ставки двух владельцев.
-	var s1: RefCounted = _scenario("Авторитет",
+	# A3-2 — чистый TRAP: A давит вторым Разбором, T₁ снят → X-01 подтверждён; зеркальный
+	# G-01-source вооружился той же тройкой (гонка стартует симметрично), но проигрывает.
+	var sprung: RefCounted = _scenario("Авторитет",
 		[_attack("Источник?"), _attack("Передёрг")], [_thesis("Статистика")])
-	var s1_hold: Dictionary = s1.clinch_submit("play", false, 0)
-	var content_rel: Dictionary = s1.add_content_relation("supports",
-		"play", String(s1_hold.get("play_id", "")), "claim", "claim_demo",
-		{"claimed_lineage": "independent", "lineage": "dependent"})
-	var x01_armed_mid: bool = String(_run_of(s1, "x01_false_independence")
+	sprung.clinch_submit("play", false, 0)
+	var x01_armed_mid: bool = String(_run_of(sprung, "x01_false_independence")
 		.get("state", "")) == "armed"
-	s1.clinch_submit("play", false, 0)
-	var s1_info: Dictionary = s1.clinch_submit("pass").get("info", {})
-	var x01_ev: Dictionary = _event_of(s1_info, "x01_false_independence")
-	var g01_ev: Dictionary = _event_of(s1_info, "g01_guard")
-	_check(String(content_rel.get("provenance", "")) == "content" and x01_armed_mid and
+	var g01_source_armed_mid: bool = String(_run_of(sprung, "g01_source_backed")
+		.get("state", "")) == "armed"
+	sprung.clinch_submit("play", false, 0)
+	var sprung_info: Dictionary = sprung.clinch_submit("pass").get("info", {})
+	var x01_ev: Dictionary = _event_of(sprung_info, "x01_false_independence")
+	var g01_source_ev: Dictionary = _event_of(sprung_info, "g01_source_backed")
+	var g01_ev: Dictionary = _event_of(sprung_info, "g01_guard")
+	_check(x01_armed_mid and g01_source_armed_mid and
 		String(x01_ev.get("terminal", "")) == "confirmed" and
 		String(x01_ev.get("owner", "")) == RulesCore.SIDE_YOU and
 		String(x01_ev.get("combo_name", "")) == "Ложная независимость" and
 		String(x01_ev.get("topology", "")) == "trt_trap" and
-		String(g01_ev.get("terminal", "")) == "unresolved" and
+		String(g01_source_ev.get("terminal", "")) == "break" and
+		String(g01_ev.get("terminal", "")) == "superseded" and
 		bool(g01_ev.get("shadowed", false)) and
 		String(g01_ev.get("owner", "")) == RulesCore.SIDE_OPP and
 		String(x01_ev.get("payoff", "")) == "" and String(g01_ev.get("payoff", "")) == "",
-		"R3/R4: SPRUNG — X-01 подтверждён, structural G-01 shadowed семантическим classifier'ом")
+		"R3/R4: SPRUNG — обе ставки вооружаются структурно, X-01 забирает гонку outcome")
 
-	# Тот же кандидат БЕЗ content-ребра: неизвестность — не BREAK и не ловушка.
-	var s2: RefCounted = _scenario("Авторитет",
-		[_attack("Источник?"), _attack("Передёрг")], [_thesis("Статистика")])
-	s2.clinch_submit("play", false, 0)
-	s2.clinch_submit("play", false, 0)
-	var s2_info: Dictionary = s2.clinch_submit("pass").get("info", {})
-	_check(String(_event_of(s2_info, "x01_false_independence")
-		.get("terminal", "")) == "unresolved",
-		"R3: структурный кандидат без семантики терминализируется UNRESOLVED")
+	# Зеркальная DEFENDED: A пасует сразу, T₁ held → G-01-source подтверждён, X-01 BREAK.
+	var defended: RefCounted = _scenario("Авторитет",
+		[_attack("Источник?")], [_thesis("Статистика")])
+	defended.clinch_submit("play", false, 0)
+	var defended_info: Dictionary = defended.clinch_submit("pass").get("info", {})
+	_check(String(_event_of(defended_info, "g01_source_backed").get("terminal", "")) == "confirmed" and
+		String(_event_of(defended_info, "x01_false_independence").get("terminal", "")) == "break",
+		"R3: DEFENDED — та же тройка без давления подтверждает G-01-source, не X-01")
 
 	# A3-4 — RTR поверх технической Базы: якоря нет (legacy none), P-01 работает.
 	var s3: RefCounted = _combo_model()
@@ -687,10 +691,8 @@ func _check_r3_two_sides() -> void:
 	s3.sides[RulesCore.SIDE_OPP].draw = []
 	s3.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
 	var s3_legacy_none: bool = String(s3.clinch.get("combo_state", "")) == "none"
-	var s3_hold: Dictionary = s3.clinch_submit("play", false, 0)
-	var s3_press: Dictionary = s3.clinch_submit("play", false, 0)
-	s3.add_content_relation("undercuts", "play", String(s3_press.get("play_id", "")),
-		"play", String(s3_hold.get("play_id", "")), {"reason": "domain_mismatch"})
+	s3.clinch_submit("play", false, 0)
+	s3.clinch_submit("play", false, 0)
 	var p01_armed_mid: bool = String(_run_of(s3, "p01_expert_domain")
 		.get("state", "")) == "armed"
 	var s3_info: Dictionary = s3.clinch_submit("pass").get("info", {})
@@ -711,10 +713,8 @@ func _check_r3_two_sides() -> void:
 	s4.sides[RulesCore.SIDE_OPP].hand = [_thesis("Авторитет"), _thesis("Пример")]
 	s4.sides[RulesCore.SIDE_OPP].draw = []
 	s4.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
-	var s4_hold: Dictionary = s4.clinch_submit("play", false, 0)
-	var s4_press: Dictionary = s4.clinch_submit("play", false, 0)
-	s4.add_content_relation("undercuts", "play", String(s4_press.get("play_id", "")),
-		"play", String(s4_hold.get("play_id", "")), {"reason": "domain_mismatch"})
+	s4.clinch_submit("play", false, 0)
+	s4.clinch_submit("play", false, 0)
 	s4.clinch_submit("play", false, 0)
 	var s4_info: Dictionary = s4.clinch_submit("pass").get("info", {})
 	_check(String(_event_of(s4_info, "p01_expert_domain").get("terminal", "")) == "break",
@@ -727,43 +727,45 @@ func _frame_recipe_t(scheme: String) -> Dictionary:
 	return card
 
 
-## R4: explicit G-04/X-04 CONTESTED, tier-supersede X-01→P-06 без fallback и
-## frame-scoped F3-10, который срабатывает one-shot только на board_stable.
+## R4: G-01-source/X-01 и G-04/X-04 — content-free race над одной тройкой,
+## tier-supersede X-01→P-06 без fallback и frame-scoped F3-10, который срабатывает
+## one-shot только на board_stable.
 func _check_r4_arbitration_frame_scope() -> void:
-	# Мигрированная G-01/X-01 пара больше не доверяет structural legacy-ветке.
-	var independent: RefCounted = _scenario("Авторитет", [_attack("Источник?")],
+	# Мигрированная G-01/X-01 пара: гонка решается физикой клинча, не content-разметкой.
+	# D пасует → held → G-01-source подтверждён, legacy G-01 подавлен его терминалом.
+	var held: RefCounted = _scenario("Авторитет", [_attack("Источник?")],
 		[_thesis("Статистика")])
-	var independent_hold: Dictionary = independent.clinch_submit("play", false, 0)
-	independent.add_content_relation("supports", "play", String(independent_hold.play_id),
-		"claim", "claim_demo", {"lineage": "independent"})
-	var independent_info: Dictionary = independent.clinch_submit("pass").get("info", {})
-	var independent_semantic := _event_of(independent_info, "g01_source_backed")
-	var independent_legacy := _event_of(independent_info, "g01_guard")
-	var dependent: RefCounted = _scenario("Авторитет", [_attack("Источник?")],
-		[_thesis("Статистика")])
-	var dependent_hold: Dictionary = dependent.clinch_submit("play", false, 0)
-	dependent.add_content_relation("supports", "play", String(dependent_hold.play_id),
-		"claim", "claim_demo", {"claimed_lineage": "independent", "lineage": "dependent"})
-	var dependent_info: Dictionary = dependent.clinch_submit("pass").get("info", {})
-	_check(String(independent_semantic.get("terminal", "")) == "confirmed" and
-		String(independent_legacy.get("terminal", "")) == "superseded" and
-		String(independent_info.get("combo_result", "")) == "confirmed" and
-		String(_event_of(dependent_info, "g01_source_backed").get("terminal", "")) == "unresolved" and
-		String(_event_of(dependent_info, "x01_false_independence").get("terminal", "")) == "break" and
-		String(_event_of(dependent_info, "g01_guard").get("terminal", "")) == "unresolved" and
-		String(dependent_info.get("combo_result", "")) == "none",
-		"R4: verdict-gating — independent подтверждает G-01, dependent не спасается structural legacy-GUARD")
+	held.clinch_submit("play", false, 0)
+	var held_info: Dictionary = held.clinch_submit("pass").get("info", {})
+	var held_guard := _event_of(held_info, "g01_source_backed")
+	var held_trap := _event_of(held_info, "x01_false_independence")
+	var held_legacy := _event_of(held_info, "g01_guard")
+	# A продолжает давить вторым Разбором → T₁ снят → X-01 подтверждён, G-01-source BREAK.
+	# Legacy G-01 — переходная проекция §7 и по-прежнему следует терминалу GUARD-чтения
+	# (не TRAP напрямую): за attacker-стороной уже следит отдельный combo_events[].
+	var removed: RefCounted = _scenario("Авторитет",
+		[_attack("Источник?"), _attack("Передёрг")], [_thesis("Статистика")])
+	removed.clinch_submit("play", false, 0)
+	removed.clinch_submit("play", false, 0)
+	var removed_info: Dictionary = removed.clinch_submit("pass").get("info", {})
+	var removed_guard := _event_of(removed_info, "g01_source_backed")
+	var removed_trap := _event_of(removed_info, "x01_false_independence")
+	var removed_legacy := _event_of(removed_info, "g01_guard")
+	_check(String(held_guard.get("terminal", "")) == "confirmed" and
+		String(held_trap.get("terminal", "")) == "break" and
+		String(held_legacy.get("terminal", "")) == "superseded" and
+		String(held_info.get("combo_result", "")) == "confirmed" and
+		String(removed_trap.get("terminal", "")) == "confirmed" and
+		String(removed_guard.get("terminal", "")) == "break" and
+		String(removed_legacy.get("terminal", "")) == "superseded" and
+		String(removed_info.get("combo_result", "")) == "break",
+		"R4: content-free race — held подтверждает G-01-source, removed подтверждает X-01")
 
-	# A3-3, ветвь D: две exact semantic basis вооружают два runs разных владельцев.
-	# Победа D подтверждает G-04; generic G-01 того же owner/channel подавлен priority.
+	# G-04/X-04 над Аналогия→Ложная аналогия→Определение — та же content-free гонка,
+	# те же слоты. D пасует → GUARD-чтение держит ставку, generic G-01 подавлен priority.
 	var d: RefCounted = _scenario("Аналогия", [_attack("Ложная аналогия")],
 		[_thesis("Определение")])
-	var d_hold: Dictionary = d.clinch_submit("play", false, 0)
-	d.add_content_relation("supports", "play", String(d_hold.play_id), "subclaim", "core",
-		{"role": "shared_core", "relevant_to_claim": true, "grounded": true})
-	d.add_content_relation("supports", "play", String(d_hold.play_id), "subclaim", "qualifier",
-		{"role": "scope_qualifier", "post_hoc": true,
-			"independently_grounded": false, "relevant_to_claim": false})
+	d.clinch_submit("play", false, 0)
 	var d_both_armed: bool = String(_run_of(d, "g04_shared_core").get("state", "")) == "armed" and \
 		String(_run_of(d, "x04_redrawn_similarity").get("state", "")) == "armed"
 	var d_info: Dictionary = d.clinch_submit("pass").get("info", {})
@@ -775,22 +777,14 @@ func _check_r4_arbitration_frame_scope() -> void:
 		String(d_legacy.get("terminal", "")) == "superseded" and
 		bool(d_guard.get("contested", false)) and bool(d_trap.get("contested", false)) and
 		bool((d_guard.get("arbitration", {}) as Dictionary).get("winner", false)) and
-		String(((d_guard.get("bindings", {}) as Dictionary).get("$basis", ""))) == "core" and
-		String(((d_trap.get("bindings", {}) as Dictionary).get("$basis", ""))) == "qualifier" and
 		String(d_info.get("combo_result", "")) == "confirmed",
-		"R4: CONTESTED-D — G-04 подтверждён, X-04 сломан, legacy G-01 подавлен без смены UI-контракта")
+		"R4: G-04 держит DEFENDED-чтение той же тройки, generic G-01 подавлен без смены UI-контракта")
 
-	# Та же authored-вилка, ветвь A: press обязан явно целиться в trap-basis qualifier.
+	# Та же тройка, A давит вторым Разбором и снимает T₁: X-04 забирает гонку.
 	var a: RefCounted = _scenario("Аналогия",
 		[_attack("Ложная аналогия"), _attack("Передёрг")], [_thesis("Определение")])
-	var a_hold: Dictionary = a.clinch_submit("play", false, 0)
-	a.add_content_relation("supports", "play", String(a_hold.play_id), "subclaim", "core",
-		{"role": "shared_core", "relevant_to_claim": true, "grounded": true})
-	a.add_content_relation("supports", "play", String(a_hold.play_id), "subclaim", "qualifier",
-		{"role": "scope_qualifier", "post_hoc": true,
-			"independently_grounded": false, "relevant_to_claim": false})
-	var a_press: Dictionary = a.clinch_submit("play", false, 0)
-	a.add_content_relation("targets", "play", String(a_press.play_id), "subclaim", "qualifier")
+	a.clinch_submit("play", false, 0)
+	a.clinch_submit("play", false, 0)
 	var a_info: Dictionary = a.clinch_submit("pass").get("info", {})
 	var a_guard := _event_of(a_info, "g04_shared_core")
 	var a_trap := _event_of(a_info, "x04_redrawn_similarity")
@@ -798,31 +792,17 @@ func _check_r4_arbitration_frame_scope() -> void:
 		String(a_trap.get("terminal", "")) == "confirmed" and
 		bool((a_trap.get("arbitration", {}) as Dictionary).get("winner", false)) and
 		bool(a_trap.get("contested", false)),
-		"R4: CONTESTED-A — X-04 подтверждается только press'ом по exact qualifier-basis")
-	var miss: RefCounted = _scenario("Аналогия",
-		[_attack("Ложная аналогия"), _attack("Передёрг")], [_thesis("Определение")])
-	var miss_hold: Dictionary = miss.clinch_submit("play", false, 0)
-	miss.add_content_relation("supports", "play", String(miss_hold.play_id),
-		"subclaim", "qualifier", {"role": "scope_qualifier", "post_hoc": true,
-			"independently_grounded": false, "relevant_to_claim": false})
-	miss.clinch_submit("play", false, 0)
-	var miss_info: Dictionary = miss.clinch_submit("pass").get("info", {})
-	_check(String(_event_of(miss_info, "x04_redrawn_similarity").get("terminal", "")) == "break",
-		"R4: X-04 без exact press→basis relation не получает подтверждение от одной победы A")
+		"R4: SPRUNG — X-04 подтверждён, когда следующий Разбор реально снимает T₁")
 
 	# A3-6: P-06 tier 3 жёстко заменяет tier-2 X-01; T₃ ломает PRESSURE, но старый
-	# TRAP не возвращается. G-01 защитника может честно подтвердиться как другая owner-group.
+	# TRAP не возвращается. Обе ставки вооружаются структурно, без content-разметки.
 	var up: RefCounted = _scenario("Авторитет",
 		[_attack("Источник?"), _attack("Корреляция")],
 		[_thesis("Статистика"), _thesis("Пример")])
-	var up_hold: Dictionary = up.clinch_submit("play", false, 0)
-	up.add_content_relation("supports", "play", String(up_hold.play_id), "claim", "claim_demo",
-		{"claimed_lineage": "independent", "lineage": "dependent"})
+	up.clinch_submit("play", false, 0)
 	var x01_was_armed: bool = String(_run_of(up, "x01_false_independence")
 		.get("state", "")) == "armed"
-	var up_press: Dictionary = up.clinch_submit("play", false, 0)
-	up.add_content_relation("undercuts", "play", String(up_press.play_id),
-		"play", String(up_hold.play_id), {"reason": "correlation_to_cause"})
+	up.clinch_submit("play", false, 0)
 	var x01_superseded_mid: bool = String(_run_of(up, "x01_false_independence")
 		.get("terminal", "")) == "superseded"
 	var p06_armed_mid: bool = String(_run_of(up, "p06_double_audit").get("state", "")) == "armed"
@@ -1102,7 +1082,7 @@ func _check_a3_trap_both_outcomes() -> void:
 		String(win_probe.get("result", "")) == A3Probe.RESULT_TRAP and
 		String(win_probe.get("owner", "")) == RulesCore.SIDE_YOU and
 		int(win_probe.get("payoff_count", 0)) == 1 and
-		String(win_runtime.get("combo_result", "")) == "none" and
+		String(win_runtime.get("combo_result", "")) == "break" and
 		String(_event_of(win_runtime, "x01_false_independence").get("terminal", "")) == "confirmed" and
 		String(parried_probe.get("result", "")) == A3Probe.RESULT_ALL_BREAK and
 		int(parried_probe.get("payoff_count", 0)) == 0,
@@ -1269,8 +1249,8 @@ func _check_a3_semantic_misses() -> void:
 	var miss_out := _a3_finish(wrong_thread, miss_exchange)
 	var miss_probe: Dictionary = miss_out.probe
 
-	_check(String(unresolved_runtime.get("combo_result", "")) == "none" and
-		String(_event_of(unresolved_runtime, "g01_source_backed").get("terminal", "")) == "unresolved" and
+	_check(String(unresolved_runtime.get("combo_result", "")) == "confirmed" and
+		String(_event_of(unresolved_runtime, "g01_source_backed").get("terminal", "")) == "confirmed" and
 		String(unresolved_probe.get("result", "")) == A3Probe.RESULT_UNRESOLVED and
 		String(miss_probe.get("result", "")) == A3Probe.RESULT_NO_CLAIM and
 		String(miss_exchange.get("rtr_state", "")) == "miss",

@@ -43,9 +43,10 @@ static func make_card(type: String, i: int) -> Dictionary:
 
 ## Технический тезис без карты (стартовые тезисы Базы, ленивые токены стека). Схемы НЕТ
 ## и combo_eligible=false осознанно (§1.3 грамматики): иначе каждая База случайно стала бы
-## конкретной схемой и начала собирать маршруты. Имя совпадает с прежним фабричным.
+## конкретной схемой и начала собирать маршруты. Имя отдельное от TEZIS_NAMES — раньше
+## совпадало с «Довод» и было неотличимо от настоящей карты той же фабрики.
 static func filler_thesis() -> Dictionary:
-	return {"type": TYPE_TEZIS, "name": TEZIS_NAMES[0], "steals": false,
+	return {"type": TYPE_TEZIS, "name": "Заявка", "steals": false,
 		"combo_eligible": false}
 
 

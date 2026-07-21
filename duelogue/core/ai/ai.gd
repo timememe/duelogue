@@ -255,6 +255,11 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 	var guard := 0
 	var diffs: Array[int] = []
 	var atk_flags: Array[bool] = []  # был ли ход атакой (интерактивность по ходам)
+	# Комбо-телеметрия сима: combo_events[] уже есть в info play_action/play_named/
+	# play_redeploy (наружу напрямую) и в info["info"]["combo_events"] финала клинча —
+	# просто читаем то, что ядро и так возвращает, ничего в ядре не меняя.
+	var combo_log: Array = []
+	var clinches := 0
 	while not r.game_over and guard < max_turns:
 		guard += 1
 		var st: String = r.begin_turn(r.current)
@@ -264,7 +269,8 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 			var recovery: Array = r.recovery_indices(r.current)
 			if recovery.is_empty():
 				break
-			r.play_redeploy(r.current, int(recovery[0]))
+			var redeploy_info: Dictionary = r.play_redeploy(r.current, int(recovery[0]))
+			combo_log.append_array(redeploy_info.get("combo_events", []))
 			r.advance()
 			continue
 		if st == "pass":
@@ -284,13 +290,21 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 			# Именной приём без клинча — единая точка ядра play_named.
 			var inf: Dictionary = r.play_named(r.current, named_i, int(act.get("target", -1)))
 			if inf.is_empty():  # нелегален (гонка условий) — ванильный фолбэк
-				r.play_action(r.current, act.type, act.get("target", -1))
+				var fallback_info: Dictionary = r.play_action(r.current, act.type, act.get("target", -1))
+				combo_log.append_array(fallback_info.get("combo_events", []))
+			else:
+				combo_log.append_array(inf.get("combo_events", []))
 		elif act.type == TYPE_RAZBOR and r.clinch_enabled:
 			# Клинч с волей обеих сторон (мехвариант play_action был только в симе).
 			# named_i >= 0 — клинч именно этой картой (Сократический вопрос).
-			_auto_resolve(r, r.current, r.other(r.current), int(act.get("target", -1)), named_i)
+			clinches += 1
+			var clinch_result: Dictionary = _auto_resolve(r, r.current, r.other(r.current),
+				int(act.get("target", -1)), named_i)
+			combo_log.append_array(
+				(clinch_result.get("info", {}) as Dictionary).get("combo_events", []))
 		else:
-			r.play_action(r.current, act.type, act.get("target", -1))
+			var action_info: Dictionary = r.play_action(r.current, act.type, act.get("target", -1))
+			combo_log.append_array(action_info.get("combo_events", []))
 		diffs.append(r.score(SIDE_YOU) - r.score(SIDE_OPP))
 		atk_flags.append(String(act.type) == TYPE_RAZBOR)
 		r.advance()
@@ -308,27 +322,33 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 		"sw_draws": int(r.sides[SIDE_YOU].get("sw_used", 0)) + int(r.sides[SIDE_OPP].get("sw_used", 0)),
 		"captures": int(r.captures),
 		"capture_theses": int(r.capture_theses),
+		"clinches": clinches,
+		"combo_events": combo_log,
 	}
 
 
 ## Авто-воля клинча для сима: скармливает решения клинч-автомату ядра, пока он не закроется.
 ## Тот же путь, что у интерактивного драйвера — один источник правды (rules_core.clinch_*).
 ## named_index >= 0 — клинч открывается именно этой картой руки (именной приём).
-func _auto_resolve(r: RefCounted, attacker: String, defender: String, idx: int, named_index: int = -1) -> void:
+## Возвращает результат финального clinch_submit (несёт "info" на settlement) — нужен
+## телеметрии сима (combo-частота); сам auto-resolve от этого не меняется.
+func _auto_resolve(r: RefCounted, attacker: String, defender: String, idx: int, named_index: int = -1) -> Dictionary:
 	var ctx: Dictionary = r.begin_clinch(attacker, defender, idx, atk_prefer_steal(r, attacker, defender, idx), named_index)
 	if ctx.is_empty():
-		return
+		return {}
 	var line: Dictionary = r.sides[defender].lines[idx]
 	var guard := 0
+	var last: Dictionary = {}
 	while r.clinch_active() and guard < 200:
 		guard += 1
 		var side: String = r.clinch_pending_side()
 		if not r.clinch_can_act(side):
-			r.clinch_submit("pass")
+			last = r.clinch_submit("pass")
 			continue
 		# side == defender → фаза защиты (await_defend), иначе — добивание (await_attack).
 		var play := def_will_clinch(r, side, line) if side == defender else atk_will_clinch(r, side, line)
-		r.clinch_submit("play" if play else "pass", atk_prefer_steal(r, attacker, defender, idx))
+		last = r.clinch_submit("play" if play else "pass", atk_prefer_steal(r, attacker, defender, idx))
+	return last
 
 
 # --- эвристики (читают только r.sides через публичный API) ---

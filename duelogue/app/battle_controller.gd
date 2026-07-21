@@ -248,8 +248,10 @@ func target_combo_note(index: int) -> String:
 	if String(card.get("type", "")) != TYPE_RAZBOR:
 		return ""
 	var stack: Array = model.sides[SIDE_OPP].lines[index].get("thesis_stack", [])
-	if stack.is_empty() or not Grammar.eligible(stack[-1]):
+	if stack.is_empty():
 		return ""
+	if not Grammar.eligible(stack[-1]):
+		return "Рамка ещё не аргументирована: маршрутов нет"
 	var top: Dictionary = stack[-1]
 	var route: Dictionary = Grammar.route(top, card)
 	if not route.is_empty():
@@ -280,6 +282,51 @@ func combo_answer_glow(index: int) -> bool:
 	if sequence.is_empty():
 		return false
 	return Grammar.answers(anchor_card, sequence[0], hand[index])
+
+
+## Комбо-подсказка (зеркало combo_answer_glow для стороны опенера): в обычном ходу
+## светит Разбор в руке, чей hook открывает известный маршрут против eligible-верха
+## хотя бы одной рамки оппонента прямо сейчас. Не автоплей — решение за игроком.
+func combo_opener_glow(index: int) -> bool:
+	if _mode != "move":
+		return false
+	var hand: Array = model.sides[SIDE_YOU].hand
+	if index < 0 or index >= hand.size():
+		return false
+	var card: Dictionary = hand[index]
+	if String(card.get("type", "")) != TYPE_RAZBOR:
+		return false
+	for line in model.sides[SIDE_OPP].lines:
+		var stack: Array = (line as Dictionary).get("thesis_stack", [])
+		if not stack.is_empty() and Grammar.has_route(stack[-1], card):
+			return true
+	return false
+
+
+## Тестовая подсказка «куда класть»: какие рамки оппонента открывают маршрут этой картой
+## прямо сейчас (для тултипа руки — combo_opener_glow решает только светиться ли).
+func combo_opener_targets(index: int) -> Array:
+	var hand: Array = model.sides[SIDE_YOU].hand
+	if index < 0 or index >= hand.size():
+		return []
+	var card: Dictionary = hand[index]
+	if String(card.get("type", "")) != TYPE_RAZBOR:
+		return []
+	var out: Array = []
+	var lines: Array = model.sides[SIDE_OPP].lines
+	for li in lines.size():
+		var line: Dictionary = lines[li]
+		var stack: Array = line.get("thesis_stack", [])
+		if stack.is_empty():
+			continue
+		var top: Dictionary = stack[-1]
+		var route: Dictionary = Grammar.route(top, card)
+		if route.is_empty():
+			continue
+		out.append({"index": li, "name": String(line.get("claim", line.get("name", ""))),
+			"scheme": String(top.get("scheme", "")),
+			"answer_schemes": route.get("answer_schemes", [])})
+	return out
 
 func theme_list() -> Array:
 	var out: Array = []
@@ -333,9 +380,18 @@ func frame_threat(owner: String, index: int) -> Dictionary:
 	var stack: Array = line.get("thesis_stack", [])
 	if not stack.is_empty() and Grammar.eligible(stack[-1]):
 		top_scheme = String((stack[-1] as Dictionary).get("scheme", ""))
+	# Комбо-подсказка: у рамки оппонента отдельно светит «в руке есть открывающий приём
+	# прямо сейчас» — то же constraint, что combo_opener_glow проверяет со стороны руки.
+	var combo_bait := false
+	if owner == SIDE_OPP and top_scheme != "":
+		for card in model.sides[SIDE_YOU].hand:
+			if String((card as Dictionary).get("type", "")) == TYPE_RAZBOR and \
+					Grammar.has_route(stack[-1], card):
+				combo_bait = true
+				break
 	return {
 		"owner": owner, "raider": raider, "reach": reach, "thickness": thickness,
-		"capturable": capturable, "top_scheme": top_scheme,
+		"capturable": capturable, "top_scheme": top_scheme, "combo_bait": combo_bait,
 		# A one-thesis frame is baseline-exposed; SHAKY is the extra crowd-opened risk.
 		"shaky": capturable and thickness > 1,
 		"lean": int(audience_snapshot.get("lean", model.zal())),
@@ -447,6 +503,10 @@ func start_match() -> void:
 	if combo_drill:
 		_stack_combo_drill(model.sides[SIDE_YOU])
 		_stack_combo_drill(model.sides[SIDE_OPP])
+	# Пересборка sides[SIDE_YOU] выше заново завела ленивый filler на Базе (reset() уже
+	# досеял было реальный тезис, но эта строка его перезаписала) — досеваем ещё раз,
+	# симметрично тому, что OPP получил внутри reset() и не терял пересборкой.
+	model.seed_starting_theses(SIDE_YOU)
 	DeckLib.prepare_opening_reserve(model.sides[SIDE_YOU], HAND)
 	DeckLib.prepare_opening_reserve(model.sides[SIDE_OPP], HAND)
 	_gate_told = {}

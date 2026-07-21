@@ -263,11 +263,16 @@ func _check_forced_redeploy() -> void:
 		String(model.sides[RulesCore.SIDE_OPP].lines[0].get("claim_id", "")) == "saved_axiom" and
 		String(redeploy.get("named_suppressed", "")) == "axiom",
 		"reframe сохраняет смысл U, но подавляет твист Аксиомы: обычная рамка с одним тезисом")
+	# Экономика рамок: reframe теперь тоже сеет реальный случайный тезис из добора
+	# (не ленивый filler) ДО добора руки — в этом сценарии добор к тому моменту нёс
+	# ровно одну карту («Добор 1»), и она ушла рамке раньше, чем добор руки успел её взять.
 	_check(model.turn_count == turn_before + 1 and
 		not model.recovery_pending(RulesCore.SIDE_OPP) and
 		model.recovery_indices(RulesCore.SIDE_OPP).is_empty() and
-		model.sides[RulesCore.SIDE_OPP].hand.size() == H,
-		"восстановление тратит полный ход и лишь затем добирает руку до H5")
+		model.sides[RulesCore.SIDE_OPP].draw.is_empty() and
+		String(model.sides[RulesCore.SIDE_OPP].lines[0].thesis_stack[0].get("name", "")) == "Добор 1" and
+		model.sides[RulesCore.SIDE_OPP].hand.size() == H - 1,
+		"восстановление тратит полный ход; тезис рамки из добора конкурирует с добором руки")
 
 
 func _check_wobble_reach() -> void:
