@@ -1261,6 +1261,12 @@ func clinch_submit(decision: String, prefer_steal: bool = true, hand_index: int 
 		clinch.combo_owner = combo_view.combo_owner
 		clinch.closer_step = combo_view.closer_step
 		clinch.closer_thesis_id = combo_view.closer_thesis_id
+		# resolved-by-construction (2026-07-22): этот ответ мог мгновенно решить боевой
+		# A3_CATALOG-run (claim.confirm пуст — см. combo_register.gd instant_verdict).
+		# Обмен обрывается тут же, обычный "hold"/await_attack уже не наступает.
+		var verdict := combo_register.instant_verdict(String(clinch.get("action_id", "")))
+		if not verdict.is_empty():
+			return _finish_clinch("combo_verdict", "", String(verdict.get("owner", "")))
 		if not clinch_freeze:
 			_refill(sides[clinch.defender])
 		clinch.phase = "await_attack"
@@ -1299,7 +1305,16 @@ func clinch_submit(decision: String, prefer_steal: bool = true, hand_index: int 
 
 
 ## Закрыть клинч: применить исход (clinch_finalize), очистить стейт, вернуть итог.
-func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = "") -> Dictionary:
+## forced_winner_side (2026-07-22, resolved-by-construction вердикт комбо-регистра):
+## непусто — attacker_won решает НЕ физика (r_count > t_added), а владелец подтверждённого
+## construction-run'а. Каскадный unwind ниже не меняется: на минимальной sequence
+## [opener, reply] (обмен уже оборван, press не было) он и так делает ровно нужное —
+## forced true снимает/крадёт только что положенный ответ (opener бьёт по текущему верху
+## рамки), forced false рано выходит в clinch_finalize (r_count==t_added → attack_landed
+## false), доска не трогается. См. context/combo_register_architecture_v0.1.md и решение
+## сессии 2026-07-22 в памяти combo-integration-runway.
+func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = "",
+		forced_winner_side: String = "") -> Dictionary:
 	var attacker: String = clinch.attacker
 	var defender: String = clinch.defender
 	var idx: int = clinch.idx
@@ -1344,7 +1359,8 @@ func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = ""
 				initially_countered_steps.append(latest_attack)
 				if bool(parried.get("steals", false)):
 					initially_countered_theft_steps.append(latest_attack)
-	var attacker_won := r_count > t_added
+	var attacker_won := (forced_winner_side == attacker) if forced_winner_side != "" \
+		else (r_count > t_added)
 	var info := {"side": attacker, "type": TYPE_RAZBOR,
 		"action_id": action_id, "target_frame_id": target_frame_id,
 		"capture_reach": reach, "capture_audience_favor": capture_audience_favor,

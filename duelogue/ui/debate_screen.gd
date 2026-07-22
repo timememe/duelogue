@@ -213,6 +213,11 @@ func _on_utterance(side: String, text: String, meta: Dictionary) -> void:
 			bolt = "⚡ "
 	if meta.has("conduct_effect"):
 		role += " · ВПЕЧАТЛЕНИЕ %+d" % int(meta.conduct_effect)
+	# Тип карты/приём (2026-07-22): схема тезиса или device разбора — та же строка, что игрок
+	# уже видит в файловой стенограмме, теперь и в живом логе экрана боя.
+	var device := String(meta.get("device", ""))
+	if device != "" and kind == "":
+		role += " · %s" % device
 	_log("[color=#%s]— %s%s (%s):[/color] %s" % [col, bolt, who, role, text])
 	_log_rt.text = "\n".join(log_lines)
 

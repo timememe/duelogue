@@ -23,6 +23,10 @@ signal audience_changed(state: Dictionary)      ## независимый сни
 signal clinch_started(attacker: String, defender: String, idx: int)  ## завязка клинча
 signal clinch_resolved(result: Dictionary)      ## клинч закрыт (JSONL-подобный итог)
 signal impact(side: String, kind: String)       ## яркий исход по стороне side (kind: "landed"/"removed")
+## Резолвящееся-конструкцией комбо подтверждено (2026-07-22): клинч оборван мгновенно
+## instant_verdict()'ом, а не физикой unwind. side — владелец (кто сорвал куш), topology —
+## pure_guard/pure_trap/fork_guard/fork_trap (character_core решает stamp/поза по суффиксу).
+signal combo_verdict(side: String, combo_name: String, topology: String)
 signal board_changed()                          ## доска/рука/режим изменились → перерисовать
 signal match_ended(winner: String, reason: String, verdict: String)
 signal match_reported(report: Dictionary)       ## полный векторный итог; match_ended сохранён для совместимости

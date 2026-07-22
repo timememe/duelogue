@@ -54,6 +54,26 @@ func _ready() -> void:
 	await reaction.scene_finished
 	reaction.queue_free()
 
+	# Боевой каталог (2026-07-22): Ace Attorney-стамп перед позой-реакцией — своя микросцена
+	# с процедурной шипастой вспышкой, но САМ не закрывает модальность (не мешает следующей
+	# show_utterance продолжить ту же непрерывную цепочку крупных планов — ровно как
+	# character_core._on_combo_verdict делает: await show_combo_stamp → show_utterance).
+	var stamp_reaction = ReactionScene.instantiate()
+	add_child(stamp_reaction)
+	await stamp_reaction.show_combo_stamp("ЗАЩИТА!", false)
+	_check(stamp_reaction.visible and stamp_reaction.is_modal_active() and
+		not stamp_reaction._stamp_poly.visible and not stamp_reaction._stamp_label.visible and
+		stamp_reaction._stamp_label.text == "ЗАЩИТА!" and
+		stamp_reaction._stamp_poly.color == stamp_reaction.STAMP_GUARD_COLOR,
+		"стамп комбо-защиты доигрывает панч-ин/аут сам и не закрывает модальность")
+	stamp_reaction.show_utterance("you", "Тестовая защита", null, "burst", false, "⚡ ЗАЩИТА ДЕРЖИТ")
+	_check(stamp_reaction._bubble.visible,
+		"поза-реакция после стампа продолжает ту же модальную сцену")
+	await stamp_reaction.scene_finished
+	_check(not stamp_reaction.visible and not stamp_reaction.is_modal_active(),
+		"модальность закрывается только после позы-реакции, не после самого стампа")
+	stamp_reaction.queue_free()
+
 	# Интеграция с боевым экраном: уже открытый hover-бабл исчезает на scene_started,
 	# а прямой повторный hover игнорируется до scene_finished.
 	var screen = DebateScreen.instantiate()
@@ -69,6 +89,12 @@ func _ready() -> void:
 		strain_fill.position.y + strain_fill.size.y,
 		strain_bg.position.y + strain_bg.size.y),
 		"вертикальная шкала заполняется снизу вверх")
+	# Тип карты/приём в живом логе (2026-07-22): meta.device теперь рендерится в саму строку
+	# лога боевого экрана, не только в файловую стенограмму (battle_controller._say).
+	EventBus.utterance.emit("you", "Тестовый тезис.", {"stance": "против ананаса", "device": "Корреляция"})
+	_check(String(screen.log_lines[-1]).contains("против ананаса · Корреляция") and
+		String(screen.log_lines[-1]).contains("Тестовый тезис."),
+		"живой лог показывает приём/схему рядом с репликой, не только файловая стенограмма")
 	var hover_owner := Control.new()
 	screen.add_child(hover_owner)
 	var card := {"type": "U", "steals": false}

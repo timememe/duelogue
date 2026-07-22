@@ -92,6 +92,7 @@ func _ready() -> void:
 		_sprites["opp"] = _stage.actor_sprite("opp")
 	EventBus.utterance.connect(_on_utterance)
 	EventBus.impact.connect(_on_impact)
+	EventBus.combo_verdict.connect(_on_combo_verdict)
 	EventBus.turn_changed.connect(_on_turn_changed)
 
 
@@ -165,6 +166,24 @@ func _on_impact(side: String, kind: String) -> void:
 		return
 	var tex := _state_tex_for(side, "stagger", "", false)
 	_reaction.show_impact(side, tex, 1.0 if kind == "removed" else 0.65, _portrait_flip_h_for(side))
+
+
+## Боевой каталог (2026-07-22, resolved-by-construction): вердикт клинча решён конструкцией
+## ответа, не физикой unwind (см. rules_core.gd instant_verdict/forced_winner_side) — игрок
+## должен ОДНОЗНАЧНО увидеть, что комбо сработало. Ace Attorney-стамп (шипастая вспышка со
+## словом) СНАЧАЛА, потом уже знакомая поза-реакция владельца (burst=защита держит,
+## gotcha=ловушка сработала) поверх того же utterance-пайплайна.
+func _on_combo_verdict(side: String, combo_name: String, topology: String) -> void:
+	if _reaction == null or not ReadingPace.CUTSCENES:
+		return
+	var is_trap := topology.ends_with("trap")
+	await _reaction.show_combo_stamp("ЛОВУШКА!" if is_trap else "ЗАЩИТА!", is_trap)
+	var mood := "gotcha" if is_trap else "burst"
+	var tex := _state_tex_for(side, mood, "", false)
+	var eyebrow := "🪤 ЛОВУШКА СРАБОТАЛА" if is_trap else "⚡ ЗАЩИТА ДЕРЖИТ"
+	_reaction.show_utterance(side,
+		("Попался! «%s»." % combo_name) if is_trap else ("Не сдвинулось! «%s»." % combo_name),
+		tex, mood, _portrait_flip_h_for(side), eyebrow)
 
 
 func _on_turn_changed(_side: String) -> void:

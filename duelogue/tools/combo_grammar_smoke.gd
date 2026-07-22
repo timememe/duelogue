@@ -9,6 +9,7 @@ extends Node
 ##   Godot --headless --path . res://duelogue/tools/combo_grammar_smoke.tscn
 
 const RulesCore := preload("res://duelogue/core/rules/rules_core.gd")
+const ComboRegister := preload("res://duelogue/core/rules/combo_register.gd")
 const Deck := preload("res://duelogue/core/cards/deck.gd")
 const Grammar := preload("res://duelogue/core/cards/grammar.gd")
 const NarEngine := preload("res://duelogue/core/narrative/narrative_engine.gd")
@@ -35,6 +36,7 @@ func _run() -> void:
 	_check_r2_pattern_run()
 	_check_r3_two_sides()
 	_check_r4_arbitration_frame_scope()
+	_check_new_combo_catalog()
 	_check_a3_topology_probe()
 	print("=== COMBO GRAMMAR: %s ===\n" % ("OK" if failures == 0 else "FAIL (%d)" % failures))
 	get_tree().call_deferred("quit", 0 if failures == 0 else 1)
@@ -217,7 +219,11 @@ func _setup_frame(scheme: String, thesis_id: String) -> Dictionary:
 
 
 ## Собрать доску сценария §9: атакующий YOU с заготовленной рукой против setup-рамки.
-func _scenario(setup_scheme: String, you_hand: Array, opp_hand: Array) -> RefCounted:
+## extra_catalog (2026-07-22): пусто по умолчанию — не трогает ни один из вызовов,
+## тестирующих боевой A3_CATALOG/generic G-01. Reserved-сценарии (R3/R4) передают
+## ComboRegister.RESERVED_A3_CATALOG явно, чтобы подсадить резерв только себе.
+func _scenario(setup_scheme: String, you_hand: Array, opp_hand: Array,
+		extra_catalog: Array = []) -> RefCounted:
 	var model := _combo_model()
 	model.sides[RulesCore.SIDE_YOU].lines = [_plain_line("Атакующий")]
 	model.sides[RulesCore.SIDE_OPP].lines = [
@@ -226,6 +232,7 @@ func _scenario(setup_scheme: String, you_hand: Array, opp_hand: Array) -> RefCou
 	model.sides[RulesCore.SIDE_YOU].draw = []
 	model.sides[RulesCore.SIDE_OPP].hand = opp_hand
 	model.sides[RulesCore.SIDE_OPP].draw = []
+	model.combo_register.extra_a3_catalog = extra_catalog
 	model.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
 	return model
 
@@ -649,7 +656,8 @@ func _check_r3_two_sides() -> void:
 	# A3-2 — чистый TRAP: A давит вторым Разбором, T₁ снят → X-01 подтверждён; зеркальный
 	# G-01-source вооружился той же тройкой (гонка стартует симметрично), но проигрывает.
 	var sprung: RefCounted = _scenario("Авторитет",
-		[_attack("Источник?"), _attack("Передёрг")], [_thesis("Статистика")])
+		[_attack("Источник?"), _attack("Передёрг")], [_thesis("Статистика")],
+		ComboRegister.RESERVED_A3_CATALOG)
 	sprung.clinch_submit("play", false, 0)
 	var x01_armed_mid: bool = String(_run_of(sprung, "x01_false_independence")
 		.get("state", "")) == "armed"
@@ -674,7 +682,7 @@ func _check_r3_two_sides() -> void:
 
 	# Зеркальная DEFENDED: A пасует сразу, T₁ held → G-01-source подтверждён, X-01 BREAK.
 	var defended: RefCounted = _scenario("Авторитет",
-		[_attack("Источник?")], [_thesis("Статистика")])
+		[_attack("Источник?")], [_thesis("Статистика")], ComboRegister.RESERVED_A3_CATALOG)
 	defended.clinch_submit("play", false, 0)
 	var defended_info: Dictionary = defended.clinch_submit("pass").get("info", {})
 	_check(String(_event_of(defended_info, "g01_source_backed").get("terminal", "")) == "confirmed" and
@@ -689,6 +697,7 @@ func _check_r3_two_sides() -> void:
 	s3.sides[RulesCore.SIDE_YOU].draw = []
 	s3.sides[RulesCore.SIDE_OPP].hand = [_thesis("Авторитет")]
 	s3.sides[RulesCore.SIDE_OPP].draw = []
+	s3.combo_register.extra_a3_catalog = ComboRegister.RESERVED_A3_CATALOG
 	s3.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
 	var s3_legacy_none: bool = String(s3.clinch.get("combo_state", "")) == "none"
 	s3.clinch_submit("play", false, 0)
@@ -712,6 +721,7 @@ func _check_r3_two_sides() -> void:
 	s4.sides[RulesCore.SIDE_YOU].draw = []
 	s4.sides[RulesCore.SIDE_OPP].hand = [_thesis("Авторитет"), _thesis("Пример")]
 	s4.sides[RulesCore.SIDE_OPP].draw = []
+	s4.combo_register.extra_a3_catalog = ComboRegister.RESERVED_A3_CATALOG
 	s4.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
 	s4.clinch_submit("play", false, 0)
 	s4.clinch_submit("play", false, 0)
@@ -734,7 +744,7 @@ func _check_r4_arbitration_frame_scope() -> void:
 	# Мигрированная G-01/X-01 пара: гонка решается физикой клинча, не content-разметкой.
 	# D пасует → held → G-01-source подтверждён, legacy G-01 подавлен его терминалом.
 	var held: RefCounted = _scenario("Авторитет", [_attack("Источник?")],
-		[_thesis("Статистика")])
+		[_thesis("Статистика")], ComboRegister.RESERVED_A3_CATALOG)
 	held.clinch_submit("play", false, 0)
 	var held_info: Dictionary = held.clinch_submit("pass").get("info", {})
 	var held_guard := _event_of(held_info, "g01_source_backed")
@@ -744,7 +754,8 @@ func _check_r4_arbitration_frame_scope() -> void:
 	# Legacy G-01 — переходная проекция §7 и по-прежнему следует терминалу GUARD-чтения
 	# (не TRAP напрямую): за attacker-стороной уже следит отдельный combo_events[].
 	var removed: RefCounted = _scenario("Авторитет",
-		[_attack("Источник?"), _attack("Передёрг")], [_thesis("Статистика")])
+		[_attack("Источник?"), _attack("Передёрг")], [_thesis("Статистика")],
+		ComboRegister.RESERVED_A3_CATALOG)
 	removed.clinch_submit("play", false, 0)
 	removed.clinch_submit("play", false, 0)
 	var removed_info: Dictionary = removed.clinch_submit("pass").get("info", {})
@@ -764,7 +775,7 @@ func _check_r4_arbitration_frame_scope() -> void:
 	# G-04/X-04 над Аналогия→Ложная аналогия→Определение — та же content-free гонка,
 	# те же слоты. D пасует → GUARD-чтение держит ставку, generic G-01 подавлен priority.
 	var d: RefCounted = _scenario("Аналогия", [_attack("Ложная аналогия")],
-		[_thesis("Определение")])
+		[_thesis("Определение")], ComboRegister.RESERVED_A3_CATALOG)
 	d.clinch_submit("play", false, 0)
 	var d_both_armed: bool = String(_run_of(d, "g04_shared_core").get("state", "")) == "armed" and \
 		String(_run_of(d, "x04_redrawn_similarity").get("state", "")) == "armed"
@@ -782,7 +793,8 @@ func _check_r4_arbitration_frame_scope() -> void:
 
 	# Та же тройка, A давит вторым Разбором и снимает T₁: X-04 забирает гонку.
 	var a: RefCounted = _scenario("Аналогия",
-		[_attack("Ложная аналогия"), _attack("Передёрг")], [_thesis("Определение")])
+		[_attack("Ложная аналогия"), _attack("Передёрг")], [_thesis("Определение")],
+		ComboRegister.RESERVED_A3_CATALOG)
 	a.clinch_submit("play", false, 0)
 	a.clinch_submit("play", false, 0)
 	var a_info: Dictionary = a.clinch_submit("pass").get("info", {})
@@ -798,7 +810,7 @@ func _check_r4_arbitration_frame_scope() -> void:
 	# TRAP не возвращается. Обе ставки вооружаются структурно, без content-разметки.
 	var up: RefCounted = _scenario("Авторитет",
 		[_attack("Источник?"), _attack("Корреляция")],
-		[_thesis("Статистика"), _thesis("Пример")])
+		[_thesis("Статистика"), _thesis("Пример")], ComboRegister.RESERVED_A3_CATALOG)
 	up.clinch_submit("play", false, 0)
 	var x01_was_armed: bool = String(_run_of(up, "x01_false_independence")
 		.get("state", "")) == "armed"
@@ -815,6 +827,7 @@ func _check_r4_arbitration_frame_scope() -> void:
 
 	# F3-10: случайные схемы без authored rhetoric-tag не активируются.
 	var random := _combo_model()
+	random.combo_register.extra_frame_catalog = ComboRegister.RESERVED_FRAME_CATALOG
 	random.sides[RulesCore.SIDE_YOU].draw = []
 	var random_last := {}
 	for scheme in ["Пример", "Определение", "Пример"]:
@@ -825,6 +838,7 @@ func _check_r4_arbitration_frame_scope() -> void:
 
 	# Exact authored suffix активируется только на третьем полном action и ровно один раз.
 	var f3 := _combo_model()
+	f3.combo_register.extra_frame_catalog = ComboRegister.RESERVED_FRAME_CATALOG
 	f3.sides[RulesCore.SIDE_YOU].draw = []
 	var f3_infos: Array = []
 	for scheme in ["Пример", "Определение", "Пример"]:
@@ -854,6 +868,7 @@ func _check_r4_arbitration_frame_scope() -> void:
 
 	# Третье звено, сыгранное как временный hold, не активирует F3 до полного settlement.
 	var clinch_f3 := _combo_model()
+	clinch_f3.combo_register.extra_frame_catalog = ComboRegister.RESERVED_FRAME_CATALOG
 	clinch_f3.sides[RulesCore.SIDE_YOU].draw = []
 	for scheme in ["Пример", "Определение"]:
 		clinch_f3.sides[RulesCore.SIDE_YOU].hand = [_frame_recipe_t(scheme)]
@@ -868,6 +883,68 @@ func _check_r4_arbitration_frame_scope() -> void:
 	_check(before_settlement == 0 and
 		String(_event_of(clinch_f3_info, "f3_10_ascent_return").get("terminal", "")) == "confirmed",
 		"R4: защитный T закрывает F3 только после полного clinch settlement, не во временном hold")
+
+
+## Боевой каталог (2026-07-22, resolved-by-construction): GUARD/TRAP/fork решают вердикт
+## конструкцией $reply, не физикой unwind, и обрывают обмен немедленно — clinch_submit на
+## defend-play возвращает "resolved" напрямую, "hold"/дальнейший press уже невозможны
+## (instant_verdict()/forced_winner_side, см. combo_register.gd/rules_core.gd). Отдельно
+## от legacy G-01 и reserved-каталога (проверены выше через extra_a3_catalog-инъекцию) —
+## это единственные проверки, которые бьют по умолчанию активному A3_CATALOG.
+func _check_new_combo_catalog() -> void:
+	# GUARD confirmed: правильный ответ мгновенно обрывает обмен в пользу защитника,
+	# его тезис остаётся на рамке (theses не меняется — ничего не снято).
+	var guard: RefCounted = _scenario("Эмоция", [_attack("Не в кассу")], [_thesis("Пример")])
+	var guard_resolved: Dictionary = guard.clinch_submit("play", false, 0)
+	var guard_info: Dictionary = guard_resolved.get("info", {})
+	var guard_theses := int((guard.sides[RulesCore.SIDE_OPP].lines[0] as Dictionary).theses)
+	var guard_ev := _event_of(guard_info, "about_people_guard")
+	_check(String(guard_resolved.get("event", "")) == "resolved" and
+		not guard.clinch_active() and not bool(guard_resolved.get("landed", true)) and
+		guard_theses == 2 and
+		String(guard_ev.get("terminal", "")) == "confirmed" and
+		String(guard_ev.get("owner", "")) == RulesCore.SIDE_OPP and
+		String(guard_info.get("stop_reason", "")) == "combo_verdict",
+		"боевой GUARD: правильный ответ мгновенно обрывает обмен, дальше press невозможен")
+
+	# TRAP confirmed: заведомо мимо-ответ мгновенно обрывает обмен в пользу атакующего;
+	# opener переигрывает по текущему верху рамки и физически снимает бланк-реплику
+	# (theses возвращается к 1 — реплика легла и тут же ушла в рамках одного play).
+	var trap: RefCounted = _scenario("Традиция", [_attack("До абсурда")], [_thesis("Эмоция")])
+	var trap_resolved: Dictionary = trap.clinch_submit("play", false, 0)
+	var trap_info: Dictionary = trap_resolved.get("info", {})
+	var trap_theses := int((trap.sides[RulesCore.SIDE_OPP].lines[0] as Dictionary).theses)
+	var trap_ev := _event_of(trap_info, "tradition_deflected_trap")
+	_check(String(trap_resolved.get("event", "")) == "resolved" and
+		not trap.clinch_active() and bool(trap_resolved.get("landed", false)) and
+		trap_theses == 1 and
+		String(trap_ev.get("terminal", "")) == "confirmed" and
+		String(trap_ev.get("owner", "")) == RulesCore.SIDE_YOU and
+		String(trap_info.get("stop_reason", "")) == "combo_verdict",
+		"боевой TRAP: заведомо мимо-ответ мгновенно обрывает обмен и снимает бланк-реплику")
+
+	# fork: один и тот же $ask (Статистика+связь), схема $reply ветвит вердикт — не гонка
+	# за survival, а выбор конструкции; другая ветка при этом не подтверждается никогда.
+	var fork_guard: RefCounted = _scenario("Статистика", [_attack("Корреляция")],
+		[_thesis("Пример")])
+	var fork_guard_info: Dictionary = fork_guard.clinch_submit("play", false, 0).get("info", {})
+	var fork_trap: RefCounted = _scenario("Статистика", [_attack("Корреляция")],
+		[_thesis("Аналогия")])
+	var fork_trap_info: Dictionary = fork_trap.clinch_submit("play", false, 0).get("info", {})
+	_check(
+		String(_event_of(fork_guard_info, "mechanism_shown_fork_guard").get("terminal", "")) \
+			== "confirmed" and
+		String(_event_of(fork_guard_info, "mechanism_shown_fork_guard").get("owner", "")) \
+			== RulesCore.SIDE_OPP and
+		String(_event_of(fork_guard_info, "mechanism_shown_fork_trap").get("terminal", "")) \
+			== "expired" and
+		String(_event_of(fork_trap_info, "mechanism_shown_fork_trap").get("terminal", "")) \
+			== "confirmed" and
+		String(_event_of(fork_trap_info, "mechanism_shown_fork_trap").get("owner", "")) \
+			== RulesCore.SIDE_YOU and
+		String(_event_of(fork_trap_info, "mechanism_shown_fork_guard").get("terminal", "")) \
+			== "expired",
+		"fork: одна и та же зацепка ветвит вердикт по схеме ответа, другая ветка истекает")
 
 
 func _check_fields_survive_zones() -> void:
@@ -952,8 +1029,12 @@ func _a3_technical_setup() -> Dictionary:
 	return top
 
 
+## Весь A3-топологический пробник (§9 ниже) тестирует reserved contested-by-survival
+## механику (combo_a3_topologies_v0.1) — RESERVED_A3_CATALOG подсажен безусловно, не
+## параметром: здесь нет ни одного сценария, которому резерв был бы не нужен.
 func _a3_scenario(top: Dictionary, you_hand: Array, opp_hand: Array) -> RefCounted:
 	var model := _combo_model()
+	model.combo_register.extra_a3_catalog = ComboRegister.RESERVED_A3_CATALOG
 	model.sides[RulesCore.SIDE_YOU].lines = [_plain_line("Атакующий")]
 	model.sides[RulesCore.SIDE_OPP].lines = [{
 		"theses": 1,

@@ -50,6 +50,198 @@ const P_G01_GUARD := {
 	},
 }
 
+## === БОЕВОЙ КАТАЛОГ (2026-07-22, resolved-by-construction) ===============================
+## Решение сессии: старый contested-by-survival каталог (ниже, помечен РЕЗЕРВ) шумел —
+## почти всё решала физика unwind постфактум, а не то, что игрок реально ответил. Здесь —
+## промоут трёх архетипов, провалидированных изолированным пилотом tools/combo_archetype_probe.gd
+## (pure_guard/pure_trap/fork, arbitration.channel="combo_verdict", отдельный от "clinch" —
+## НЕ пересекается с G-01 legacy-треком ни по owner/channel в _arm_run, ни по topology-списку
+## _shadow_migrated_legacy_guard(); G-01-подсветка для AI/UI продолжает жить своей жизнью).
+## claim.confirm пуст намеренно: ставка решена в момент, когда $reply физически сыграна и
+## совпала по конструкции (_card_matches), а не за счёт winner/outcome клинча. rules_core.gd
+## читает это через instant_verdict() сразу после on_response() и обрывает обмен немедленно
+## (forced_winner_side в _finish_clinch) — дальнейший press/parry для этого run'а невозможен.
+## setup=Пример (не Аналогия) — намеренно: смоук использует "Аналогия"+Контрпример+
+## Авторитет как сквозной fixture для десятков не-комбо проверок R0/R1/сценариев; тот же
+## контент здесь мгновенно обрывал бы их клинчи. Пример+источник+Авторитет — тот же
+## реальный canon-маршрут documented_case, ни разу не используемый смоуком как $setup.
+## Имя намеренно отличается от резервных P_DOCUMENTED_CASE_GUARD/TRAP (та же риторика,
+## другая — resolved-by-construction — конструкция), чтобы не столкнуться именем константы.
+const P_CASE_ON_RECORD_GUARD := {
+	"id": "case_on_record_guard", "version": 1, "family": "A3", "topology": "pure_guard",
+	"combo_name": "Случай задокументирован", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Пример"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Авторитет"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+
+const P_ABOUT_PEOPLE_GUARD := {
+	"id": "about_people_guard", "version": 1, "family": "A3", "topology": "pure_guard",
+	"combo_name": "Это касается людей", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Эмоция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "уместность"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Пример"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+
+## pure_trap: тот же setup+hook, что у canon-пары с exact правильным ответом (Авторитет
+## отвечает на "источник?" Статистикой — см. РЕЗЕРВ source_backed ниже), но реплика — заведомо
+## нерелевантная схема, не «похоже, но пусто» (как был старый X-01), а откровенный уход от
+## вопроса. Новая, отдельная trap-идентичность.
+const P_AUTHORITY_DEFLECTED_TRAP := {
+	"id": "authority_deflected_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "Уклонился от источника", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Авторитет"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Здравый смысл"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+const P_TRADITION_DEFLECTED_TRAP := {
+	"id": "tradition_deflected_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "Подменил довод чувством", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Традиция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Эмоция"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+## fork: один и тот же $ask, схема $reply ветвит вердикт — не гонка за survival, а выбор
+## конструкции. Переиспользует реальные dual-scheme записи ANSWER_OF (комбо_rhetoric_catalog §4.1).
+const P_MECHANISM_SHOWN_FORK_GUARD := {
+	"id": "mechanism_shown_fork_guard", "version": 1, "family": "A3", "topology": "fork_guard",
+	"combo_name": "Механизм на столе", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "связь"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Пример"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+
+const P_MECHANISM_SHOWN_FORK_TRAP := {
+	"id": "mechanism_shown_fork_trap", "version": 1, "family": "A3", "topology": "fork_trap",
+	"combo_name": "Только сравнение", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "связь"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Аналогия"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+const P_MEASURED_SENSE_FORK_GUARD := {
+	"id": "measured_sense_fork_guard", "version": 1, "family": "A3", "topology": "fork_guard",
+	"combo_name": "Здравая мера", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Здравый смысл"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Аналогия"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+
+const P_MEASURED_SENSE_FORK_TRAP := {
+	"id": "measured_sense_fork_trap", "version": 1, "family": "A3", "topology": "fork_trap",
+	"combo_name": "Тот же довод по кругу", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Здравый смысл"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Здравый смысл"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+## === КОНЕЦ БОЕВОГО КАТАЛОГА ===============================================================
+
+
+## === РЕЗЕРВ (2026-07-22): contested-by-survival, вне активного A3_CATALOG =================
+## Всё нижеперечисленное — G-01/X-01 semantic pair, G-04/X-04 CONTESTED, 16 identical-
+## construction GUARD/TRAP пар, P-01…P06 PRESSURE, F3-10 — решало вердикт физикой unwind
+## постфактум (held vs removed/stolen), а не конструкцией ответа. Оставлено в файле и в
+## _pattern()-лукапе, чтобы смоуки могли подсадить это через extra_a3_catalog и держать
+## историческое покрытие «резерв всё ещё работает», но НЕ участвует в открытии рана из
+## open_action_run() по умолчанию (см. RESERVED_A3_CATALOG/RESERVED_FRAME_CATALOG внизу).
 ## Semantic G-01 для уже мигрированной пары source_backed/false_independence.
 ## Старый structural G-01 остаётся legacy-view остальных 18 маршрутов, но на этой
 ## exact тройке становится shadow: independent lineage подтверждает этот run,
@@ -1344,8 +1536,10 @@ const P_F310_FRAME := {
 	"one_shot": true,
 }
 
-## A3-вахты, открываемые опенером (G-01 создаётся отдельной старой дорожкой).
-const A3_CATALOG := [
+## Резервные A3-вахты (contested-by-survival) — НЕ подсаживаются в open_action_run() по
+## умолчанию; доступны смоукам через extra_a3_catalog (см. банер РЕЗЕРВ выше). G-01
+## generic создаётся отдельной старой дорожкой и от этого списка не зависит.
+const RESERVED_A3_CATALOG := [
 	P_G01_SOURCE, P_X01_TRAP, P_P01_PRESSURE, P_G04_GUARD, P_X04_TRAP, P_P06_PRESSURE,
 	P_DOMAIN_MATCH_GUARD, P_DOMAIN_MATCH_TRAP,
 	P_EXPERT_CONSENSUS_GUARD, P_EXPERT_CONSENSUS_TRAP,
@@ -1369,7 +1563,21 @@ const A3_CATALOG := [
 	P_MEASURED_SENSE_COMMONSENSE_GUARD, P_MEASURED_SENSE_COMMONSENSE_TRAP,
 	P_P02_PRESSURE, P_P03_PRESSURE, P_P04A_PRESSURE, P_P04B_PRESSURE, P_P05_PRESSURE,
 ]
-const FRAME_CATALOG := [P_F310_FRAME]
+const RESERVED_FRAME_CATALOG := [P_F310_FRAME]
+## === КОНЕЦ РЕЗЕРВА =========================================================================
+
+
+## Боевой каталог: 8 resolved-by-construction паттернов (см. банер вверху файла). G-01
+## generic создаётся отдельной старой дорожкой и от этого списка не зависит.
+const A3_CATALOG := [
+	P_CASE_ON_RECORD_GUARD, P_ABOUT_PEOPLE_GUARD,
+	P_AUTHORITY_DEFLECTED_TRAP, P_TRADITION_DEFLECTED_TRAP,
+	P_MECHANISM_SHOWN_FORK_GUARD, P_MECHANISM_SHOWN_FORK_TRAP,
+	P_MEASURED_SENSE_FORK_GUARD, P_MEASURED_SENSE_FORK_TRAP,
+]
+## F3 frame-scope зарезервирован вместе с остальным (см. RESERVED_FRAME_CATALOG) — не
+## является resolved-by-construction verdict'ом клинча, отдельная механика one-shot доски.
+const FRAME_CATALOG := []
 
 ## Все runs матча (append-only, терминальные остаются как доказательство для телеметрии).
 var runs := {}
@@ -1383,14 +1591,34 @@ var _events_by_action := {}
 var _run_serial := 0
 ## Тестовый seam: пустой по умолчанию, ничего не меняет ни в одном существующем пути.
 ## Изолированные эксперименты (см. tools/combo_archetype_probe.gd) подсаживают сюда
-## recipe-словари той же формы, что A3_CATALOG, до первого open_action_run.
+## recipe-словари той же формы, что A3_CATALOG, до первого open_action_run. Также
+## используется смоуком для инъекции RESERVED_A3_CATALOG в конкретных reserved-сценариях
+## (2026-07-22) — не влияет ни на один другой путь, если остаётся пустым.
 var extra_a3_catalog: Array = []
+## Тот же шов для FRAME_CATALOG/board_stable (F3 зарезервирован вместе с A3-парами).
+var extra_frame_catalog: Array = []
 
 
 func _pattern(pattern_id: String) -> Dictionary:
 	match pattern_id:
 		"g01_guard":
 			return P_G01_GUARD
+		"case_on_record_guard":
+			return P_CASE_ON_RECORD_GUARD
+		"about_people_guard":
+			return P_ABOUT_PEOPLE_GUARD
+		"authority_deflected_trap":
+			return P_AUTHORITY_DEFLECTED_TRAP
+		"tradition_deflected_trap":
+			return P_TRADITION_DEFLECTED_TRAP
+		"mechanism_shown_fork_guard":
+			return P_MECHANISM_SHOWN_FORK_GUARD
+		"mechanism_shown_fork_trap":
+			return P_MECHANISM_SHOWN_FORK_TRAP
+		"measured_sense_fork_guard":
+			return P_MEASURED_SENSE_FORK_GUARD
+		"measured_sense_fork_trap":
+			return P_MEASURED_SENSE_FORK_TRAP
 		"g01_source_backed":
 			return P_G01_SOURCE
 		"x01_false_independence":
@@ -1544,6 +1772,38 @@ func _owner_of(run: Dictionary) -> String:
 func _arbitration_of(run: Dictionary) -> Dictionary:
 	return (_pattern(String(run.get("pattern_id", ""))).get(
 		"arbitration", {}) as Dictionary)
+
+
+## Read-only: resolved-by-construction вердикт (2026-07-22, см. банер боевого каталога).
+## Ищет armed run этого action-scope с пустым pattern.claim.confirm — конструкция уже
+## решена (нужная реплика физически сыграна и совпала), дальше нечего ждать от физики
+## клинча. Ничего не мутирует и не терминализирует run: settle_action() всё равно доведёт
+## его до terminal=confirmed своим обычным путём (_a3_confirm_ok на пустом confirm[] и так
+## всегда true, чем бы ни оказался attacker_won). rules_core.gd зовёт это сразу после
+## on_response(), чтобы форсировать attacker_won и оборвать обмен немедленно.
+func instant_verdict(action_id: String) -> Dictionary:
+	var scope: Dictionary = scopes.get(action_id, {})
+	if scope.is_empty():
+		return {}
+	var best: Dictionary = {}
+	var best_arb: Dictionary = {}
+	for a3_id in scope.get("a3", []):
+		var run: Dictionary = runs.get(a3_id, {})
+		if run.is_empty() or String(run.get("state", "")) != "armed":
+			continue
+		var pattern := _pattern(String(run.get("pattern_id", "")))
+		var confirm: Array = (pattern.get("claim", {}) as Dictionary).get("confirm", [])
+		if not confirm.is_empty():
+			continue
+		var arb := _arbitration_of(run)
+		if best.is_empty() or int(arb.get("tier", 0)) > int(best_arb.get("tier", 0)) or \
+				(int(arb.get("tier", 0)) == int(best_arb.get("tier", 0)) and
+				int(arb.get("priority", 0)) > int(best_arb.get("priority", 0))):
+			best = run
+			best_arb = arb
+	if best.is_empty():
+		return {}
+	return {"owner": _owner_of(best), "run_id": String(best.get("id", ""))}
 
 
 ## Вооружение — единственная точка tier-supersede. Более высокий tier того же owner/channel
@@ -2007,7 +2267,7 @@ func board_stable(action_id: String, frames: Array) -> void:
 		var stack: Array = frame.get("thesis_stack", [])
 		if frame_id == "" or stack.size() < 3:
 			continue
-		for raw_pattern in FRAME_CATALOG:
+		for raw_pattern in (FRAME_CATALOG + extra_frame_catalog):
 			var pattern: Dictionary = raw_pattern
 			var completion_key := "%s::%s" % [frame_id, String(pattern.id)]
 			if completions.has(completion_key):

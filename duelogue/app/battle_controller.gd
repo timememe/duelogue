@@ -905,10 +905,12 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	var target_claim := _claim_of(defender, line)
 	var is_callback: bool = ctx.is_callback
 	var atk_word := "кража" if init_steals else "разбор"
+	var atk_device := String(initc.get("device", ""))
+	var atk_label := atk_word if atk_device == "" else "%s[%s]" % [atk_word, atk_device]
 	var cb := "←старая" if is_callback else ""
 	await _say(attacker, nar.refute_line(attacker, target_claim, _top_stmt(line), initc, is_callback, line),
-		"t%d %s clinch→%s[%d] %s%s" % [model.turn_count, attacker, defender, idx, atk_word, cb],
-		TYPE_RAZBOR, init_steals, nar.last_mood())
+		"t%d %s clinch→%s[%d] %s%s" % [model.turn_count, attacker, defender, idx, atk_label, cb],
+		TYPE_RAZBOR, init_steals, nar.last_mood(), {"device": atk_device})
 	if my_epoch != _epoch:
 		return
 	EventBus.clinch_started.emit(attacker, defender, idx)
@@ -980,7 +982,8 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 				stmt["thesis_id"] = String(dc.get("thesis_id", ""))
 				stmt["clinch_step"] = int(res.get("step", -1))
 				_push_stmt(line, stmt)
-				await _say(defender, stmt.text, "    hold %s [%s]" % [defender, stmt.axis], TYPE_TEZIS, false, nar.last_mood())
+				await _say(defender, stmt.text, "    hold %s тезис[%s/%s]" % [defender, stmt.device, stmt.axis],
+					TYPE_TEZIS, false, nar.last_mood(), {"device": String(stmt.device)})
 				if my_epoch != _epoch:
 					return
 				# Комбо §4: этот hold вооружил тройку — короткая отметка ARMED. Обещание,
@@ -993,9 +996,13 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 				_changed()
 			"press":
 				var ac: Dictionary = res.card
+				var press_word := "кража" if ac.get("steals", false) else "разбор"
+				var press_device := String(ac.get("device", ""))
+				var press_label := press_word if press_device == "" else \
+					"%s[%s]" % [press_word, press_device]
 				await _say(attacker, nar.press_line(attacker, _top_stmt(line), ac),
-					"    press %s %s" % [attacker, ("кража" if ac.get("steals", false) else "разбор")],
-					TYPE_RAZBOR, bool(ac.get("steals", false)), nar.last_mood())
+					"    press %s %s" % [attacker, press_label],
+					TYPE_RAZBOR, bool(ac.get("steals", false)), nar.last_mood(), {"device": press_device})
 				if my_epoch != _epoch:
 					return
 				_changed()
@@ -1063,6 +1070,27 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 		"break":
 			_narrate("Комбо «%s» разбито: атакующий перестоял ставку." % \
 				String(info.get("combo_name", "")), "    combo break")
+	# Боевой каталог (2026-07-22): resolved-by-construction вердикт обрывает клинч мгновенно
+	# (stop_reason=="combo_verdict", см. rules_core.gd instant_verdict/forced_winner_side).
+	# Ace Attorney-стамп (шипастая вспышка со словом) ДО обычной позы-реакции владельца —
+	# EventBus.combo_verdict, character_core секвенирует show_combo_stamp → show_utterance.
+	# Не await'им сам сигнал (как и impact ниже) — пейсинг держит _say_until.
+	if stop_reason == "combo_verdict":
+		for raw_verdict_ev in info.get("combo_events", []):
+			var verdict_ev: Dictionary = raw_verdict_ev
+			if String((verdict_ev.get("arbitration", {}) as Dictionary).get("channel", "")) \
+					!= "combo_verdict" or String(verdict_ev.get("terminal", "")) != "confirmed":
+				continue
+			var v_owner := String(verdict_ev.get("owner", ""))
+			var v_name := String(verdict_ev.get("combo_name", ""))
+			var v_topology := String(verdict_ev.get("topology", ""))
+			var v_is_trap := v_topology.ends_with("trap")
+			_narrate(("⚡ ЛОВУШКА! Попался: «%s»." % v_name) if v_is_trap else \
+				("⚡ ЗАЩИТА! Не сдвинулось: «%s»." % v_name),
+				"    combo verdict %s %s" % [v_owner, v_name])
+			EventBus.combo_verdict.emit(v_owner, v_name, v_topology)
+			_say_until = _now() + ReadingPace.combo_verdict_time(v_name)
+			break
 	_sync_removed_statements(defender, info)
 	var ev := {
 		"ev": "clinch", "attacker": attacker, "defender": defender,
@@ -1126,8 +1154,10 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	ev.merge(_econ())
 	_emit(ev)
 	EventBus.clinch_resolved.emit(ev)
-	if landed:
+	if landed and stop_reason != "combo_verdict":
 		# Рамка пробита — «яркий исход» для мини-сцены реакции (спидлайны на защитнике).
+		# combo_verdict уже показал свою (более специфичную) вспышку выше — не дублируем,
+		# у reaction_scene одна активная реакция за раз, вторая просто оборвала бы первую.
 		EventBus.impact.emit(defender, "removed" if info.get("removed", false) else "landed")
 		_say_until = _now() + ReadingPace.impact_time()  # вспышку тоже не обрываем
 	_changed()
@@ -1519,7 +1549,8 @@ func _log_action(info: Dictionary) -> void:
 			var stmt: Dictionary = nar.make_statement(side, card, _used_axes(line), "assert", line)
 			stmt["thesis_id"] = String(info.get("thesis_id", ""))
 			_push_stmt(line, stmt)
-			await _say(side, stmt.text, "t%d %s тезис[%s/%s]" % [model.turn_count, side, stmt.device, stmt.axis], TYPE_TEZIS, false, nar.last_mood())
+			await _say(side, stmt.text, "t%d %s тезис[%s/%s]" % [model.turn_count, side, stmt.device, stmt.axis],
+				TYPE_TEZIS, false, nar.last_mood(), {"device": String(stmt.device)})
 		TYPE_USTANOVKA:
 			var line: Dictionary = model.sides[side].lines[-1]
 			var claim := _claim_of(side, line)
