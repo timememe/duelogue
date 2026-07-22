@@ -1417,6 +1417,17 @@ func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = ""
 					["breakdown", "steal_thesis"]:
 				sequence[target_step]["result"] = "stolen" if \
 					String(step_info.get("landing_effect", "")) == "steal_thesis" else "removed"
+			elif target_step == -1 and i + 1 < sequence.size() and \
+					String((sequence[i + 1] as Dictionary).get("result", "")) == "held" and \
+					String(step_info.get("landing_effect", "")) in ["breakdown", "steal_thesis"]:
+				# forced-win 2-card sequence (resolved-by-construction combo verdict, §"боевой
+				# каталог"): opener бьёт "по рамке" (target_step=-1 позиционно — обычно там
+				# нечего было бы отмечать), но здесь физически снимает только что положенную
+				# реплику. Ветка выше её не видит, потому что не отслеживает identity, только
+				# позицию; натурально эта комбинация (attacker_won=true на голом [opener,
+				# reply]) не возникает — сиквенс, заканчивающийся на T, всегда выигран защитой.
+				sequence[i + 1]["result"] = "stolen" if \
+					String(step_info.get("landing_effect", "")) == "steal_thesis" else "removed"
 	else:
 		clinch_finalize(attacker, defender, idx, t_added, r_count, info, {})
 	info["clinch_t"] = t_added

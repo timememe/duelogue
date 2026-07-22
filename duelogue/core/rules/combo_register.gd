@@ -232,6 +232,551 @@ const P_MEASURED_SENSE_FORK_TRAP := {
 	],
 	"claim": {"owner": "A", "confirm": []},
 }
+
+## --- Расширение каталога (2026-07-22, сессия продолжения) ---------------------------------
+## Тот же resolved-by-construction принцип, систематически по оставшимся 20-6 setup+hook
+## слотам ANSWER_OF (только TRT — pure_guard/pure_trap/fork; RTR/PRESSURE остаётся в резерве).
+## Сознательно НЕ покрыты два setup+hook, уже занятых сквозными фикстурами смоука:
+##   Аналогия+сходство (G-04/X-04 R3/R4-тесты — требуют многоходовой обмен, instant_verdict
+##   оборвал бы их на первом ответе) и Аналогия+исключение (exception_noted — тот же риск,
+##   плюс изначально задуман guard-only). Авторитет+источник получил только trap выше
+##   (authority_deflected_trap) намеренно с НЕ-канонической репликой: канонический ответ
+##   "Статистика" на этой тройке — тоже сквозная фикстура R3/R4 (SPRUNG/DEFENDER/S3/S4).
+## Пары "guard"/"trap" на разных id, чем RESERVED_* (см. банер РЕЗЕРВ ниже) — тот же принцип
+## различения, что у case_on_record vs documented_case.
+
+const P_AUTHORITY_SCOPE_GUARD := {
+	"id": "authority_scope_guard", "version": 1, "family": "A3", "topology": "pure_guard",
+	"combo_name": "Эксперт по делу", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Авторитет"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "уместность"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Определение"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+const P_AUTHORITY_SCOPE_TRAP := {
+	"id": "authority_scope_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "Ещё один авторитет", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Авторитет"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "уместность"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Авторитет"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+const P_AUTHORITY_WEIGHT_GUARD := {
+	"id": "authority_weight_guard", "version": 1, "family": "A3", "topology": "pure_guard",
+	"combo_name": "Консенсус сильнее", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Авторитет"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+const P_AUTHORITY_WEIGHT_TRAP := {
+	"id": "authority_weight_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "Ещё один случай", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Авторитет"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Пример"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+const P_NUMBERS_BACKED_GUARD := {
+	"id": "numbers_backed_guard", "version": 1, "family": "A3", "topology": "pure_guard",
+	"combo_name": "Цифры с подписью", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Авторитет"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+const P_NUMBERS_BACKED_TRAP := {
+	"id": "numbers_backed_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "Цифры без подписи", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+const P_CASE_TYPICAL_GUARD := {
+	"id": "case_typical_guard", "version": 1, "family": "A3", "topology": "pure_guard",
+	"combo_name": "Пример типичен", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Пример"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+const P_CASE_TYPICAL_TRAP := {
+	"id": "case_typical_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "Ещё один пример", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Пример"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Пример"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+const P_CASE_CLASS_GUARD := {
+	"id": "case_class_guard", "version": 1, "family": "A3", "topology": "pure_guard",
+	"combo_name": "Тот же класс", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Пример"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "сходство"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Определение"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+const P_CASE_CLASS_TRAP := {
+	"id": "case_class_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "Просто похоже", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Пример"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "сходство"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Аналогия"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+const P_NORM_MEASURED_GUARD := {
+	"id": "norm_measured_guard", "version": 1, "family": "A3", "topology": "pure_guard",
+	"combo_name": "Общее место измерено", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Здравый смысл"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+const P_NORM_MEASURED_TRAP := {
+	"id": "norm_measured_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "«Все так думают»", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Здравый смысл"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Здравый смысл"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+const P_FEELING_SCALED_GUARD := {
+	"id": "feeling_scaled_guard", "version": 1, "family": "A3", "topology": "pure_guard",
+	"combo_name": "Чувство с фактурой", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Эмоция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "подмена"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+const P_FEELING_SCALED_TRAP := {
+	"id": "feeling_scaled_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "Ещё одна история", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Эмоция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "подмена"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Пример"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+const P_DEFINITION_SOURCED_GUARD := {
+	"id": "definition_sourced_guard", "version": 1, "family": "A3", "topology": "pure_guard",
+	"combo_name": "По словарю", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Определение"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "подмена"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Авторитет"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+const P_DEFINITION_SOURCED_TRAP := {
+	"id": "definition_sourced_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "Так всегда говорили", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Определение"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "подмена"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Традиция"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+const P_DEFINITION_LIMIT_GUARD := {
+	"id": "definition_limit_guard", "version": 1, "family": "A3", "topology": "pure_guard",
+	"combo_name": "Границы очевидны", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Определение"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Здравый смысл"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+const P_DEFINITION_LIMIT_TRAP := {
+	"id": "definition_limit_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "Как бы похоже", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Определение"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Аналогия"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+const P_DEFINITION_ROOTED_GUARD := {
+	"id": "definition_rooted_guard", "version": 1, "family": "A3", "topology": "pure_guard",
+	"combo_name": "Устоявшееся значение", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Определение"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Традиция"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+const P_DEFINITION_ROOTED_TRAP := {
+	"id": "definition_rooted_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "Один авторитет сказал", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Определение"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Авторитет"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+## --- Недостающая половина у уже частично покрытых слотов -----------------------------------
+
+const P_CASE_ON_RECORD_TRAP := {
+	"id": "case_on_record_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "Слухи, не свидетель", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Пример"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "источник"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Здравый смысл"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+const P_TRADITION_LIMIT_GUARD := {
+	"id": "tradition_limit_guard", "version": 1, "family": "A3", "topology": "pure_guard",
+	"combo_name": "Возвращаю границы", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Традиция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "следствие"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Определение"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+
+const P_ABOUT_PEOPLE_TRAP := {
+	"id": "about_people_trap", "version": 1, "family": "A3", "topology": "pure_trap",
+	"combo_name": "Сухие цифры вместо людей", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Эмоция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "уместность"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+## --- Два оставшихся dual-scheme слота как forks (мимо мигрировали vs старые survival-версии
+## outlier_dismissed(_stats) / living_tradition(_emotion) в резерве) ------------------------
+
+const P_OUTLIER_FORK_GUARD := {
+	"id": "outlier_fork_guard", "version": 1, "family": "A3", "topology": "fork_guard",
+	"combo_name": "Исключение — не правило", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Статистика"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+const P_OUTLIER_FORK_TRAP := {
+	"id": "outlier_fork_trap", "version": 1, "family": "A3", "topology": "fork_trap",
+	"combo_name": "Отмахнулись нормой", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Статистика"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "исключение"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Здравый смысл"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
+
+const P_LIVING_TRADITION_FORK_GUARD := {
+	"id": "living_tradition_fork_guard", "version": 1, "family": "A3", "topology": "fork_guard",
+	"combo_name": "Традиция жива", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 3, "priority": 30},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Традиция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "уместность"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Пример"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "B", "confirm": []},
+}
+const P_LIVING_TRADITION_FORK_TRAP := {
+	"id": "living_tradition_fork_trap", "version": 1, "family": "A3", "topology": "fork_trap",
+	"combo_name": "Ностальгия вместо довода", "scope": "action",
+	"arbitration": {"channel": "combo_verdict", "tier": 2, "priority": 10},
+	"seed": {"$setup": {"lane": "board", "selector": "context.top_thesis",
+		"card": {"type": "T", "scheme": "Традиция"}}},
+	"path": [
+		{"slot": "$ask", "role": "A", "card": {"type": "R", "hook": "уместность"},
+			"selector": "first"},
+		{"slot": "$reply", "role": "B", "card": {"type": "T", "scheme": "Эмоция"},
+			"selector": "next"},
+	],
+	"where": [
+		{"kind": "targets", "from": "$ask", "to": "$setup"},
+		{"kind": "responds_to", "from": "$reply", "to": "$ask"},
+		{"kind": "bind", "slot": "$reply_thesis", "rel": "materializes_as", "from": "$reply"},
+	],
+	"claim": {"owner": "A", "confirm": []},
+}
 ## === КОНЕЦ БОЕВОГО КАТАЛОГА ===============================================================
 
 
@@ -1574,6 +2119,19 @@ const A3_CATALOG := [
 	P_AUTHORITY_DEFLECTED_TRAP, P_TRADITION_DEFLECTED_TRAP,
 	P_MECHANISM_SHOWN_FORK_GUARD, P_MECHANISM_SHOWN_FORK_TRAP,
 	P_MEASURED_SENSE_FORK_GUARD, P_MEASURED_SENSE_FORK_TRAP,
+	P_AUTHORITY_SCOPE_GUARD, P_AUTHORITY_SCOPE_TRAP,
+	P_AUTHORITY_WEIGHT_GUARD, P_AUTHORITY_WEIGHT_TRAP,
+	P_NUMBERS_BACKED_GUARD, P_NUMBERS_BACKED_TRAP,
+	P_CASE_TYPICAL_GUARD, P_CASE_TYPICAL_TRAP,
+	P_CASE_CLASS_GUARD, P_CASE_CLASS_TRAP,
+	P_NORM_MEASURED_GUARD, P_NORM_MEASURED_TRAP,
+	P_FEELING_SCALED_GUARD, P_FEELING_SCALED_TRAP,
+	P_DEFINITION_SOURCED_GUARD, P_DEFINITION_SOURCED_TRAP,
+	P_DEFINITION_LIMIT_GUARD, P_DEFINITION_LIMIT_TRAP,
+	P_DEFINITION_ROOTED_GUARD, P_DEFINITION_ROOTED_TRAP,
+	P_CASE_ON_RECORD_TRAP, P_TRADITION_LIMIT_GUARD, P_ABOUT_PEOPLE_TRAP,
+	P_OUTLIER_FORK_GUARD, P_OUTLIER_FORK_TRAP,
+	P_LIVING_TRADITION_FORK_GUARD, P_LIVING_TRADITION_FORK_TRAP,
 ]
 ## F3 frame-scope зарезервирован вместе с остальным (см. RESERVED_FRAME_CATALOG) — не
 ## является resolved-by-construction verdict'ом клинча, отдельная механика one-shot доски.
@@ -1619,6 +2177,60 @@ func _pattern(pattern_id: String) -> Dictionary:
 			return P_MEASURED_SENSE_FORK_GUARD
 		"measured_sense_fork_trap":
 			return P_MEASURED_SENSE_FORK_TRAP
+		"authority_scope_guard":
+			return P_AUTHORITY_SCOPE_GUARD
+		"authority_scope_trap":
+			return P_AUTHORITY_SCOPE_TRAP
+		"authority_weight_guard":
+			return P_AUTHORITY_WEIGHT_GUARD
+		"authority_weight_trap":
+			return P_AUTHORITY_WEIGHT_TRAP
+		"numbers_backed_guard":
+			return P_NUMBERS_BACKED_GUARD
+		"numbers_backed_trap":
+			return P_NUMBERS_BACKED_TRAP
+		"case_typical_guard":
+			return P_CASE_TYPICAL_GUARD
+		"case_typical_trap":
+			return P_CASE_TYPICAL_TRAP
+		"case_class_guard":
+			return P_CASE_CLASS_GUARD
+		"case_class_trap":
+			return P_CASE_CLASS_TRAP
+		"norm_measured_guard":
+			return P_NORM_MEASURED_GUARD
+		"norm_measured_trap":
+			return P_NORM_MEASURED_TRAP
+		"feeling_scaled_guard":
+			return P_FEELING_SCALED_GUARD
+		"feeling_scaled_trap":
+			return P_FEELING_SCALED_TRAP
+		"definition_sourced_guard":
+			return P_DEFINITION_SOURCED_GUARD
+		"definition_sourced_trap":
+			return P_DEFINITION_SOURCED_TRAP
+		"definition_limit_guard":
+			return P_DEFINITION_LIMIT_GUARD
+		"definition_limit_trap":
+			return P_DEFINITION_LIMIT_TRAP
+		"definition_rooted_guard":
+			return P_DEFINITION_ROOTED_GUARD
+		"definition_rooted_trap":
+			return P_DEFINITION_ROOTED_TRAP
+		"case_on_record_trap":
+			return P_CASE_ON_RECORD_TRAP
+		"tradition_limit_guard":
+			return P_TRADITION_LIMIT_GUARD
+		"about_people_trap":
+			return P_ABOUT_PEOPLE_TRAP
+		"outlier_fork_guard":
+			return P_OUTLIER_FORK_GUARD
+		"outlier_fork_trap":
+			return P_OUTLIER_FORK_TRAP
+		"living_tradition_fork_guard":
+			return P_LIVING_TRADITION_FORK_GUARD
+		"living_tradition_fork_trap":
+			return P_LIVING_TRADITION_FORK_TRAP
 		"g01_source_backed":
 			return P_G01_SOURCE
 		"x01_false_independence":

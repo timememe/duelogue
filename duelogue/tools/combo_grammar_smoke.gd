@@ -37,6 +37,7 @@ func _run() -> void:
 	_check_r3_two_sides()
 	_check_r4_arbitration_frame_scope()
 	_check_new_combo_catalog()
+	_check_a3_catalog_integrity()
 	_check_a3_topology_probe()
 	print("=== COMBO GRAMMAR: %s ===\n" % ("OK" if failures == 0 else "FAIL (%d)" % failures))
 	get_tree().call_deferred("quit", 0 if failures == 0 else 1)
@@ -945,6 +946,36 @@ func _check_new_combo_catalog() -> void:
 		String(_event_of(fork_trap_info, "mechanism_shown_fork_guard").get("terminal", "")) \
 			== "expired",
 		"fork: одна и та же зацепка ветвит вердикт по схеме ответа, другая ветка истекает")
+
+
+## Каталог расширен (2026-07-22, сессия продолжения) до 35 recipe по 18 из 20 setup+hook
+## слотов ANSWER_OF — структурный guard, не поведенческий: id уникальны, _pattern()
+## резолвит каждый ровно на свой const (не на чужой/пустой), claim.confirm везде пуст
+## (инвариант всей resolved-by-construction ветки — если он нарушен, verdict перестаёт
+## быть мгновенным и решение начинает снова зависеть от survival), owner — ровно A или B.
+func _check_a3_catalog_integrity() -> void:
+	var seen_ids := {}
+	var all_confirm_empty := true
+	var all_resolve_to_self := true
+	var all_owner_valid := true
+	for raw in ComboRegister.A3_CATALOG:
+		var pattern: Dictionary = raw
+		var pid := String(pattern.get("id", ""))
+		seen_ids[pid] = int(seen_ids.get(pid, 0)) + 1
+		var confirm: Array = (pattern.get("claim", {}) as Dictionary).get("confirm", [])
+		all_confirm_empty = all_confirm_empty and confirm.is_empty()
+		var owner := String((pattern.get("claim", {}) as Dictionary).get("owner", ""))
+		all_owner_valid = all_owner_valid and owner in ["A", "B"]
+		var probe := RulesCore.new()
+		var resolved := probe.combo_register._pattern(pid)
+		all_resolve_to_self = all_resolve_to_self and \
+			String(resolved.get("id", "")) == pid
+	var no_duplicates := true
+	for pid in seen_ids:
+		no_duplicates = no_duplicates and int(seen_ids[pid]) == 1
+	_check(ComboRegister.A3_CATALOG.size() == 35 and seen_ids.size() == 35 and
+		no_duplicates and all_confirm_empty and all_resolve_to_self and all_owner_valid,
+		"боевой каталог: 35 recipe, id уникальны и резолвятся в себя, confirm везде пуст, owner валиден")
 
 
 func _check_fields_survive_zones() -> void:
