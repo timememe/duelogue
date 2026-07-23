@@ -40,18 +40,29 @@ const PAIRINGS := [
 ]
 
 
+## A/B по аддендуму «относительный сброс окна» (combo_a3_topologies_v0.1.md §2, 2026-07-23):
+## гоняем оба значения combo_register.rolling_window_enabled на одном и том же каталоге/
+## сиде-политике, чтобы видеть именно вклад сброса, а не заодно расширения каталога 8→35.
+const ROLLING_WINDOW_CONFIGS := [
+	{"label": "сброс окна ВКЛ (боевой, 2026-07-23+)", "enabled": true},
+	{"label": "сброс окна ВЫКЛ (окно живёт только на opener, до аддендума)", "enabled": false},
+]
+
+
 func _ready() -> void:
 	_ai = Ai.new()
 	await get_tree().process_frame
 	print("\n=== ЗАЛ — ЧАСТОТА КОМБО (%d матчей/пара, захват=трофей, рука=%d) ===" % [
 		matches_per_pairing, hand_size])
-	for pairing in PAIRINGS:
-		_run_pairing(String(pairing[0]), String(pairing[1]))
+	for config in ROLLING_WINDOW_CONFIGS:
+		print("\n### %s ###" % String(config.label))
+		for pairing in PAIRINGS:
+			_run_pairing(String(pairing[0]), String(pairing[1]), bool(config.enabled))
 	print("\n=== КОНЕЦ ===\n")
 	get_tree().quit()
 
 
-func _run_pairing(style_you: String, style_opp: String) -> void:
+func _run_pairing(style_you: String, style_opp: String, rolling_window_enabled: bool) -> void:
 	var matches := 0
 	var clinches := 0
 	var total_confirmed := 0
@@ -64,6 +75,7 @@ func _run_pairing(style_you: String, style_opp: String) -> void:
 		var first := RulesCore.SIDE_YOU if randf() < 0.5 else RulesCore.SIDE_OPP
 		m.reset(first, COMP_U, COMP_T, COMP_R, hand_size, BASE, KOMI, STEAL, FORTIFY,
 			CLINCH, FREEZE, CAPTURE_MODE)
+		m.combo_register.rolling_window_enabled = rolling_window_enabled
 		var res: Dictionary = _ai.simulate(m, style_you, style_opp)
 		matches += 1
 		clinches += int(res.get("clinches", 0))

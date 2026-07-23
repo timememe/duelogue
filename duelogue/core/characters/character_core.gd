@@ -77,13 +77,17 @@ var _stage              ## ядро сцены (через bind) — даёт п
 ## намеренно: зовём кастомные show_utterance/show_impact из скрипта сцены, которых нет в
 ## базовом Control — статическая типизация Control тут выдаст ошибку компиляции на вызове.
 var _reaction
+## Баннер названия комбо (через bind) — отдельный от reaction_scene узел (combo_name_banner.gd,
+## тоже нетипизирован по той же причине: кастомный show_combo).
+var _combo_banner
 var _sprites := {}      ## side → Sprite2D (актёр на общем плане)
 
 
-## Привязать к ядру сцены и мини-сцене реакции ДО входа в дерево.
-func bind(stage, reaction) -> void:
+## Привязать к ядру сцены, мини-сцене реакции и баннеру комбо ДО входа в дерево.
+func bind(stage, reaction, combo_banner = null) -> void:
 	_stage = stage
 	_reaction = reaction
+	_combo_banner = combo_banner
 
 
 func _ready() -> void:
@@ -170,14 +174,18 @@ func _on_impact(side: String, kind: String) -> void:
 
 ## Боевой каталог (2026-07-22, resolved-by-construction): вердикт клинча решён конструкцией
 ## ответа, не физикой unwind (см. rules_core.gd instant_verdict/forced_winner_side) — игрок
-## должен ОДНОЗНАЧНО увидеть, что комбо сработало. Ace Attorney-стамп (шипастая вспышка со
-## словом) СНАЧАЛА, потом уже знакомая поза-реакция владельца (burst=защита держит,
-## gotcha=ловушка сработала) поверх того же utterance-пайплайна.
+## должен ОДНОЗНАЧНО увидеть, что комбо сработало И кто победил. Баннер названия комбо
+## (2026-07-23, combo_name_banner.gd) СНАЧАЛА — это не реакция владельца, а нейтральный эффект
+## самой игры поверх всей сцены, поэтому НЕ гейтится ReadingPace.CUTSCENES (тумблер отключает
+## только тяжёлые катсцены-реплики; игрок должен видеть исход комбо всегда). Потом уже —
+## знакомая поза-реакция владельца (burst=защита держит, gotcha=ловушка сработала) поверх
+## того же utterance-пайплайна, которая по-прежнему уважает CUTSCENES.
 func _on_combo_verdict(side: String, combo_name: String, topology: String) -> void:
+	if _combo_banner != null:
+		await _combo_banner.show_combo(combo_name, side)
 	if _reaction == null or not ReadingPace.CUTSCENES:
 		return
 	var is_trap := topology.ends_with("trap")
-	await _reaction.show_combo_stamp("ЛОВУШКА!" if is_trap else "ЗАЩИТА!", is_trap)
 	var mood := "gotcha" if is_trap else "burst"
 	var tex := _state_tex_for(side, mood, "", false)
 	var eyebrow := "🪤 ЛОВУШКА СРАБОТАЛА" if is_trap else "⚡ ЗАЩИТА ДЕРЖИТ"

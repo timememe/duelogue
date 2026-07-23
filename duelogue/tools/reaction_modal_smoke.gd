@@ -4,6 +4,7 @@ extends Node
 ## и держать modal-active до полного завершения fade-out.
 
 const ReactionScene := preload("res://duelogue/core/characters/reaction_scene.tscn")
+const ComboNameBanner := preload("res://duelogue/ui/combo_name_banner.gd")
 const DebateScreen := preload("res://duelogue/ui/debate_screen.tscn")
 
 var failures := 0
@@ -54,25 +55,27 @@ func _ready() -> void:
 	await reaction.scene_finished
 	reaction.queue_free()
 
-	# Боевой каталог (2026-07-22): Ace Attorney-стамп перед позой-реакцией — своя микросцена
-	# с процедурной шипастой вспышкой, но САМ не закрывает модальность (не мешает следующей
-	# show_utterance продолжить ту же непрерывную цепочку крупных планов — ровно как
-	# character_core._on_combo_verdict делает: await show_combo_stamp → show_utterance).
-	var stamp_reaction = ReactionScene.instantiate()
-	add_child(stamp_reaction)
-	await stamp_reaction.show_combo_stamp("ЗАЩИТА!", false)
-	_check(stamp_reaction.visible and stamp_reaction.is_modal_active() and
-		not stamp_reaction._stamp_poly.visible and not stamp_reaction._stamp_label.visible and
-		stamp_reaction._stamp_label.text == "ЗАЩИТА!" and
-		stamp_reaction._stamp_poly.color == stamp_reaction.STAMP_GUARD_COLOR,
-		"стамп комбо-защиты доигрывает панч-ин/аут сам и не закрывает модальность")
-	stamp_reaction.show_utterance("you", "Тестовая защита", null, "burst", false, "⚡ ЗАЩИТА ДЕРЖИТ")
-	_check(stamp_reaction._bubble.visible,
-		"поза-реакция после стампа продолжает ту же модальную сцену")
-	await stamp_reaction.scene_finished
-	_check(not stamp_reaction.visible and not stamp_reaction.is_modal_active(),
-		"модальность закрывается только после позы-реакции, не после самого стампа")
-	stamp_reaction.queue_free()
+	# Баннер названия комбо (2026-07-23): НЕ узел reaction_scene и не его модальность — отдельный
+	# combo_name_banner.gd. Показывает ИМЯ комбо (не generic-слово «ЗАЩИТА!»/«ЛОВУШКА!»,
+	# которое ничего не говорит о том, выиграл ли игрок); победитель читается ТОЛЬКО по цвету
+	# дизер-звезды (правка #2 — без дублирующей текстовой подписи), доигрывает панч-ин/пауза/
+	# панч-аут сам за 2с (правка #3) и гасится, не трогая reaction_scene вообще (character_core
+	# секвенирует: await show_combo → show_utterance, и НЕ гейтит его CUTSCENES).
+	var banner: Control = ComboNameBanner.new()
+	add_child(banner)
+	var t0 := Time.get_ticks_msec()
+	await banner.show_combo("Консенсус сильнее", "you")
+	var elapsed := float(Time.get_ticks_msec() - t0) / 1000.0
+	_check(not banner._burst.visible and not banner._label.visible and
+		banner._label.text == "Консенсус сильнее" and
+		banner._burst_mat.get_shader_parameter("burst_color") == banner.YOU_COLOR and
+		elapsed >= 1.6 and elapsed <= 2.5,
+		"баннер комбо показывает ИМЯ комбо, держит 2с и гасится сам")
+	await banner.show_combo("Уклонился от источника", "opp")
+	_check(banner._label.text == "Уклонился от источника" and
+		banner._burst_mat.get_shader_parameter("burst_color") == banner.OPP_COLOR,
+		"победа оппонента красит дизер-звезду в его цвет")
+	banner.queue_free()
 
 	# Интеграция с боевым экраном: уже открытый hover-бабл исчезает на scene_started,
 	# а прямой повторный hover игнорируется до scene_finished.

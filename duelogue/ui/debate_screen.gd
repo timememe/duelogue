@@ -91,6 +91,7 @@ var _cutscene_active := false
 @onready var _drawer: Control = %TranscriptDrawer
 @onready var _bar_bg: ColorRect = %BarBg  ## геометрия бара ЗАЛа читается отсюда, не дублируется числами
 @onready var _reaction: Control = $ReactionScene  ## мини-сцена реакции (Ace Attorney-стиль)
+@onready var _combo_banner: Control = $ComboNameBanner  ## баннер названия комбо, НЕ часть reaction_scene
 @onready var _card_bubble: Panel = %CardInfoBubble
 @onready var _card_bubble_title: Label = %CardInfoTitle
 @onready var _card_bubble_body: Label = %CardInfoBody
@@ -124,7 +125,7 @@ func _ready() -> void:
 	nar = controller.nar
 	# Ядро персонажей кладёт актёров в слой сцены и режиссирует мини-сцену реакции.
 	var chars := CharacterCore.new()
-	chars.bind(_stage, _reaction)
+	chars.bind(_stage, _reaction, _combo_banner)
 	add_child(chars)
 	# ReactionScene — модальный полноэкранный слой. Строковый connect сохраняет доступ к
 	# кастомным сигналам сцены при статическом типе Control у onready-ссылки.

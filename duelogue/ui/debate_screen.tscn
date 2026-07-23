@@ -3,6 +3,7 @@
 [ext_resource type="Script" uid="uid://keyqp33rwswf" path="res://duelogue/ui/debate_screen.gd" id="1"]
 [ext_resource type="PackedScene" uid="uid://dwtmtf8q0p2r7" path="res://duelogue/core/stage/stage.tscn" id="2"]
 [ext_resource type="PackedScene" uid="uid://dswk2icr7etk1" path="res://duelogue/core/characters/reaction_scene.tscn" id="3"]
+[ext_resource type="Script" path="res://duelogue/ui/combo_name_banner.gd" id="4"]
 
 [sub_resource type="Shader" id="Shader_board_dither"]
 code = "shader_type canvas_item;
@@ -788,6 +789,16 @@ text = "☰ Меню"
 
 [node name="ReactionScene" parent="." unique_id=104865197 instance=ExtResource("3")]
 layout_mode = 1
+
+[node name="ComboNameBanner" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("4")
 
 [node name="CardInfoBubble" type="Panel" parent="." unique_id=1778430210]
 unique_name_in_owner = true

@@ -77,14 +77,6 @@ var _gen := 0            ## генерация; новый show_* инвалид
 var _active_tween: Tween  ## текущий tween (убиваем перед стартом нового — без борьбы за свойства)
 var _modal_active := false
 
-## Ace Attorney-стамп (2026-07-22, боевой каталог resolved-by-construction): шипастая вспышка
-## со словом ПЕРЕД обычной позой-реакцией. Построен процедурно (Polygon2D-звезда), без новых
-## текстур — тот же принцип, что у остального VFX проекта (шейдеры/процедурные линии).
-const STAMP_TRAP_COLOR := Color(0.82, 0.14, 0.14)   # ловушка — тревожный красный
-const STAMP_GUARD_COLOR := Color(0.95, 0.76, 0.12)  # защита — уверенное золото
-var _stamp_poly: Polygon2D
-var _stamp_label: Label
-
 
 func _ready() -> void:
 	visible = false
@@ -252,91 +244,6 @@ func show_impact(side: String, portrait_tex: Texture2D, intensity: float = 1.0, 
 
 func _set_progress(p: float) -> void:
 	_shader_mat.set_shader_parameter("progress", p)
-
-
-## Строит узлы стампа лениво при первом вызове — не трогаем .tscn руками, всё процедурно.
-func _ensure_stamp() -> void:
-	if _stamp_poly != null:
-		return
-	_stamp_poly = Polygon2D.new()
-	_stamp_poly.polygon = _burst_points(230.0, 148.0, 13)
-	add_child(_stamp_poly)
-	_stamp_label = Label.new()
-	_stamp_label.add_theme_font_size_override("font_size", 60)
-	_stamp_label.add_theme_color_override("font_color", Color.WHITE)
-	_stamp_label.add_theme_color_override("font_outline_color", Color.BLACK)
-	_stamp_label.add_theme_constant_override("outline_size", 10)
-	_stamp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_stamp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_stamp_label.size = Vector2(460.0, 210.0)
-	_stamp_label.pivot_offset = _stamp_label.size / 2.0
-	add_child(_stamp_label)
-	_stamp_poly.visible = false
-	_stamp_label.visible = false
-
-
-## Шипастый (звёздный) контур — 2×spikes точек, чередование внешнего/внутреннего радиуса,
-## центрировано на (0,0): Polygon2D/Control вращаются и масштабируются вокруг своего же центра.
-func _burst_points(outer: float, inner: float, spikes: int) -> PackedVector2Array:
-	var pts := PackedVector2Array()
-	for i in spikes * 2:
-		var r := outer if i % 2 == 0 else inner
-		var a := TAU * float(i) / float(spikes * 2) - PI / 2.0
-		pts.append(Vector2(cos(a), sin(a)) * r)
-	return pts
-
-
-## Ace Attorney-стамп: шипастая вспышка со словом (ЗАЩИТА!/ЛОВУШКА!) ДО позы-реакции владельца
-## (character_core вызывает show_utterance сразу после). Панч-ин с перелётом (тот же почерк,
-## что у баббла реплики: TRANS_BACK/EASE_OUT) → короткая пауза → панч-аут с фейдом.
-func show_combo_stamp(word: String, is_trap: bool) -> void:
-	_ensure_stamp()
-	_gen += 1
-	var my_gen := _gen
-	_begin_modal_scene()
-	modulate.a = 1.0
-	_bg_opp_default.visible = false
-	_bg_you_default.visible = false
-	_bg_mood.visible = false
-	_bg_shader.visible = false
-	_bubble.visible = false
-	_stamp_poly.color = STAMP_TRAP_COLOR if is_trap else STAMP_GUARD_COLOR
-	_stamp_poly.position = size / 2.0
-	_stamp_poly.rotation = deg_to_rad(-7.0)
-	_stamp_label.text = word
-	_stamp_label.position = size / 2.0 - _stamp_label.size / 2.0
-	_stamp_label.rotation = deg_to_rad(-7.0)
-	_stamp_poly.modulate.a = 1.0
-	_stamp_label.modulate.a = 1.0
-	_stamp_poly.scale = Vector2(0.15, 0.15)
-	_stamp_label.scale = Vector2(0.15, 0.15)
-	_stamp_poly.visible = true
-	_stamp_label.visible = true
-	if _active_tween:
-		_active_tween.kill()
-	_active_tween = create_tween()
-	_active_tween.set_parallel(true)
-	_active_tween.tween_property(_stamp_poly, "scale", Vector2.ONE, ReadingPace.STAMP_PUNCH_IN) \
-		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	_active_tween.tween_property(_stamp_label, "scale", Vector2.ONE, ReadingPace.STAMP_PUNCH_IN) \
-		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	await _active_tween.finished
-	if my_gen != _gen:
-		return
-	await get_tree().create_timer(ReadingPace.STAMP_HOLD).timeout
-	if my_gen != _gen:
-		return
-	_active_tween = create_tween()
-	_active_tween.set_parallel(true)
-	_active_tween.tween_property(_stamp_poly, "scale", Vector2(1.25, 1.25), ReadingPace.STAMP_PUNCH_OUT)
-	_active_tween.tween_property(_stamp_label, "scale", Vector2(1.25, 1.25), ReadingPace.STAMP_PUNCH_OUT)
-	_active_tween.tween_property(_stamp_poly, "modulate:a", 0.0, ReadingPace.STAMP_PUNCH_OUT)
-	_active_tween.tween_property(_stamp_label, "modulate:a", 0.0, ReadingPace.STAMP_PUNCH_OUT)
-	await _active_tween.finished
-	if my_gen != _gen:
-		return
-	_stamp_poly.visible = false
-	_stamp_label.visible = false
 
 
 func _fade_out(my_gen: int) -> void:

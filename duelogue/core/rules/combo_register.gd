@@ -2155,6 +2155,18 @@ var _run_serial := 0
 var extra_a3_catalog: Array = []
 ## Тот же шов для FRAME_CATALOG/board_stable (F3 зарезервирован вместе с A3-парами).
 var extra_frame_catalog: Array = []
+## Тестовый seam: true по умолчанию — реальная игра всегда видит боевой A3_CATALOG.
+## Изолированные reserved-сценарии смоука (RESERVED_A3_CATALOG в extra_a3_catalog) не
+## тестируют ничего боевого и ставят это в false, чтобы аддендум «относительный сброс
+## окна» (2026-07-23) не подсевал боевые паттерны на их фикстуры на второй и дальнейших
+## позициях — раньше коллизия была невозможна: сброса не было, боевой каталог пробовался
+## только на самом первом opener'е сценария.
+var use_active_catalog: bool = true
+## A/B-seam: true по умолчанию — реальная игра всегда видит сброс окна. false отключает
+## только open_next_window (см. ниже), возвращая клинч к поведению до аддендума 2026-07-23:
+## окно живёт ровно на первый opener клинча, дальнейшие press/hold ничего не пересеивают.
+## Используется tools/sim_combo_frequency.gd для чистого A/B по вкладу самого сброса.
+var rolling_window_enabled: bool = true
 
 
 func _pattern(pattern_id: String) -> Dictionary:
@@ -2449,8 +2461,53 @@ func _arm_run(run: Dictionary, scope: Dictionary) -> void:
 	run["state"] = "armed"
 
 
+## Заводит новое поколение A3-вахт с $ask = ask_play (аддендум «относительный сброс
+## окна», combo_a3_topologies_v0.1.md §2, 2026-07-23). Общий код для самого первого
+## opener'а клинча (open_action_run) и для каждого следующего press, который пробует
+## стать $ask следующей позиции-0 (open_next_window).
+func _seed_a3_watches(scope: Dictionary, action_id: String, attacker: String,
+		defender: String, frame_id: String, anchor_card: Dictionary,
+		ask_play: Dictionary) -> void:
+	var catalog: Array = (A3_CATALOG if use_active_catalog else []) + extra_a3_catalog
+	for raw_pattern in catalog:
+		var pattern: Dictionary = raw_pattern
+		var path: Array = pattern.get("path", [])
+		if not _card_matches(ask_play, (path[0] as Dictionary).get("card", {})):
+			continue
+		if pattern.has("seed"):
+			# Board-atom $setup: exact верхний тезис в момент объявления. Требуемая схема
+			# читается со снапшота якоря; техтезис/не та схема — вахта не открывается.
+			var seed_spec: Dictionary = (pattern.seed as Dictionary).get("$setup", {})
+			if anchor_card.is_empty() or not _card_matches(anchor_card,
+					seed_spec.get("card", {})):
+				continue
+		_run_serial += 1
+		var a3_id := "run_%d" % _run_serial
+		runs[a3_id] = {
+			"id": a3_id,
+			"pattern_id": String(pattern.id),
+			"pattern_version": int(pattern.version),
+			"scope": {"kind": "action", "id": action_id},
+			"roles": {"A": attacker, "B": defender},
+			"slots": {"$ask": String(ask_play.get("play_id", "")),
+				"$reply": "", "$press": ""},
+			"bindings": {},
+			"reply_thesis": "",
+			"frame_id": frame_id,
+			"structural_complete": false,
+			# Паттерн без content-атомов не ждёт add_content_relation — вооружается чисто структурно.
+			"content_ok": _content_atoms(pattern).is_empty(),
+			"armed_once": false,
+			"superseded_by": "",
+			"state": "watching",   # watching | link | armed | terminal
+			"terminal": "",        # confirmed | break | expired | unresolved | superseded
+		}
+		(scope.a3 as Array).append(a3_id)
+
+
 ## Milestone «открытие action-scope»: G-01 по старому контракту (возвращает его run_id
-## для legacy_view) плюс A3-вахты по path[0]/seed. Вахта без продолжения истечёт молча.
+## для legacy_view) плюс первое поколение A3-вахт по path[0]/seed. Вахта без
+## продолжения истечёт молча (следующие поколения — см. open_next_window).
 func open_action_run(action_id: String, frame_id: String, attacker: String,
 		defender: String, anchor: Dictionary, opener_play: Dictionary) -> String:
 	var scope := {"g01": "", "a3": [], "attacker": attacker, "defender": defender,
@@ -2479,42 +2536,28 @@ func open_action_run(action_id: String, frame_id: String, attacker: String,
 				"terminal": "",        # confirmed | break | expired | superseded
 			}
 			scope.g01 = run_id
-	for raw_pattern in (A3_CATALOG + extra_a3_catalog):
-		var pattern: Dictionary = raw_pattern
-		var path: Array = pattern.get("path", [])
-		if not _card_matches(opener_play, (path[0] as Dictionary).get("card", {})):
-			continue
-		if pattern.has("seed"):
-			# Board-atom $setup: exact верхний тезис в момент объявления. Требуемая схема
-			# читается со снапшота якоря; техтезис/не та схема — вахта не открывается.
-			var seed_spec: Dictionary = (pattern.seed as Dictionary).get("$setup", {})
-			var anchor_card: Dictionary = anchor.get("card", {})
-			if anchor_card.is_empty() or not _card_matches(anchor_card,
-					seed_spec.get("card", {})):
-				continue
-		_run_serial += 1
-		var a3_id := "run_%d" % _run_serial
-		runs[a3_id] = {
-			"id": a3_id,
-			"pattern_id": String(pattern.id),
-			"pattern_version": int(pattern.version),
-			"scope": {"kind": "action", "id": action_id},
-			"roles": {"A": attacker, "B": defender},
-			"slots": {"$ask": String(opener_play.get("play_id", "")),
-				"$reply": "", "$press": ""},
-			"bindings": {},
-			"reply_thesis": "",
-			"frame_id": frame_id,
-			"structural_complete": false,
-			# Паттерн без content-атомов не ждёт add_content_relation — вооружается чисто структурно.
-			"content_ok": _content_atoms(pattern).is_empty(),
-			"armed_once": false,
-			"superseded_by": "",
-			"state": "watching",   # watching | link | armed | terminal
-			"terminal": "",        # confirmed | break | expired | unresolved | superseded
-		}
-		(scope.a3 as Array).append(a3_id)
+	_seed_a3_watches(scope, action_id, attacker, defender, frame_id,
+		anchor.get("card", {}), opener_play)
 	return String(scope.g01)
+
+
+## Аддендум «относительный сброс окна» (combo_a3_topologies_v0.1.md §2, 2026-07-23):
+## каждый press, кроме самого opener'а клинча, тоже пробует завести новое поколение
+## A3-вахт — сам этот press в роли $ask, текущий верхний тезис рамки как $setup-
+## кандидат (пусто, если тезис неeligible — тот же тест, что и у самого opening_anchor).
+## Если предыдущее окно уже подтвердилось, клинч уже завершён instant_verdict'ом раньше,
+## чем сюда дойдёт управление (rules_core.clinch_submit зовёт combo-хуки строго до
+## phase-перехода на press) — так что здесь всегда честная новая позиция-0, а не
+## повторный confirm той же ставки.
+func open_next_window(action_id: String, anchor_card: Dictionary,
+		ask_play: Dictionary) -> void:
+	if not rolling_window_enabled:
+		return
+	var scope: Dictionary = scopes.get(action_id, {})
+	if scope.is_empty():
+		return
+	_seed_a3_watches(scope, action_id, String(scope.attacker), String(scope.defender),
+		String(scope.frame_id), anchor_card, ask_play)
 
 
 ## Milestone «защитный ответ»: G-01 вооружает только ребро responds_to на exact опенер
@@ -2546,8 +2589,10 @@ func on_response(action_id: String, play: Dictionary, new_relations: Array,
 	if materialized != "":
 		record_thesis_origin(action_id, String(play.get("play_id", "")),
 			String(play.get("actor", "")), String(scope.get("frame_id", "")), materialized)
-	if int(play.get("step", -1)) != 1:
-		return
+	# Аддендум «относительный сброс окна» (2026-07-23): матчинг ниже уже относительный —
+	# сверяет responds_to_id с $ask конкретного рана, а не номер хода — поэтому
+	# абсолютный гейт на step==1 снят. Он не давал более поздним поколениям вахт
+	# (см. open_next_window) когда-либо вооружиться.
 	for a3_id in scope.get("a3", []):
 		var run: Dictionary = runs[a3_id]
 		if String(run.state) != "watching":
@@ -2567,11 +2612,13 @@ func on_response(action_id: String, play: Dictionary, new_relations: Array,
 			_arm_run(run, scope)
 
 
-## Milestone «press»: только exact step 2 может закрыть трёхзвенный path (RTR).
-## Структурная полнота ≠ ARMED: без content-ребра кандидат уйдёт в UNRESOLVED.
+## Milestone «press»: закрывает трёхзвенный path (RTR) — сверяет targeted_thesis с
+## exact reply_thesis своего рана, а не абсолютный номер хода (аддендум «относительный
+## сброс окна», 2026-07-23, снимает прежний гейт step==2). Структурная полнота ≠ ARMED:
+## без content-ребра кандидат уйдёт в UNRESOLVED.
 func on_press(action_id: String, play: Dictionary, new_relations: Array) -> void:
 	var scope: Dictionary = scopes.get(action_id, {})
-	if scope.is_empty() or int(play.get("step", -1)) != 2:
+	if scope.is_empty():
 		return
 	var targeted_thesis := ""
 	for raw in new_relations:

@@ -1065,15 +1065,17 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	# выбора бумагой A0 — это только читаемый итог ставки.
 	match String(info.get("combo_result", "none")):
 		"confirmed":
-			_narrate("⚡ КОМБО «%s» ПОДТВЕРЖДЕНО: финишер пережил клинч." % \
-				String(info.get("combo_name", "")), "    combo confirmed")
+			_narrate("⚡ КОМБО «%s» ПОДТВЕРЖДЕНО: финишер пережил клинч. [защитник: %s]" % \
+				[String(info.get("combo_name", "")), _who(defender)],
+				"    combo confirmed %s" % defender)
 		"break":
-			_narrate("Комбо «%s» разбито: атакующий перестоял ставку." % \
-				String(info.get("combo_name", "")), "    combo break")
+			_narrate("Комбо «%s» разбито: атакующий перестоял ставку. [атакующий: %s]" % \
+				[String(info.get("combo_name", "")), _who(attacker)],
+				"    combo break %s" % attacker)
 	# Боевой каталог (2026-07-22): resolved-by-construction вердикт обрывает клинч мгновенно
 	# (stop_reason=="combo_verdict", см. rules_core.gd instant_verdict/forced_winner_side).
-	# Ace Attorney-стамп (шипастая вспышка со словом) ДО обычной позы-реакции владельца —
-	# EventBus.combo_verdict, character_core секвенирует show_combo_stamp → show_utterance.
+	# Баннер названия комбо (2026-07-23, combo_name_banner.gd) ДО обычной позы-реакции
+	# владельца — EventBus.combo_verdict, character_core секвенирует show_combo → show_utterance.
 	# Не await'им сам сигнал (как и impact ниже) — пейсинг держит _say_until.
 	if stop_reason == "combo_verdict":
 		for raw_verdict_ev in info.get("combo_events", []):
@@ -1084,9 +1086,9 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 			var v_owner := String(verdict_ev.get("owner", ""))
 			var v_name := String(verdict_ev.get("combo_name", ""))
 			var v_topology := String(verdict_ev.get("topology", ""))
-			var v_is_trap := v_topology.ends_with("trap")
-			_narrate(("⚡ ЛОВУШКА! Попался: «%s»." % v_name) if v_is_trap else \
-				("⚡ ЗАЩИТА! Не сдвинулось: «%s»." % v_name),
+			# Нейминг 2026-07-23 (правка игрока): ГАРД/ТРАП ничего не говорят о том, выиграл ли
+			# игрок — narration держится строго на «сработало + кто победил», без архетипа.
+			_narrate("⚡ КОМБО «%s» СРАБОТАЛО! Победитель: %s." % [v_name, _who(v_owner)],
 				"    combo verdict %s %s" % [v_owner, v_name])
 			EventBus.combo_verdict.emit(v_owner, v_name, v_topology)
 			_say_until = _now() + ReadingPace.combo_verdict_time(v_name)
@@ -1141,6 +1143,7 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 		"combo_route_id": info.get("combo_route_id", ""),
 		"combo_name": info.get("combo_name", ""),
 		"combo_owner": info.get("combo_owner", ""),
+		"combo_payoff": info.get("combo_payoff", ""),
 		"combo_events": info.get("combo_events", []),
 		"opening_anchor": info.get("opening_anchor", {}),
 		"sequence": info.get("resolved_sequence", resolved.get("sequence", [])),

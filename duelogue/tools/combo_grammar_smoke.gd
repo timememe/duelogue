@@ -37,6 +37,7 @@ func _run() -> void:
 	_check_r3_two_sides()
 	_check_r4_arbitration_frame_scope()
 	_check_new_combo_catalog()
+	_check_rolling_window_second_generation()
 	_check_a3_catalog_integrity()
 	_check_a3_topology_probe()
 	print("=== COMBO GRAMMAR: %s ===\n" % ("OK" if failures == 0 else "FAIL (%d)" % failures))
@@ -222,7 +223,10 @@ func _setup_frame(scheme: String, thesis_id: String) -> Dictionary:
 ## Собрать доску сценария §9: атакующий YOU с заготовленной рукой против setup-рамки.
 ## extra_catalog (2026-07-22): пусто по умолчанию — не трогает ни один из вызовов,
 ## тестирующих боевой A3_CATALOG/generic G-01. Reserved-сценарии (R3/R4) передают
-## ComboRegister.RESERVED_A3_CATALOG явно, чтобы подсадить резерв только себе.
+## ComboRegister.RESERVED_A3_CATALOG явно, чтобы подсадить резерв только себе — раз они
+## не тестируют боевой каталог, use_active_catalog заодно снят, чтобы аддендум
+## «относительный сброс окна» (2026-07-23) не подсевал боевые паттерны на их
+## фикстуры на второй и дальнейших позициях (см. use_active_catalog в combo_register.gd).
 func _scenario(setup_scheme: String, you_hand: Array, opp_hand: Array,
 		extra_catalog: Array = []) -> RefCounted:
 	var model := _combo_model()
@@ -234,6 +238,7 @@ func _scenario(setup_scheme: String, you_hand: Array, opp_hand: Array,
 	model.sides[RulesCore.SIDE_OPP].hand = opp_hand
 	model.sides[RulesCore.SIDE_OPP].draw = []
 	model.combo_register.extra_a3_catalog = extra_catalog
+	model.combo_register.use_active_catalog = extra_catalog.is_empty()
 	model.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
 	return model
 
@@ -699,6 +704,7 @@ func _check_r3_two_sides() -> void:
 	s3.sides[RulesCore.SIDE_OPP].hand = [_thesis("Авторитет")]
 	s3.sides[RulesCore.SIDE_OPP].draw = []
 	s3.combo_register.extra_a3_catalog = ComboRegister.RESERVED_A3_CATALOG
+	s3.combo_register.use_active_catalog = false
 	s3.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
 	var s3_legacy_none: bool = String(s3.clinch.get("combo_state", "")) == "none"
 	s3.clinch_submit("play", false, 0)
@@ -723,6 +729,7 @@ func _check_r3_two_sides() -> void:
 	s4.sides[RulesCore.SIDE_OPP].hand = [_thesis("Авторитет"), _thesis("Пример")]
 	s4.sides[RulesCore.SIDE_OPP].draw = []
 	s4.combo_register.extra_a3_catalog = ComboRegister.RESERVED_A3_CATALOG
+	s4.combo_register.use_active_catalog = false
 	s4.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
 	s4.clinch_submit("play", false, 0)
 	s4.clinch_submit("play", false, 0)
@@ -893,36 +900,43 @@ func _check_r4_arbitration_frame_scope() -> void:
 ## от legacy G-01 и reserved-каталога (проверены выше через extra_a3_catalog-инъекцию) —
 ## это единственные проверки, которые бьют по умолчанию активному A3_CATALOG.
 func _check_new_combo_catalog() -> void:
-	# GUARD confirmed: правильный ответ мгновенно обрывает обмен в пользу защитника,
-	# его тезис остаётся на рамке (theses не меняется — ничего не снято).
+	# GUARD confirmed: правильный ответ мгновенно обрывает обмен в пользу защитника, его
+	# тезис остаётся на рамке (theses не меняется — ничего не снято), И (пейофф 2026-07-23)
+	# рамка получает временную неуязвимость к захвату (braced, снимается в begin_turn).
 	var guard: RefCounted = _scenario("Эмоция", [_attack("Не в кассу")], [_thesis("Пример")])
 	var guard_resolved: Dictionary = guard.clinch_submit("play", false, 0)
 	var guard_info: Dictionary = guard_resolved.get("info", {})
-	var guard_theses := int((guard.sides[RulesCore.SIDE_OPP].lines[0] as Dictionary).theses)
+	var guard_line: Dictionary = guard.sides[RulesCore.SIDE_OPP].lines[0]
 	var guard_ev := _event_of(guard_info, "about_people_guard")
 	_check(String(guard_resolved.get("event", "")) == "resolved" and
 		not guard.clinch_active() and not bool(guard_resolved.get("landed", true)) and
-		guard_theses == 2 and
+		int(guard_line.theses) == 2 and
+		bool(guard_line.get("braced", false)) and
+		String(guard_info.get("combo_payoff", "")) == "guard_braced" and
 		String(guard_ev.get("terminal", "")) == "confirmed" and
 		String(guard_ev.get("owner", "")) == RulesCore.SIDE_OPP and
 		String(guard_info.get("stop_reason", "")) == "combo_verdict",
-		"боевой GUARD: правильный ответ мгновенно обрывает обмен, дальше press невозможен")
+		"боевой GUARD-пейофф: обмен обрывается в пользу защитника, рамка временно braced")
 
-	# TRAP confirmed: заведомо мимо-ответ мгновенно обрывает обмен в пользу атакующего;
-	# opener переигрывает по текущему верху рамки и физически снимает бланк-реплику
-	# (theses возвращается к 1 — реплика легла и тут же ушла в рамках одного play).
+	# TRAP confirmed (пейофф 2026-07-23): заведомо мимо-ответ мгновенно обрывает обмен в
+	# пользу атакующего, и опенер теперь считается захватывающим ударом даже не будучи
+	# Кражей — рамка уходит ЦЕЛИКОМ (капитан "Тыл" остаётся у OPP, "Setup" — у YOU),
+	# а не просто снимает бланк-реплику, как было бы без пейоффа.
 	var trap: RefCounted = _scenario("Традиция", [_attack("До абсурда")], [_thesis("Эмоция")])
 	var trap_resolved: Dictionary = trap.clinch_submit("play", false, 0)
 	var trap_info: Dictionary = trap_resolved.get("info", {})
-	var trap_theses := int((trap.sides[RulesCore.SIDE_OPP].lines[0] as Dictionary).theses)
 	var trap_ev := _event_of(trap_info, "tradition_deflected_trap")
 	_check(String(trap_resolved.get("event", "")) == "resolved" and
 		not trap.clinch_active() and bool(trap_resolved.get("landed", false)) and
-		trap_theses == 1 and
+		bool(trap_info.get("full_capture", false)) and
+		String(trap_info.get("combo_payoff", "")) == "trap_capture" and
+		trap.sides[RulesCore.SIDE_OPP].lines.size() == 1 and
+		String((trap.sides[RulesCore.SIDE_OPP].lines[0] as Dictionary).name) == "Тыл" and
+		String((trap.sides[RulesCore.SIDE_YOU].lines[0] as Dictionary).name) == "Setup" and
 		String(trap_ev.get("terminal", "")) == "confirmed" and
 		String(trap_ev.get("owner", "")) == RulesCore.SIDE_YOU and
 		String(trap_info.get("stop_reason", "")) == "combo_verdict",
-		"боевой TRAP: заведомо мимо-ответ мгновенно обрывает обмен и снимает бланк-реплику")
+		"боевой TRAP-пейофф: рамка захватывается ЦЕЛИКОМ, а не просто снимает тезис")
 
 	# fork: один и тот же $ask (Статистика+связь), схема $reply ветвит вердикт — не гонка
 	# за survival, а выбор конструкции; другая ветка при этом не подтверждается никогда.
@@ -946,6 +960,40 @@ func _check_new_combo_catalog() -> void:
 		String(_event_of(fork_trap_info, "mechanism_shown_fork_guard").get("terminal", "")) \
 			== "expired",
 		"fork: одна и та же зацепка ветвит вердикт по схеме ответа, другая ветка истекает")
+
+
+## Аддендум «относительный сброс окна» (combo_a3_topologies_v0.1.md §2, 2026-07-23):
+## техническая База — ни один боевой паттерн не сеется без eligible-якоря, поэтому первое
+## окно клинча гарантированно мимо. Первый ответ защитника ("Пример") ничего не подтверждает,
+## но сам становится $setup-якорем следующего окна; следующий press атакующего ("Источник?")
+## пробует стать $ask нового поколения (rules_core.open_next_window →
+## combo_register._seed_a3_watches), и его ответ ("Авторитет") резолвит боевой
+## case_on_record_guard мгновенно — ровно так же, как если бы это было первое окно клинча.
+func _check_rolling_window_second_generation() -> void:
+	var model := _combo_model()
+	model.sides[RulesCore.SIDE_YOU].lines = [_plain_line("Атакующий")]
+	model.sides[RulesCore.SIDE_OPP].lines = [_plain_line("Тех"), _plain_line("Тыл")]
+	model.sides[RulesCore.SIDE_YOU].hand = [_attack("Контрпример"), _attack("Источник?")]
+	model.sides[RulesCore.SIDE_YOU].draw = []
+	model.sides[RulesCore.SIDE_OPP].hand = [_thesis("Пример"), _thesis("Авторитет")]
+	model.sides[RulesCore.SIDE_OPP].draw = []
+	model.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
+	var gen1_none: bool = String(model.clinch.get("combo_state", "")) == "none"
+	model.clinch_submit("play", false, 0)
+	var gen1_no_confirm: bool = model.clinch_active()
+	var pressed: Dictionary = model.clinch_submit("play", false, 0)
+	var still_active_after_press: bool = model.clinch_active()
+	var resolved: Dictionary = model.clinch_submit("play", false, 0)
+	var info: Dictionary = resolved.get("info", {})
+	var ev := _event_of(info, "case_on_record_guard")
+	_check(gen1_none and gen1_no_confirm and still_active_after_press and
+		String(pressed.get("event", "")) == "press" and
+		String(resolved.get("event", "")) == "resolved" and
+		not model.clinch_active() and
+		String(info.get("stop_reason", "")) == "combo_verdict" and
+		String(ev.get("terminal", "")) == "confirmed" and
+		String(ev.get("owner", "")) == RulesCore.SIDE_OPP,
+		"аддендум-сброс: мимо в первом окне не убивает клинч, боевой паттерн confirm'ится во втором")
 
 
 ## Каталог расширен (2026-07-22, сессия продолжения) до 35 recipe по 18 из 20 setup+hook
@@ -1062,10 +1110,14 @@ func _a3_technical_setup() -> Dictionary:
 
 ## Весь A3-топологический пробник (§9 ниже) тестирует reserved contested-by-survival
 ## механику (combo_a3_topologies_v0.1) — RESERVED_A3_CATALOG подсажен безусловно, не
-## параметром: здесь нет ни одного сценария, которому резерв был бы не нужен.
+## параметром: здесь нет ни одного сценария, которому резерв был бы не нужен, и ни
+## одного, которому был бы нужен боевой A3_CATALOG (use_active_catalog=false — иначе
+## аддендум «относительный сброс окна», 2026-07-23, подсаживал бы боевые паттерны на
+## вторую и дальнейшие позиции этих фикстур).
 func _a3_scenario(top: Dictionary, you_hand: Array, opp_hand: Array) -> RefCounted:
 	var model := _combo_model()
 	model.combo_register.extra_a3_catalog = ComboRegister.RESERVED_A3_CATALOG
+	model.combo_register.use_active_catalog = false
 	model.sides[RulesCore.SIDE_YOU].lines = [_plain_line("Атакующий")]
 	model.sides[RulesCore.SIDE_OPP].lines = [{
 		"theses": 1,
@@ -1383,7 +1435,14 @@ func _check_a3_no_sliding_window() -> void:
 	var live_claims: Array = probe.get("claims", [])
 
 	# Отдельный прогон: первое окно MISS, зато поздние R₂–T₃–R₄ сами выглядят как P-01.
-	# First-window policy обязана проигнорировать их полностью, а не просто не удвоить proc.
+	# A3Probe — независимый эталон исходной бумаги (combo_a3_topologies_v0.1 §2) и всегда
+	# смотрит только на классическое R₀–T₁–R₂; он обязан продолжать говорить «miss» здесь,
+	# потому что exact R₀ этого прогона (Контрпример) не hook="источник", и это не
+	# меняется аддендумом. Начиная с 2026-07-23 (см. combo_a3_topologies_v0.1.md §2,
+	# «Относительный сброс окна») реальный combo_register.gd отдельно от A3Probe уже
+	# ЗАВОДИТ этот поздний R₂–T₃–R₄ как легитимное второе поколение вахты (open_next_window) —
+	# этот тест того не проверяет и ему не противоречит, он проверяет только A3Probe и сырой
+	# sequence.
 	var late_t3 := _p01_t1()
 	late_t3["answers_step"] = 2
 	var late_r4 := _p01_r2()
@@ -1414,4 +1473,5 @@ func _check_a3_no_sliding_window() -> void:
 		late_pattern_visible and String(late_locked.get("rtr_state", "")) == "miss" and
 		String(late_probe.get("result", "")) == A3Probe.RESULT_NO_CLAIM and
 		int(late_probe.get("payoff_count", 0)) == 0,
-		"A3 E11 first-window only: R₄ не удваивает proc, поздний валидный RTR не открывается")
+		"A3 E11 A3Probe-эталон: classic R₀-T₁-R₂ не удваивает proc и остаётся miss на чужом R₀ " +
+		"(реальное открытие второго окна в combo_register теперь отдельно проверяется R0-адденд-тестами)")

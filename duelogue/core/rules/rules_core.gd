@@ -66,6 +66,11 @@ var second_wind := 0
 ## 1 — «переманил вместе с аргументами»: рамка переходит СО ВСЕМИ стоящими тезисами
 ## (забрал действующую рамку — забрал её силу в глазах зала).
 var capture_loot := 0
+## Пейофф боевого комбо-каталога (2026-07-23): confirmed GUARD временно делает рамку
+## braced (неуязвима к захвату до begin_turn владельца); confirmed TRAP считает свой
+## opener захватывающим ударом даже не будучи Кражей (clinch_finalize.force_capture_eligible).
+## true — реальная игра; false — тестовый seam для чистого A/B (sim_combo_payoff.gd).
+var combo_payoff_enabled := true
 ## Счётчики захватов за партию (диагностика сима/плейтеста).
 var captures := 0
 var capture_theses := 0
@@ -924,8 +929,14 @@ func _named_chip(owner: String, idx: int, info: Dictionary) -> void:
 ## примитив сверху вниз: press снимает адресный защитный T, после чего освобождённая
 ## атака под ним тоже может разрешиться. Так K→T→R сначала снимает T объектом R,
 ## затем исходный объект K снова получает доступ к рамке.
+## force_capture_eligible (2026-07-23, боевой TRAP-пейофф): опенер клинча, закончившегося
+## подтверждённой ловушкой, считается захватывающим ударом даже если физически это не Кража —
+## «поймали достаточно жёстко, чтобы забрать рамку». Не отменяет reach/braced/fortified: если
+## рамка укреплена или толще досягаемости, пейофф честно откатывается к обычному снятию
+## тезиса (см. _finish_clinch) — существующие защиты остаются защитами, а не дырой в правиле.
 func clinch_finalize(attacker: String, defender: String, line_index: int, t_added: int,
-		r_count: int, info: Dictionary, landing_attack: Dictionary = {}) -> void:
+		r_count: int, info: Dictionary, landing_attack: Dictionary = {},
+		force_capture_eligible: bool = false) -> void:
 	if line_index < 0 or line_index >= sides[defender].lines.size():
 		return
 	var line: Dictionary = sides[defender].lines[line_index]
@@ -946,8 +957,8 @@ func clinch_finalize(attacker: String, defender: String, line_index: int, t_adde
 	var landing_target_kind := String(info.get("landing_target_kind",
 		"frame" if t_added == 0 else "thesis"))
 	var landing_target_card: Dictionary = info.get("landing_target_card", {})
-	var capture_attempted := landing_steals and landing_target_kind == "frame" \
-		and capture_reach > 0
+	var capture_attempted := (landing_steals or force_capture_eligible) and \
+		landing_target_kind == "frame" and capture_reach > 0
 	info["opening_thickness"] = opening_thickness
 	info["protected_thickness"] = protected_thickness
 	info["pre_effect_thickness"] = protected_thickness
@@ -1297,6 +1308,16 @@ func clinch_submit(decision: String, prefer_steal: bool = true, hand_index: int 
 		clinch["relations"] = relations
 		# R3: RTR-вахты регистра видят press как milestone (закрытие трёхзвенного path).
 		combo_register.on_press(String(clinch.get("action_id", "")), press_play, [press_rel])
+		# Аддендум «относительный сброс окна» (2026-07-23, combo_a3_topologies_v0.1.md §2):
+		# предыдущее TRT-окно точно не подтвердилось, иначе клинч уже кончился бы
+		# instant_verdict'ом в defend-ветке выше — так что этот press честно пробует
+		# стать $ask следующего поколения A3-вахт, с прошлым ответом защитника как
+		# $setup-кандидатом.
+		var next_anchor_card := {}
+		if Grammar.eligible(prev_defense):
+			next_anchor_card = prev_defense.duplicate(true)
+		combo_register.open_next_window(String(clinch.get("action_id", "")),
+			next_anchor_card, press_play)
 		if not clinch_freeze:
 			_refill(sides[clinch.attacker])
 		clinch.phase = "await_defend"
@@ -1404,8 +1425,11 @@ func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = ""
 				"landing_step": i, "landing_target_kind": target_kind,
 				"landing_target_step": target_step, "landing_target_card": target_card,
 				"removed_thesis_ids": [], "removed_thesis_steps": []}
+			# TRAP-пейофф (2026-07-23): опенер клинча (i==0, target_kind=="frame") при
+			# подтверждённой ловушке считается захватывающим ударом — см. clinch_finalize.
 			clinch_finalize(attacker, defender, idx, 0, 1, step_info,
-				attack_card.duplicate(true))
+				attack_card.duplicate(true),
+				combo_payoff_enabled and stop_reason == "combo_verdict" and i == 0)
 			_merge_clinch_effect(info, step_info)
 			(info["resolved_attack_steps"] as Array).append(i)
 			attack_card["result"] = "captured" if bool(step_info.get("captured", false)) \
@@ -1430,6 +1454,18 @@ func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = ""
 					String(step_info.get("landing_effect", "")) == "steal_thesis" else "removed"
 	else:
 		clinch_finalize(attacker, defender, idx, t_added, r_count, info, {})
+		# GUARD-пейофф (2026-07-23): удержавшая рамка получает временную неуязвимость к
+		# захвату — тот же braced, что именной «Перенос бремени» (снимается в begin_turn
+		# владельца). «Ответ был настолько точным, что позицию сейчас не сдвинуть».
+		if combo_payoff_enabled and stop_reason == "combo_verdict" and idx >= 0 and \
+				idx < sides[defender].lines.size():
+			sides[defender].lines[idx].braced = true
+			info["combo_payoff"] = "guard_braced"
+	# TRAP-пейофф телеметрия: отмечаем, только если force_capture_eligible реально
+	# состоялся в захват (могло откатиться к обычному снятию — рамка была braced/fortified
+	# или толще reach, существующие защиты не отменяются пейоффом).
+	if stop_reason == "combo_verdict" and attacker_won and bool(info.get("full_capture", false)):
+		info["combo_payoff"] = "trap_capture"
 	info["clinch_t"] = t_added
 	info["clinch_r"] = r_count
 	# Именной «Сократический вопрос»: защитник отвечал тезисами → первый защитный тезис
@@ -1474,10 +1510,14 @@ func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = ""
 	info["combo_name"] = String((combo_view.combo_route as Dictionary).get("combo_name", ""))
 	info["combo_owner"] = String(combo_view.combo_owner)
 	info["combo_result"] = String(combo_view.combo_result)
-	info["combo_payoff"] = ""
+	# combo_payoff (2026-07-23): guard_braced/trap_capture, если боевой вердикт этого клинча
+	# реально применил асимметричный пейофф выше (else-ветка / TRAP-телеметрия); иначе "" —
+	# не переопределяем здесь, чтобы не затирать то, что уже посчитано.
+	info["combo_payoff"] = String(info.get("combo_payoff", ""))
 	info["combo_run"] = combo_register.run_view(combo_run_id)
 	# R4: после action-settlement тот же boundary проверяет stable board; наружу одним
-	# массивом выходят action- и frame-scoped runs, payoff пока всегда пуст.
+	# массивом выходят action- и frame-scoped runs (per-run payoff остаётся пустым — это
+	# клинч-уровневый combo_payoff, а не per-run).
 	_settle_frame_combo_events(info)
 	info["resolved_sequence"] = sequence.duplicate(true)
 	# Снимок KO/резерва уже сделан внутри резолва; только теперь разрешён добор.
