@@ -17,6 +17,8 @@ const TYPE_RAZBOR := C.TYPE_RAZBOR
 const TYPE_USTANOVKA := C.TYPE_USTANOVKA
 
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
+const ShotDirector := preload("res://duelogue/core/director/shot_director.gd")
+const CameraCassettes := preload("res://duelogue/core/director/camera_cassettes.gd")
 
 ## Тестовая пачка эмоций (assets/states_test, генерация 2026-07-05) — примапплена на стейты
 ## ниже. При финализации скина переехать в assets/characters/<skin>/ с именами стейтов.
@@ -81,6 +83,9 @@ var _reaction
 ## тоже нетипизирован по той же причине: кастомный show_combo).
 var _combo_banner
 var _sprites := {}      ## side → Sprite2D (актёр на общем плане)
+## Режиссёр камера-кассет (context/director_core_v0.1.md) — пересеивается на match_started.
+var _director := ShotDirector.new()
+var _dolly_tween: Tween  ## долли-наезд на общем плане (см. _dolly_to_speaker/_reset_dolly)
 
 
 ## Привязать к ядру сцены, мини-сцене реакции и баннеру комбо ДО входа в дерево.
@@ -94,10 +99,23 @@ func _ready() -> void:
 	if _stage != null:
 		_sprites["you"] = _stage.actor_sprite("you")
 		_sprites["opp"] = _stage.actor_sprite("opp")
+	EventBus.match_started.connect(_on_match_started)
 	EventBus.utterance.connect(_on_utterance)
 	EventBus.impact.connect(_on_impact)
 	EventBus.combo_verdict.connect(_on_combo_verdict)
 	EventBus.turn_changed.connect(_on_turn_changed)
+	# Возврат камеры теперь ВИДИМЫЙ (по запросу игрока) — играет уже ПОСЛЕ того, как крупный
+	# план полностью отыграл и погас, а не молча под фейд-ином, как раньше (см. _reset_dolly).
+	if _reaction != null:
+		_reaction.connect("scene_finished", _reset_dolly)
+
+
+## Кассетный режиссёр пересеивается на каждую партию — тот же приём, что emotion.start в
+## battle_controller (match_id ^ отдельная константа, чтобы потоки RNG не совпадали друг с
+## другом). Чисто косметический слой — не участвует в баланс-симах, детерминизм здесь ради
+## воспроизводимости конкретной партии на глаз, не ради sim-регрессии.
+func _on_match_started(info: Dictionary) -> void:
+	_director.start(CameraCassettes.data(), int(info.get("match_id", 0)) ^ 0xCA55E77E)
 
 
 ## Точка загрузки общего плана: будущие скины назначают свою текстуру нужной стороне,
@@ -140,16 +158,151 @@ func _portrait_flip_h_for(side: String) -> bool:
 	return bool(PORTRAIT_FLIP_H.get(side, false))
 
 
+## Стейт для режиссёра — тот же fallback, что уже ведёт текстуру (§16): текстуру и кассету
+## должен вести ОДИН эффективный стейт, не два независимых расчёта, которые могут разойтись.
+func _effective_state_for(side: String, mood: String, card_type: String, steals: bool) -> String:
+	var states: Dictionary = OPP_STATE_TEX if side == "opp" else YOU_STATE_TEX
+	if states.has(mood):
+		return mood
+	return _fallback_mood_for_card(card_type, steals)
+
+
+## Долли-наезд общего плана (context/director_core_v0.1.md §1, «средний план») — раньше между
+## доской и крупным планом была голая пауза (BOARD_BEAT), теперь на ней виден переезд камеры к
+## тому, кто сейчас скажет реплику. Настоящей Camera2D в проекте нет: имитируем через масштаб
+## ВСЕГО _stage (Bg+Actors+PropsFront, см. stage_core.gd) вокруг пивота на спикере — растущий
+## масштаб от пивота сам по себе толкает всё остальное «прочь от камеры», отдельный сдвиг
+## позиции не нужен. Живёт СТРОГО внутри уже существующего BOARD_BEAT — не заводим новую фазу
+## времени (тот же принцип, что у кассетного входа портрета в reaction_scene.gd).
+## var, не const — как ReadingPace.CHARS_PER_SEC/CUTSCENES (тот же приём: калибруется вживую,
+## сейчас из duelogue/tools/dolly_lab.gd, не гейткипер, поэтому крутится без пересборки).
+static var DOLLY_SCALE := 2.5
+## Пивот — не центр спрайта, а точка на высоте актёра, считая от макушки (0.0 = сама макушка,
+## текущая калибровка; 1/3 = «верхняя треть», исходное предположение). Формула симметрична для
+## обеих сторон — геометрия ActorYou/ActorOpp одинакова в stage.tscn (тот же scale/Y, только
+## зеркальный X), отдельного случая для «оппонента» не нужно.
+static var DOLLY_FACE_HEIGHT_FRAC := 0.0
+## Тип int, не Tween.TransitionType/EaseType — set_trans/set_ease их и так молча принимают
+## (enum = обёрнутый int в Godot), а как ТИП ПЕРЕМЕННОЙ формально Tween.TransitionType нигде в
+## проекте ещё не использовался — не рискуем словить ошибку компиляции там, где раньше не
+## проверяли. Тот же приём у DOLLY_RETURN_TRANS/EASE ниже (возврат камеры, теперь тоже тюнится —
+## он больше не спрятан за фейд-ином, см. _reset_dolly).
+static var DOLLY_TRANS_IN: int = Tween.TRANS_SINE
+static var DOLLY_EASE_IN: int = Tween.EASE_IN
+## Ручная поправка цели по X поверх portrait_frame_center_x, px. Знак — «наружу от центра
+## экрана» (+ = дальше в сторону своего края); мирроригуется по стороне ниже, а не хранится
+## отдельно на каждую — геометрия симметрична, второй ручки не нужно.
+static var DOLLY_TARGET_X_BIAS := 195.0
+
+## Выезд общего плана вбок — раньше отдельная фаза 2 после наезда, теперь слит с ним: едет
+## ОДНОВРЕМЕННО со скейлом наезда, той же BOARD_BEAT-длительностью, свой trans/ease (Tween
+## поддерживает разные кривые на разных tween_property внутри одного parallel-блока). Опять
+## НЕ заводим новую фазу времени — вернулись к тому же принципу, что у наезда/кассетного входа
+## портрета. reaction_scene._slide_in_bg по-прежнему подхватывает эстафету той же стороной
+## следом, уже внутри FADE_IN.
+static var DOLLY_SLIDE_DISTANCE := 0.0
+static var DOLLY_SLIDE_TRANS: int = Tween.TRANS_QUAD
+static var DOLLY_SLIDE_EASE: int = Tween.EASE_IN
+
+## Насколько раньше стартует крупный план (портрет+бабл+фон) относительно конца BOARD_BEAT —
+## по запросу игрока (фон крупного плана должен начинать въезжать раньше, внахлёст с хвостом
+## долли, а не строго после него). Секунды, не доля: 0 = как было, ждём BOARD_BEAT целиком.
+## Не новая фаза времени — просто СОКРАЩАЕТ уже существующее ожидание в _on_utterance, общий
+## бюджет scene_time() не трогаем (реальная суммарная пауза становится чуть короче факта; это
+## безопасная сторона ошибки — контроллер ждёт не меньше, чем нужно, самое большее чуть дольше).
+static var DOLLY_REVEAL_LEAD := 0.15
+
+## Возврат камеры из наезда в общий план (_reset_dolly) — по запросу игрока ТЕПЕРЬ ВИДИМАЯ фаза
+## ПОСЛЕ конца реплики (раньше был молчаливый сброс за фейд-ином крупного плана). Своя кривая,
+## отдельная от DOLLY_TRANS_IN/EASE_IN наезда — обратное движение не обязано быть зеркалом
+## прямого. Длительность — ReadingPace.DOLLY_RETURN_TIME (там же и почему это честная фаза
+## scene_time(), а не сжатие существующей).
+static var DOLLY_RETURN_TRANS: int = Tween.TRANS_SINE
+static var DOLLY_RETURN_EASE: int = Tween.EASE_IN_OUT
+
+
+## Точка «где лицо» в глобальных координатах — оси считаются РАЗНЫМИ источниками, не одним:
+## - Y — DOLLY_FACE_HEIGHT_FRAC высоты текстуры спрайта на общем плане, считая от макушки
+##   (там лицо КОНКРЕТНОГО актёра; Sprite2D.to_global уже учитывает position/scale/rotation
+##   ноды сам). Sprite2D.centered — дефолт true (так и в stage.tscn, оба актёра без override) —
+##   учитываем оба случая, раз это обычный экспортируемый флаг, который легко переключить в
+##   редакторе.
+## - X — НЕ центр спрайта, а горизонтальный центр рамки-якоря портрета в reaction_scene.gd
+##   (portrait_frame_center_x): камера должна утыкаться туда же по горизонтали, где секунду
+##   спустя проявится портрет крупного плана — иначе переход скачет по X при смене плана.
+##   У рамки-якоря нет понятия «верхняя треть», поэтому вертикаль по-прежнему от спрайта.
+func _face_zone_global(side: String, sprite: Sprite2D) -> Vector2:
+	var y := sprite.global_position.y
+	if sprite.texture != null:
+		var h := float(sprite.texture.get_height())
+		var top_local_y := -h * 0.5 if sprite.centered else 0.0
+		y = sprite.to_global(Vector2(0.0, top_local_y + h * DOLLY_FACE_HEIGHT_FRAC)).y
+	var x := sprite.global_position.x
+	if _reaction != null:
+		x = _reaction.portrait_frame_center_x(side)
+	x += DOLLY_TARGET_X_BIAS if side == "opp" else -DOLLY_TARGET_X_BIAS
+	return Vector2(x, y)
+
+
+## Наезд (scale вокруг пивота-лица) и выезд вбок (position:x) идут ОДНОВРЕМЕННО, одной
+## BOARD_BEAT-длительностью, каждый своей кривой — по запросу игрока (были отдельными
+## последовательными фазами, слиты в одну). "you" тянет влево, "opp" вправо — тот же принцип
+## направления, что везде в проекте.
+func _dolly_to_speaker(side: String) -> void:
+	if _stage == null or not _sprites.has(side):
+		return
+	var sprite: Sprite2D = _sprites[side]
+	var global_target := _face_zone_global(side, sprite)
+	# Control не даёт to_local() (это метод Node2D, не CanvasItem) — тот же результат через
+	# инверсию глобальной трансформации.
+	_stage.pivot_offset = _stage.get_global_transform().affine_inverse() * global_target
+	if _dolly_tween:
+		_dolly_tween.kill()
+	var dir := 1.0 if side == "opp" else -1.0
+	_dolly_tween = _stage.create_tween()
+	_dolly_tween.set_parallel(true)
+	_dolly_tween.tween_property(_stage, "scale", Vector2.ONE * DOLLY_SCALE, ReadingPace.BOARD_BEAT) \
+		.set_trans(DOLLY_TRANS_IN).set_ease(DOLLY_EASE_IN)
+	_dolly_tween.tween_property(_stage, "position:x", dir * DOLLY_SLIDE_DISTANCE, ReadingPace.BOARD_BEAT) \
+		.set_trans(DOLLY_SLIDE_TRANS).set_ease(DOLLY_SLIDE_EASE)
+
+
+## ВИДИМО возвращает общий план к покою (масштаб И позицию — слайд тоже надо откатить) — по
+## запросу игрока (раньше сбрасывалось молча, за фейд-ином крупного плана). Привязан к
+## scene_finished (_ready), то есть стартует только когда крупный план ПОЛНОСТЬЮ отыграл и погас:
+## игрок видит саму камеру, едущую обратно в общий план. _reset_dolly вызывается по сигналу
+## (fire-and-forget, никто его не await-ит), но ReadingPace.DOLLY_RETURN_TIME всё равно честно
+## сидит в scene_time() — иначе следующий ход оборвал бы возврат камеры на полпути.
+func _reset_dolly() -> void:
+	if _stage == null:
+		return
+	if _dolly_tween:
+		_dolly_tween.kill()
+	_dolly_tween = _stage.create_tween()
+	_dolly_tween.set_parallel(true)
+	_dolly_tween.set_trans(DOLLY_RETURN_TRANS).set_ease(DOLLY_RETURN_EASE)
+	_dolly_tween.tween_property(_stage, "scale", Vector2.ONE, ReadingPace.DOLLY_RETURN_TIME)
+	_dolly_tween.tween_property(_stage, "position", Vector2.ZERO, ReadingPace.DOLLY_RETURN_TIME)
+
+
 ## Катсцена реплики. Тумблер ReadingPace.CUTSCENES: выключен — крупный план не играется,
 ## реплика остаётся в логе/стенограмме (их пишет debate_screen/контроллер).
 ## BOARD_BEAT: пауза перед крупным планом — ход, уже отрисованный на доске (контроллер
 ## эмитит board_changed ДО utterance), успевает считаться игроком. Контроллер держит ровно
 ## scene_time (BOARD_BEAT входит) — сцены идут строго по очереди и не убивают друг друга.
+## Теперь BOARD_BEAT — не голая пауза, а долли к спикеру: наезд и выезд вбок одновременно
+## (_dolly_to_speaker). Дальше reaction_scene въезжает фоном с той же стороны следом
+## (_slide_in_bg, внутри уже существующего FADE_IN — там новую фазу не заводили).
+## DOLLY_REVEAL_LEAD укорачивает это ожидание — крупный план (и его фон) стартует чуть раньше
+## конца долли, внахлёст с её хвостом, а не строго после.
 func _on_utterance(side: String, text: String, meta: Dictionary) -> void:
 	if _reaction == null or not ReadingPace.CUTSCENES:
 		return
 	var mood := String(meta.get("mood", ""))
-	var tex := _state_tex_for(side, mood, String(meta.get("card_type", "")), bool(meta.get("steals", false)))
+	var card_type := String(meta.get("card_type", ""))
+	var steals := bool(meta.get("steals", false))
+	var tex := _state_tex_for(side, mood, card_type, steals)
+	var cassette := _director.draw(side, _effective_state_for(side, mood, card_type, steals))
 	var eyebrow := ""
 	match String(meta.get("reaction_kind", "")):
 		"parry":
@@ -158,9 +311,11 @@ func _on_utterance(side: String, text: String, meta: Dictionary) -> void:
 			eyebrow = "ЦЕПНАЯ РЕАКЦИЯ · %s" % String(meta.get("reaction_title", "Срыв"))
 		"burst":
 			eyebrow = "ЭМОЦИОНАЛЬНЫЙ СРЫВ · %s" % String(meta.get("reaction_title", "Реакция"))
-	await get_tree().create_timer(ReadingPace.BOARD_BEAT).timeout
-	# Муд едет и в сцену: тот же стейт ведёт портрет И профиль живого фона (MOOD_FX).
-	_reaction.show_utterance(side, text, tex, mood, _portrait_flip_h_for(side), eyebrow)
+	_dolly_to_speaker(side)
+	await get_tree().create_timer(maxf(0.0, ReadingPace.BOARD_BEAT - DOLLY_REVEAL_LEAD)).timeout
+	# Муд едет и в сцену: тот же стейт ведёт портрет И профиль живого фона (MOOD_FX). Кассета —
+	# отдельно, только вход/ракурс камеры (director_core_v0.1.md); {} = дефолтный вход.
+	_reaction.show_utterance(side, text, tex, mood, _portrait_flip_h_for(side), eyebrow, cassette)
 
 
 ## Яркий исход по стороне side — стейт «пошатнулся» (событийный, ставит контроллер).
@@ -169,7 +324,8 @@ func _on_impact(side: String, kind: String) -> void:
 	if _reaction == null or not ReadingPace.CUTSCENES:
 		return
 	var tex := _state_tex_for(side, "stagger", "", false)
-	_reaction.show_impact(side, tex, 1.0 if kind == "removed" else 0.65, _portrait_flip_h_for(side))
+	var cassette := _director.draw(side, "stagger")
+	_reaction.show_impact(side, tex, 1.0 if kind == "removed" else 0.65, _portrait_flip_h_for(side), cassette)
 
 
 ## Боевой каталог (2026-07-22, resolved-by-construction): вердикт клинча решён конструкцией
@@ -188,10 +344,11 @@ func _on_combo_verdict(side: String, combo_name: String, topology: String) -> vo
 	var is_trap := topology.ends_with("trap")
 	var mood := "gotcha" if is_trap else "burst"
 	var tex := _state_tex_for(side, mood, "", false)
+	var cassette := _director.draw(side, mood)
 	var eyebrow := "🪤 ЛОВУШКА СРАБОТАЛА" if is_trap else "⚡ ЗАЩИТА ДЕРЖИТ"
 	_reaction.show_utterance(side,
 		("Попался! «%s»." % combo_name) if is_trap else ("Не сдвинулось! «%s»." % combo_name),
-		tex, mood, _portrait_flip_h_for(side), eyebrow)
+		tex, mood, _portrait_flip_h_for(side), eyebrow, cassette)
 
 
 func _on_turn_changed(_side: String) -> void:

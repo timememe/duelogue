@@ -50,6 +50,16 @@ const CLINCH_STACK_PITCH := 18.0
 ## защитной зоне. Row уже имеет 8 px отступа от видимого контура Board.
 const BOARD_EDGE_APPROACH := 12.0
 
+## Второй способ разыгрывать карту руки — драг-дроп (первый — клик-клик, _on_hand_pressed/
+## _on_target_pressed, НЕ трогаем). Порог в пикселях отличает клик от начала протяжки.
+const DRAG_THRESHOLD := 6.0
+const DRAG_GHOST_LAND_TIME := 0.28
+const DRAG_GHOST_CANCEL_TIME := 0.2
+## Автонаведение: рамка-цель во время targeted-драга маркируется по БЛИЖАЙШЕЙ (не по точному
+## наведению) — форгивинг-подбор на маленькой (42×56) кнопке.
+const DRAG_TARGET_MARK_SCALE := 1.18
+const DRAG_TARGET_MARK_COLOR := Color(1.45, 1.3, 0.85)
+
 @export var playtest_logging_enabled := true
 ## Драйв-полигон комбо (цифровая «бумага A0», §9): обе обоймы заряжаются маршрутом №1.
 ## Включается сценой tools/combo_drill.tscn, обычная катка не трогается.
@@ -57,7 +67,7 @@ const BOARD_EDGE_APPROACH := 12.0
 
 var _drawer_closed_x := 0.0  ## закрытое (за правым краем) положение ящика — из ширины экрана
 var _drawer_open_x := 0.0    ## открытое положение — из ширины экрана И ширины самого ящика
-                              ## (считаются в _ready из реальных нод, не задублированы числом)
+							  ## (считаются в _ready из реальных нод, не задублированы числом)
 
 var controller: Node
 var model: RefCounted   ## ссылка на ядро правил контроллера (только чтение для рендера)
@@ -73,6 +83,16 @@ var _you_sep0 := 0.0
 var _gate_ticks: Array = []  ## риски порогов зал-гейта на баре ({node, level}), создаются лениво
 var _bubble_owner: Control
 var _cutscene_active := false
+
+## Драг-дроп руки (второй способ разыгрывать карту, поверх клик-клика — см. константы выше).
+var _drag_pending := {}   ## {"card": Control, "index": int} — мышь зажата, порог ещё не пройден
+var _drag_active := false
+var _drag_kind := ""      ## "targeted" (Разбор/именная с целью — рамка оппонента) | "immediate"
+var _drag_index := -1
+var _drag_start_global := Vector2.ZERO
+var _drag_hand_size := Vector2.ZERO
+var _drag_ghost: Control
+var _drag_marked_frame: Button   ## текущая рамка-цель под автонаведением (targeted-драг)
 
 @onready var _stage: Control = $Stage
 @onready var _score_label: Label = %ScoreLabel
@@ -787,6 +807,7 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 		COL_USTAN, closed, contested)
 	uc.set_meta("board_card", true)
 	uc.set_meta("board_role", "frame")
+	uc.set_meta("frame_idx", idx)  ## драг-дроп руки (§ниже) хит-тестит рамки без завязки на pressed
 	uc.position = Vector2(board_card_position_x(0.0, width, trailing_pad, reverse), y0)
 	var frame_info := claim_txt
 	var top_scheme := String(threat.get("top_scheme", ""))
@@ -1001,6 +1022,7 @@ func _rebuild_hand() -> void:
 		_attach_card_bubble(btn, bubble_title, bubble_body, card)
 		_attach_hand_motion(btn)
 		btn.pressed.connect(_on_hand_pressed.bind(i))
+		btn.gui_input.connect(_on_hand_card_gui_input.bind(btn, i))
 	_layout_hand()
 
 
@@ -1071,7 +1093,9 @@ func _set_hand_hover(card: Control, hovered: bool) -> void:
 	if not is_instance_valid(card) or not card.has_meta("hand_base_position"):
 		return
 	card.set_meta("hand_hovered", hovered)
-	var previous: Variant = card.get_meta("hand_tween", null)
+	# get_meta(key, null) не глушит предупреждение "no meta with key" при первом наведении —
+	# null неотличим от отсутствующего дефолта на уровне движка. has_meta() — без варнинга.
+	var previous: Variant = card.get_meta("hand_tween") if card.has_meta("hand_tween") else null
 	if previous is Tween and (previous as Tween).is_valid():
 		(previous as Tween).kill()
 	var base_position: Vector2 = card.get_meta("hand_base_position")
@@ -1089,6 +1113,283 @@ func _set_hand_hover(card: Control, hovered: bool) -> void:
 	tween.tween_property(card, "rotation_degrees", target_rotation, 0.15)
 	tween.tween_property(card, "scale", target_scale, 0.15)
 	card.set_meta("hand_tween", tween)
+
+
+## --- драг-дроп руки (второй способ; первый — клик-клик выше, не тронут) -------------------
+##
+## Порог движения отличает драг от клика: gui_input карты ловит только НАЖАТИЕ, дальнейшее
+## движение мыши ловится в _input() всего экрана — иначе как только курсор уходит с исходной
+## карты, её gui_input больше ничего не получает (сигнал живёт, пока курсор физически над
+## узлом). Призрак — дубликат карты руки (card.duplicate(), без сигналов по умолчанию), летит
+## поверх экрана; оригинал скрывается на время драга.
+##
+## play_hand() зовётся уже на СТАРТЕ драга — ровно то же самое, что делает клик по карте, для
+## ЛЮБОГО режима (move/clinch_defend/clinch_attack/reframe). Дальше проверяем РЕЗУЛЬТАТ, а не
+## гадаем по типу карты заранее: если контроллер ушёл в "target" — есть что отменить
+## (cancel_targeting не трогает ни руку, ни доску) и куда донести дропом; если нет — ход уже
+## отыгран (клинч/редеплой/тезис резолвятся немедленно, без отдельного таргетинга), и остаток
+## драга — чисто косметическое долётывание призрака до точки отпускания.
+
+func _on_hand_card_gui_input(event: InputEvent, card: Button, index: int) -> void:
+	if _drag_active or not (event is InputEventMouseButton):
+		return
+	var mb := event as InputEventMouseButton
+	if mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if mb.pressed:
+		if card.disabled:
+			return
+		_drag_pending = {"card": card, "index": index}
+		_drag_start_global = get_global_mouse_position()
+	else:
+		_drag_pending = {}
+
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		if _drag_active:
+			_update_drag_ghost(get_global_mouse_position())
+			get_viewport().set_input_as_handled()
+		elif not _drag_pending.is_empty() and \
+			(get_global_mouse_position() - _drag_start_global).length() > DRAG_THRESHOLD:
+			_begin_drag()
+			if _drag_active:
+				_update_drag_ghost(get_global_mouse_position())  # не ждать следующего motion
+			get_viewport().set_input_as_handled()
+	elif _drag_active and event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
+			_end_drag(get_global_mouse_position())
+			get_viewport().set_input_as_handled()
+
+
+func _begin_drag() -> void:
+	var card: Control = _drag_pending.card
+	var index: int = _drag_pending.index
+	_drag_pending = {}
+	if not is_instance_valid(card):
+		return
+	_drag_active = true
+	_drag_index = index
+	_drag_hand_size = card.custom_minimum_size
+	_drag_ghost = card.duplicate() as Control
+	add_child(_drag_ghost)
+	_drag_ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_drag_ghost.z_index = 2000
+	_drag_ghost.global_position = card.global_position
+	card.visible = false
+	controller.play_hand(index)
+	_drag_kind = "targeted" if String(controller.input_mode()) == "target" else "committed"
+
+
+func _update_drag_ghost(global_point: Vector2) -> void:
+	if not is_instance_valid(_drag_ghost):
+		return
+	_drag_ghost.global_position = global_point - _drag_hand_size * 0.5
+	if _drag_kind == "targeted":
+		_update_drag_target_marker(global_point)
+
+
+## Автонаведение: над своей рукой ничего не маркируем (сигнал «отпустишь тут — отмена»),
+## иначе — ближайшая рамка оппонента, не точное попадание в её маленький хитбокс.
+func _update_drag_target_marker(global_point: Vector2) -> void:
+	var node: Button = null
+	if not _is_drop_over_hand(global_point):
+		node = _nearest_targetable_frame(global_point).get("node")
+	if node == _drag_marked_frame:
+		return
+	_unmark_drag_target()
+	if is_instance_valid(node):
+		_mark_drag_target(node)
+
+
+func _mark_drag_target(frame: Button) -> void:
+	_drag_marked_frame = frame
+	frame.pivot_offset = frame.size * 0.5
+	var tw := frame.create_tween()
+	tw.set_parallel(true)
+	tw.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(frame, "scale", Vector2.ONE * DRAG_TARGET_MARK_SCALE, 0.12)
+	tw.tween_property(frame, "self_modulate", DRAG_TARGET_MARK_COLOR, 0.12)
+
+
+func _unmark_drag_target() -> void:
+	var frame := _drag_marked_frame
+	_drag_marked_frame = null
+	_unmark_drag_target_node(frame)
+
+
+func _unmark_drag_target_node(frame: Button) -> void:
+	if not is_instance_valid(frame):
+		return
+	var tw := frame.create_tween()
+	tw.set_parallel(true)
+	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(frame, "scale", Vector2.ONE, 0.1)
+	tw.tween_property(frame, "self_modulate", Color.WHITE, 0.1)
+
+
+func _end_drag(release_global: Vector2) -> void:
+	var ghost := _drag_ghost
+	var kind := _drag_kind
+	var index := _drag_index
+	_unmark_drag_target()
+	_drag_ghost = null
+	_drag_active = false
+	_drag_kind = ""
+	_drag_index = -1
+	if kind == "targeted":
+		# По запросу игрока — решение по ТОЧКЕ ОТПУСКАНИЯ, пересчитанной заново, а не по
+		# истории маркера во время драга (тот остаётся только визуальной подсказкой на лету).
+		var hit: Dictionary = {} if _is_drop_over_hand(release_global) else \
+			_nearest_targetable_frame(release_global)
+		if hit.is_empty():
+			controller.cancel_targeting()
+			_return_ghost_to_hand(ghost, index)
+		else:
+			_resolve_targeted_land(ghost, int(hit.idx))
+	else:
+		# "committed" — ход уже отыгран при старте драга; довести призрак до точки отпускания
+		# и погасить, откатывать нечего.
+		var target := Rect2(release_global - Vector2(CARD_W, CARD_H) * 0.5, Vector2(CARD_W, CARD_H))
+		_land_ghost(ghost, target)
+
+
+## choose_target тянет за собой _run_clinch — реальная развязка может занять секунды на
+## нарративную презентацию (реплики хода, катсцены реакций поверх ВСЕГО экрана, z_index выше
+## нашего призрака). Ждём её ПОЛНОСТЬЮ, только потом ищем фактическое место новой карты на уже
+## перестроенной доске — не гадаем заранее, где она окажется (клинч-стек, полный захват и т.п.
+## дают разную геометрию, известную только постфактум). Призрак на время ожидания прячем —
+## иначе он бы застыл поверх катсцены реакции и выглядел как случайно зависшая карта; новый
+## драг за это время не начать: _mode остаётся "locked" до конца резолва, руки рисуются
+## disabled (см. _rebuild_hand).
+## ВАЖНО: await choose_target() САМ ПО СЕБЕ не гарантирует «презентация полностью на экране
+## доиграла» — _run_clinch решает клинч и может вернуться, пока хвостовая катсцена (вспышка
+## исхода/баннер комбо/финальная эмоц.реакция) ещё идёт: он не обязан её флешить для каждого
+## внешнего вызова, это его собственный контракт с _say/_wait_pace. Раньше здесь этого шага не
+## было — из-за этого призрак иногда садился на доску, ещё скрытый под незавершённой катсценой,
+## и «всплывал» из-под неё недоигранным огрызком анимации. Досиживаем остаток явно.
+func _resolve_targeted_land(ghost: Control, idx: int) -> void:
+	if is_instance_valid(ghost):
+		ghost.visible = false
+	await controller.choose_target(idx)
+	if not is_instance_valid(ghost):
+		return
+	var tail: float = controller.remaining_pace()
+	if tail > 0.0:
+		await get_tree().create_timer(tail).timeout
+	if not is_instance_valid(ghost):
+		return
+	var spot := _newest_landing_rect(idx)
+	ghost.visible = true
+	if spot.is_empty():
+		_fade_ghost(ghost)
+	else:
+		_land_ghost(ghost, spot.rect)
+
+
+func _fade_ghost(ghost: Control) -> void:
+	if not is_instance_valid(ghost):
+		return
+	var tw := ghost.create_tween()
+	tw.tween_property(ghost, "modulate:a", 0.0, 0.2)
+	tw.tween_callback(ghost.queue_free)
+
+
+func _is_drop_over_hand(global_point: Vector2) -> bool:
+	return _hand_row.get_global_rect().grow(24.0).has_point(global_point)
+
+
+## Рамки оппонента — единственные кликабельные (targetable) в target-режиме; frame_idx
+## записан в _make_frame_group специально для этого хит-теста, без завязки на pressed-сигнал.
+## ВАЖНО: кнопка-рамка (uc) — не прямой ребёнок _opp_row, а внук (root-группа из
+## _make_frame_group лежит между ними) — обходим на уровень глубже, не только прямых детей.
+func _nearest_targetable_frame(global_point: Vector2) -> Dictionary:
+	var best: Dictionary = {}
+	var best_dist := INF
+	for group in _opp_row.get_children():
+		for child in (group as Node).get_children():
+			if not (child is Button) or not child.has_meta("frame_idx"):
+				continue
+			var b := child as Button
+			if b.disabled:
+				continue
+			var rect := b.get_global_rect()
+			var d := rect.get_center().distance_to(global_point)
+			if d < best_dist:
+				best_dist = d
+				best = {"idx": int(b.get_meta("frame_idx")), "rect": rect, "node": b}
+	return best
+
+
+## Группа рамки по idx могла пересобраться (choose_target = новый _refresh) — ищем заново по
+## frame_idx-мете, не по кэшированной ссылке или позиции в дереве (которая могла сдвинуться,
+## если соседняя рамка пропала).
+func _frame_group_for_idx(idx: int) -> Node:
+	for group in _opp_row.get_children():
+		for child in (group as Node).get_children():
+			if child is Button and int(child.get_meta("frame_idx", -1)) == idx:
+				return group
+	return null
+
+
+## Самая свежая карта в клинч-стеке рамки — наибольший clinch_order (см. _make_frame_group: k
+## растёт с каждой новой картой хронологически, k=0 — самая старая). Рамка вне клинча (полный
+## захват и т.п. дали другой исход, оверлеев нет вовсе) — садимся на саму рамку как фолбэк.
+func _newest_landing_rect(idx: int) -> Dictionary:
+	var group := _frame_group_for_idx(idx)
+	if group == null:
+		return {}
+	var best: Button = null
+	var best_order := -1
+	for child in group.get_children():
+		if child is Button and String(child.get_meta("board_role", "")) == "overlay":
+			var order := int(child.get_meta("clinch_order", -1))
+			if order > best_order:
+				best_order = order
+				best = child
+	if best != null:
+		return {"rect": best.get_global_rect()}
+	if group.get_child_count() > 0 and group.get_child(0) is Button:
+		return {"rect": (group.get_child(0) as Button).get_global_rect()}
+	return {}
+
+
+func _land_ghost(ghost: Control, target_rect: Rect2) -> void:
+	if not is_instance_valid(ghost):
+		return
+	var target_scale := Vector2(
+		target_rect.size.x / maxf(1.0, _drag_hand_size.x),
+		target_rect.size.y / maxf(1.0, _drag_hand_size.y))
+	var tw := ghost.create_tween()
+	tw.set_parallel(true)
+	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.tween_property(ghost, "global_position", target_rect.position, DRAG_GHOST_LAND_TIME)
+	tw.tween_property(ghost, "scale", target_scale, DRAG_GHOST_LAND_TIME)
+	tw.set_parallel(false)
+	tw.tween_property(ghost, "modulate:a", 0.0, 0.1)
+	tw.tween_callback(ghost.queue_free)
+
+
+## index может указывать на уже перестроенную руку (play_hand на старте targeted-драга уже
+## перерисовал её в disabled-виде, cancel_targeting перерисует ещё раз) — карту в руке ищем
+## заново по актуальным детям _hand_row, не по кэшированной ссылке.
+func _return_ghost_to_hand(ghost: Control, index: int) -> void:
+	if not is_instance_valid(ghost):
+		return
+	var live: Array = _hand_row.get_children().filter(func(c): return not c.is_queued_for_deletion())
+	var target_pos := ghost.global_position
+	if index >= 0 and index < live.size():
+		var card := live[index] as Control
+		card.visible = true
+		target_pos = card.global_position
+	var tw := ghost.create_tween()
+	tw.set_parallel(true)
+	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(ghost, "global_position", target_pos, DRAG_GHOST_CANCEL_TIME)
+	tw.tween_property(ghost, "scale", Vector2.ONE, DRAG_GHOST_CANCEL_TIME)
+	tw.set_parallel(false)
+	tw.tween_callback(ghost.queue_free)
 
 
 ## Нативный tooltip заменён фиксированным непрозрачным баблом: он не прыгает за мышью,

@@ -6,8 +6,10 @@ extends RefCounted
 ## оба места читают отсюда, чтобы презентация и пейсинг логики никогда не расходились.
 ##
 ## Хронология одной катсцены-реплики (scene_time):
-##   доска показывает ход (BOARD_BEAT) → фейд-ин крупного плана (FADE_IN) →
-##   печать текста (type_time) → пауза на дочитывание (HOLD_AFTER_TEXT) → фейд-аут (FADE_OUT).
+##   доска показывает ход (BOARD_BEAT, тут же долли — наезд и выезд вбок одновременно) →
+##   фейд-ин крупного плана, фон въезжает следом за уехавшим планом (FADE_IN) →
+##   печать текста (type_time) → пауза на дочитывание (HOLD_AFTER_TEXT) → фейд-аут (FADE_OUT) →
+##   камера ВИДИМО возвращается из наезда в общий план (DOLLY_RETURN_TIME).
 
 ## Настройки (крутятся в меню «Настройки») — поэтому var, не const.
 static var CHARS_PER_SEC := 30.0
@@ -21,12 +23,19 @@ const MIN_CHARS_PER_SEC := 10.0
 const MAX_CHARS_PER_SEC := 60.0
 
 ## Фазы катсцены (использует reaction_scene; контроллер учитывает их в scene_time).
-const BOARD_BEAT := 0.35   ## пауза «ход лёг на доску» ДО крупного плана
+const BOARD_BEAT := 0.35   ## пауза «ход лёг на доску» ДО крупного плана — тут же долли (наезд + выезд вбок, одновременно)
 const FADE_IN := 0.15
 const FADE_OUT := 0.2
 const IMPACT_HOLD := 0.4   ## вспышка-спидлайны яркого исхода
 ## Такт хода при выключенных катсценах: доска и лог успевают прочитаться.
 const OFF_BEAT := 0.5
+## Возврат камеры из наезда обратно в общий план (character_core._reset_dolly) — по запросу
+## игрока ТЕПЕРЬ ВИДИМАЯ фаза после конца реплики, не спрятана за фейд-ином, как раньше. Сам
+## _reset_dolly вызывается через сигнал scene_finished (fire-and-forget), не await-ится отсюда
+## напрямую — эта константа координирует ПЕЙСИНГ КОНТРОЛЛЕРА с тем, что реально играет на
+## экране, чтобы следующий ход не оборвал возврат камеры на полпути. var, не const — калибруется
+## вживую из dolly_lab.gd.
+static var DOLLY_RETURN_TIME := 0.2
 
 ## Баннер названия комбо (2026-07-23, ui/combo_name_banner.gd): панч-ин с перелётом → пауза →
 ## панч-аут, РОВНО 2 секунды суммарно (правка 2026-07-23 #3 — было 1с, мало для крупной
@@ -65,7 +74,7 @@ static func read_time(text: String) -> float:
 static func scene_time(text: String) -> float:
 	if not CUTSCENES:
 		return OFF_BEAT
-	return BOARD_BEAT + FADE_IN + read_time(text) + FADE_OUT
+	return BOARD_BEAT + FADE_IN + read_time(text) + FADE_OUT + DOLLY_RETURN_TIME
 
 
 ## Длительность сцены яркого исхода (show_impact).

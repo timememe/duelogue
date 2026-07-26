@@ -6,6 +6,8 @@ extends Node
 const ReactionScene := preload("res://duelogue/core/characters/reaction_scene.tscn")
 const ComboNameBanner := preload("res://duelogue/ui/combo_name_banner.gd")
 const DebateScreen := preload("res://duelogue/ui/debate_screen.tscn")
+const ShotDirector := preload("res://duelogue/core/director/shot_director.gd")
+const CameraCassettes := preload("res://duelogue/core/director/camera_cassettes.gd")
 
 var failures := 0
 var starts := 0
@@ -13,6 +15,8 @@ var finishes := 0
 
 
 func _ready() -> void:
+	_check_shot_director()
+
 	var reaction = ReactionScene.instantiate()
 	add_child(reaction)
 	reaction.scene_started.connect(func(): starts += 1)
@@ -114,6 +118,48 @@ func _ready() -> void:
 	screen.queue_free()
 	print("=== REACTION MODAL: %s ===" % ("OK" if failures == 0 else "FAIL (%d)" % failures))
 	get_tree().quit(0 if failures == 0 else 1)
+
+
+## Кассетный режиссёр (context/director_core_v0.1.md) — чистая логика, без сцены: детерминизм
+## по seed, отсутствие немедленного повтора в мешке, безопасный пустой результат вне каталога.
+## Плюс минимальная интеграция: show_utterance с реальной кассетой не роняет reaction_scene.
+func _check_shot_director() -> void:
+	var director_a := ShotDirector.new()
+	director_a.start(CameraCassettes.data(), 777)
+	var director_b := ShotDirector.new()
+	director_b.start(CameraCassettes.data(), 777)
+	var same_seed_matches := true
+	for i in 12:
+		var da := director_a.draw("you", "burst")
+		var db := director_b.draw("you", "burst")
+		if String(da.get("id", "")) != String(db.get("id", "")):
+			same_seed_matches = false
+	_check(same_seed_matches,
+		"ShotDirector детерминирован: одинаковый seed даёт одинаковую серию вытягиваний")
+
+	var director_c := ShotDirector.new()
+	director_c.start(CameraCassettes.data(), 42)
+	var no_immediate_repeat := true
+	var last_id := ""
+	for i in 40:
+		var cassette := director_c.draw("opp", "declare")
+		var cur_id := String(cassette.get("id", ""))
+		if cur_id == "" or (i > 0 and cur_id == last_id):
+			no_immediate_repeat = false
+		last_id = cur_id
+	_check(no_immediate_repeat,
+		"мешок кассет для declare (2+ варианта в каталоге) не повторяет одну и ту же кассету дважды подряд")
+
+	var unknown_state := director_c.draw("opp", "no_such_state")
+	_check(unknown_state.is_empty(), "стейт вне каталога кассет не роняет director — просто пустой результат")
+
+	var cassette_probe := ReactionScene.instantiate()
+	add_child(cassette_probe)
+	var burst_cassette := director_c.draw("you", "burst")
+	_check(not burst_cassette.is_empty(), "burst покрыт каталогом кассет (draw вернул непустую)")
+	cassette_probe.show_utterance("you", "Проверка кассеты", null, "burst", false, "", burst_cassette)
+	_check(cassette_probe._gen == 1, "show_utterance с непустой кассетой реально запускается")
+	cassette_probe.queue_free()
 
 
 func _check(ok: bool, label: String) -> void:
