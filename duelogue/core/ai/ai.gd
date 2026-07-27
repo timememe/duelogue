@@ -255,6 +255,10 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 	var guard := 0
 	var diffs: Array[int] = []
 	var atk_flags: Array[bool] = []  # был ли ход атакой (интерактивность по ходам)
+	# Полная траектория после каждого содержательного действия. Старые diffs/atk_flags
+	# сохранены без изменения для совместимости калибровочных симов; trajectory дополнительно
+	# видит обязательный redeploy и хранит фактический board margin нового вердикта.
+	var trajectory: Array = []
 	# Комбо-телеметрия сима: combo_events[] уже есть в info play_action/play_named/
 	# play_redeploy (наружу напрямую) и в info["info"]["combo_events"] финала клинча —
 	# просто читаем то, что ядро и так возвращает, ничего в ядре не меняя.
@@ -271,6 +275,7 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 				break
 			var redeploy_info: Dictionary = r.play_redeploy(r.current, int(recovery[0]))
 			combo_log.append_array(redeploy_info.get("combo_events", []))
+			trajectory.append(_trajectory_point(r, "reframe", false, combo_log))
 			r.advance()
 			continue
 		if st == "pass":
@@ -286,6 +291,7 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 			r.advance()
 			continue
 		var named_i := int(act.get("named_index", -1))
+		var action_kind := String(act.type)
 		if named_i >= 0 and not bool(act.get("named_clinch", false)):
 			# Именной приём без клинча — единая точка ядра play_named.
 			var inf: Dictionary = r.play_named(r.current, named_i, int(act.get("target", -1)))
@@ -294,6 +300,7 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 				combo_log.append_array(fallback_info.get("combo_events", []))
 			else:
 				combo_log.append_array(inf.get("combo_events", []))
+				action_kind = "named_%s" % String(act.type)
 		elif act.type == TYPE_RAZBOR and r.clinch_enabled:
 			# Клинч с волей обеих сторон (мехвариант play_action был только в симе).
 			# named_i >= 0 — клинч именно этой картой (Сократический вопрос).
@@ -302,11 +309,14 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 				int(act.get("target", -1)), named_i)
 			combo_log.append_array(
 				(clinch_result.get("info", {}) as Dictionary).get("combo_events", []))
+			action_kind = "clinch"
 		else:
 			var action_info: Dictionary = r.play_action(r.current, act.type, act.get("target", -1))
 			combo_log.append_array(action_info.get("combo_events", []))
 		diffs.append(r.score(SIDE_YOU) - r.score(SIDE_OPP))
 		atk_flags.append(String(act.type) == TYPE_RAZBOR)
+		trajectory.append(_trajectory_point(r, action_kind,
+			String(act.type) == TYPE_RAZBOR, combo_log))
 		r.advance()
 	if not r.game_over:
 		r._end_by_decision()
@@ -324,6 +334,7 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 		"capture_theses": int(r.capture_theses),
 		"clinches": clinches,
 		"combo_events": combo_log,
+		"trajectory": trajectory,
 	}
 
 
@@ -486,3 +497,37 @@ func _decision_frac(diffs: Array[int], win: String) -> float:
 		if diffs[i] * sign <= 0:
 			last_not_ahead = i
 	return float(last_not_ahead + 1) / float(diffs.size())
+
+
+## Снимок для late-game аналитики. board_margin читает целевую функцию конкретного
+## rules-adapter'а (FormulaRules = 3Р+1Т); у legacy-ядра сохраняем тот же явный 3Р+1Т,
+## чтобы одна шкала была сопоставима между A/B-конфигурациями.
+func _trajectory_point(r: RefCounted, kind: String, is_attack: bool,
+		combo_log: Array) -> Dictionary:
+	var frame_diff := int(r.score(SIDE_YOU)) - int(r.score(SIDE_OPP))
+	var thesis_diff := int(r.shine(SIDE_YOU)) - int(r.shine(SIDE_OPP))
+	var board_margin := 3 * frame_diff + thesis_diff
+	if r.has_method("board_weight"):
+		board_margin = int(r.board_weight(SIDE_YOU)) - int(r.board_weight(SIDE_OPP))
+	var confirmed := 0
+	var verdicts := 0
+	for raw in combo_log:
+		var event: Dictionary = raw
+		if String(event.get("terminal", "")) != "confirmed":
+			continue
+		confirmed += 1
+		if String((event.get("arbitration", {}) as Dictionary).get("channel", "")) == \
+				"combo_verdict":
+			verdicts += 1
+	return {
+		"action": int(r.turn_count),
+		"kind": kind,
+		"attack": is_attack,
+		"frame_diff": frame_diff,
+		"thesis_diff": thesis_diff,
+		"board_margin": board_margin,
+		"zal": int(r.zal()),
+		"captures": int(r.captures),
+		"combo_confirmed": confirmed,
+		"combo_verdicts": verdicts,
+	}

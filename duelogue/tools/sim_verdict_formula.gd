@@ -198,6 +198,18 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 		emotion = EmotionCore.new()
 		emotion.start(DefaultReactions.data(), seed_value, [SIDE_YOU, SIDE_OPP])
 
+	## Диагностический шов agency-actions: перед КАЖДЫМ решением обе RNG-ветки получают
+	## seed, вычисленный только из initial seed и ordinal решения. Это не меняет ruleset:
+	## обычные симы сюда не заходят. Ветвление альтернатив не сдвигает будущие броски лишь
+	## потому, что одна ветка сделала другое число rand-вызовов на прошлом решении.
+	func agency_reseed(seed_value: int) -> void:
+		seed(seed_value)
+		if emotion == null:
+			return
+		var emotion_rng: Variant = emotion.get("_rng")
+		if emotion_rng is RandomNumberGenerator:
+			(emotion_rng as RandomNumberGenerator).seed = seed_value ^ 0x45D9F3B
+
 	func configure_crowd(config: Dictionary) -> void:
 		crowd_mode = String(config.get("crowd_mode", "ledger"))
 		crowd_valence_mode = String(config.get("crowd_valence_mode", "every_scene"))
@@ -303,8 +315,10 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 
 	## Один завершённый публичный обмен = базовый голос победителю плюс видимые эффекты
 	## реакционных карт. Вся сцена коммитится в зал один раз, с публичным капом ±scene_cap.
-	func _finish_clinch(stop_reason: String = "voluntary") -> Dictionary:
-		var result: Dictionary = super._finish_clinch(stop_reason)
+	func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = "",
+			forced_winner_side: String = "") -> Dictionary:
+		var result: Dictionary = super._finish_clinch(stop_reason, stopped_side,
+			forced_winner_side)
 		if String(result.get("event", "")) != "resolved" or hall_cap <= 0:
 			return result
 		var exchange_winner := String(result.attacker) if bool(result.landed) else String(result.defender)
@@ -322,7 +336,10 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 			elif crowd_valence_mode in ["spectacle_only", "reaction_priority"] \
 					and base_spectacle < 2:
 				public_base_delta = 0
-		if emotion != null:
+		# Production controller treats a voluntary failed press as a strategic stop,
+		# not an emotional loss (battle_controller.gd::_resolve_clinch). Keep the
+		# measurement adapter on the same contract.
+		if emotion != null and (bool(result.landed) or stop_reason != "voluntary"):
 			var stimulus := "attack_stalled"
 			if bool(result.landed):
 				stimulus = "captured" if bool(info.get("captured", false)) else \
@@ -695,10 +712,12 @@ class ReserveKoRules extends FormulaRules:
 			_scene_reach = int(clinch.get("capture_reach", 1))
 		return result
 
-	func _finish_clinch(stop_reason: String = "voluntary") -> Dictionary:
+	func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = "",
+			forced_winner_side: String = "") -> Dictionary:
 		var initial := _scene_initial_thickness
 		var reach := _scene_reach
-		var result: Dictionary = super._finish_clinch(stop_reason)
+		var result: Dictionary = super._finish_clinch(stop_reason, stopped_side,
+			forced_winner_side)
 		if String(result.get("event", "")) == "resolved":
 			var info: Dictionary = result.get("info", {})
 			if String(info.get("stop_reason", result.get("stop_reason", "voluntary"))) == "exhausted":
@@ -814,12 +833,70 @@ class VerdictAi extends "res://duelogue/core/ai/ai.gd":
 	const STYLE_VERDICT_CALM := "verdict_calm"
 	const STYLE_VERDICT_PROVOKE := "verdict_provoke"
 	const STYLE_VERDICT_RESERVE := "verdict_reserve"
+	## Нижний якорь лестницы навыка: выбирает легальный ход «монеткой». Псевдослучайность
+	## берётся из хеша состояния, а не из глобального RNG, поэтому политика остаётся
+	## детерминированной и парные контрфактуалы по колоде остаются сопоставимыми.
+	const STYLE_COINFLIP := "coinflip"
 	const W_FRAME := 3
 
+	## Теневой замер ширины пространства решений: сколько точек, где основная политика
+	## вообще расходится с эталонной. Тень только читает состояние и ничего не меняет.
+	var shadow_style := ""
+	var shadow_side := ""
+	var shadow_total := 0
+	var shadow_same_type := 0
+	var shadow_same_full := 0
+	var _in_shadow := false
+
+	func reset_shadow(side: String, style: String) -> void:
+		shadow_side = side
+		shadow_style = style
+		shadow_total = 0
+		shadow_same_type = 0
+		shadow_same_full = 0
+
 	func pick(r: RefCounted, side: String, style: String) -> Dictionary:
+		var act := _pick_dispatch(r, side, style)
+		if not _in_shadow and shadow_style != "" and side == shadow_side \
+				and not act.is_empty():
+			_in_shadow = true
+			var shadow := _pick_dispatch(r, side, shadow_style)
+			_in_shadow = false
+			if not shadow.is_empty():
+				shadow_total += 1
+				if String(shadow.type) == String(act.type):
+					shadow_same_type += 1
+					if int(shadow.get("target", -1)) == int(act.get("target", -1)):
+						shadow_same_full += 1
+		return act
+
+	func _pick_dispatch(r: RefCounted, side: String, style: String) -> Dictionary:
+		if style == STYLE_COINFLIP:
+			return _pick_coinflip(r, side)
 		if not _is_verdict_style(style):
 			return super.pick(r, side, style)
 		return _apply_named(r, side, _pick_verdict(r, side, style))
+
+	func _pick_coinflip(r: RefCounted, side: String) -> Dictionary:
+		var legal: Array = r.legal_types(side)
+		if legal.is_empty():
+			return {}
+		var salt := int(r.turn_count) * 2654435761 + (0 if side == SIDE_YOU else 40503)
+		salt += int(r.sides[side].hand.size()) * 97 + int(r.score(side)) * 7
+		var noise := _state_hash(salt)
+		var act := {"type": legal[noise % legal.size()]}
+		if String(act.type) == TYPE_RAZBOR:
+			var lines: Array = r.sides[r.other(side)].lines
+			if lines.is_empty():
+				return {}
+			act["target"] = _state_hash(salt + 17) % lines.size()
+		return act
+
+	func _state_hash(value: int) -> int:
+		var x := value & 0x7FFFFFFF
+		x = ((x >> 16) ^ x) * 0x45D9F3B
+		x = ((x >> 16) ^ x) * 0x45D9F3B
+		return ((x >> 16) ^ x) & 0x7FFFFFFF
 
 	func _pick_verdict(r: RefCounted, side: String, style: String) -> Dictionary:
 		var legal: Array = r.legal_types(side)
@@ -1014,6 +1091,34 @@ func _ready() -> void:
 	_ai = VerdictAi.new()
 	await get_tree().process_frame
 	var t0 := Time.get_ticks_msec()
+	if OS.get_cmdline_user_args().has("--agency-actions"):
+		print("\n=== АГЕНТНОСТЬ ДЕЙСТВИЙ · EXACT LEGAL COUNTERFACTUALS ===")
+		_agency_actions_suite()
+		print("\nПроверки инвариантов: %s" % ("OK" if _failures == 0 else "ОШИБОК: %d" % _failures))
+		print("=== КОНЕЦ (%.1f c) ===\n" % ((Time.get_ticks_msec() - t0) / 1000.0))
+		get_tree().quit(0 if _failures == 0 else 1)
+		return
+	if OS.get_cmdline_user_args().has("--draw-luck"):
+		print("\n=== УДАЧА ВЫБОРКИ КОЛОДЫ · ФАКТОРНЫЙ И КОНТРФАКТУАЛЬНЫЙ АУДИТ ===")
+		_draw_luck_suite()
+		print("\nПроверки инвариантов: %s" % ("OK" if _failures == 0 else "ОШИБОК: %d" % _failures))
+		print("=== КОНЕЦ (%.1f c) ===\n" % ((Time.get_ticks_msec() - t0) / 1000.0))
+		get_tree().quit(0 if _failures == 0 else 1)
+		return
+	if OS.get_cmdline_user_args().has("--skill-ladder"):
+		print("\n=== ЛЕСТНИЦА НАВЫКА · СИГНАЛ РЕШЕНИЙ ПРОТИВ ШУМА ВЫБОРКИ ===")
+		_skill_ladder_suite()
+		print("\nПроверки инвариантов: %s" % ("OK" if _failures == 0 else "ОШИБОК: %d" % _failures))
+		print("=== КОНЕЦ (%.1f c) ===\n" % ((Time.get_ticks_msec() - t0) / 1000.0))
+		get_tree().quit(0 if _failures == 0 else 1)
+		return
+	if OS.get_cmdline_user_args().has("--late-game"):
+		print("\n=== ФИНАЛЬНАЯ ТРЕТЬ · КАМБЭКИ И ТОЧКА НЕОБРАТИМОСТИ ===")
+		_late_game_suite()
+		print("\nПроверки инвариантов: %s" % ("OK" if _failures == 0 else "ОШИБОК: %d" % _failures))
+		print("=== КОНЕЦ (%.1f c) ===\n" % ((Time.get_ticks_msec() - t0) / 1000.0))
+		get_tree().quit(0 if _failures == 0 else 1)
+		return
 	if OS.get_cmdline_user_args().has("--ko-wobble"):
 		print("\n=== SNAPSHOT KO · РЕЗЕРВ РАМКИ · ШАТАНИЕ ===")
 		_ko_wobble_suite()
@@ -1138,8 +1243,13 @@ func _new_match(config: Dictionary, first: String, deck_you: Dictionary = {},
 		m = fm
 	if not deck_you.is_empty():
 		m.sides[Rules.SIDE_YOU] = _build_side(deck_you)
+		# build_side() кладёт на Базу только scalar theses. Production-controller после
+		# override материализует exact thesis objects тем же публичным методом; без этого
+		# deck-archetype suites сравнивали разные контракты и «канон vs канон» был смещён.
+		m.seed_starting_theses(Rules.SIDE_YOU)
 	if not deck_opp.is_empty():
 		m.sides[Rules.SIDE_OPP] = _build_side(deck_opp)
+		m.seed_starting_theses(Rules.SIDE_OPP)
 	if m.has_method("prepare_opening_reserves"):
 		m.prepare_opening_reserves()
 	return m
@@ -2136,3 +2246,1519 @@ func _emotion_candidate_suite() -> void:
 			_pct(int(m.emotion_terminal_flips), deck_matches)])
 	print("Сторож кандидата: важна Δэмоций; абсолютные initiative/wide — прежние отдельные")
 	print("блокеры формулы/захвата, которые этот слой не обязан и не должен маскировать.\n")
+
+
+# ----------------------------------------- финальная треть / comeback audit ---
+
+func _late_game_suite() -> void:
+	var quick := OS.get_cmdline_user_args().has("--quick")
+	var n := mini(mirror_matches, 300) if quick else mirror_matches
+	if OS.get_cmdline_user_args().has("--long") and not quick:
+		n *= 3
+	var production := _candidate_config("production", true, true, true)
+	var no_gate := _candidate_config("production_no_gate", true, true, false)
+	var rows := [
+		{"label": "prod full · hold", "config": production,
+			"style": "verdict_reserve", "payoff": true},
+		{"label": "prod без combo payoff", "config": production,
+			"style": "verdict_reserve", "payoff": false},
+		{"label": "prod без crowd gate", "config": no_gate,
+			"style": "verdict_reserve", "payoff": true},
+		{"label": "prod full · smart", "config": production,
+			"style": "smart", "payoff": true},
+		{"label": "prod full · balanced", "config": production,
+			"style": "balanced", "payoff": true},
+	]
+	var results: Array = []
+	print("Production: B=3·Δрамки+Δтезисы, snapshot KO, публичный резерв U,")
+	print("независимый Audience → gate 2/4, текущий A3/combo-каталог и payoff.")
+	print("Старый ориентир 0.61 считал рамки; поэтому ниже рядом стоят lock Р (legacy)")
+	print("и lock B (фактический текущий вердикт). %d одинаковых сидов/строку.\n" % n)
+	print("--- A. КОГДА ИСХОД ПЕРЕСТАЁТ БЫТЬ ОБРАТИМЫМ ---")
+	print("%-25s | нич | KO | ходы | lock Р | lock B | B≥2/3 | лидер@.61 проигр. | лидер@.67 проигр." % "вариант")
+	for ri in rows.size():
+		var row: Dictionary = rows[ri]
+		var m := _run_late_cell(row.config, String(row.style), n, bool(row.payoff), 2600)
+		results.append(m)
+		print("%-25s |%4.1f%%|%4.1f%%| %5.1f | %6.3f | %6.3f | %6.1f%% | %6.1f%% (%4d) | %6.1f%% (%4d)" % [
+			String(row.label), _pct(int(m.draws), int(m.matches)),
+			_pct(int(m.knockouts), int(m.matches)),
+			float(m.actions) / float(maxi(1, int(m.matches))),
+			_average(m.frame_locks), _average(m.board_locks),
+			_pct(int(m.board_lock_late), int(m.decisive)),
+			_pct(int(m.at61_wrong), int(m.at61_leaders)), int(m.at61_leaders),
+			_pct(int(m.tail_wrong), int(m.tail_leaders)), int(m.tail_leaders)])
+	print("lock = последний момент, когда будущий победитель ещё не был строго впереди.")
+	print("«лидер проигр.» — прямой шанс камбэка из ненулевого отставания на срезе.\n")
+
+	print("--- B. ЧТО ПРОИСХОДИТ ПОСЛЕ 2/3 ---")
+	print("%-25s | ничья@2/3 | лидер терял + | переворот | смена лида | ΔB/ход | атаки | cap | combo V" % "вариант")
+	for ri in rows.size():
+		var row: Dictionary = rows[ri]
+		var m: Dictionary = results[ri]
+		print("%-25s | %9.1f%% | %12.1f%% | %8.1f%% | %9.1f%% | %7.1f%% | %5.1f%% |%4.2f | %7.3f" % [
+			String(row.label), _pct(int(m.tail_tied), int(m.decisive)),
+			_pct(int(m.tail_pressure), int(m.tail_dynamic_leaders)),
+			_pct(int(m.tail_reversal), int(m.tail_dynamic_leaders)),
+			_pct(int(m.tail_lead_switch), int(m.matches)),
+			_pct(int(m.tail_changed_actions), int(m.tail_actions)),
+			_pct(int(m.tail_attacks), int(m.tail_actions)),
+			float(m.tail_captures) / float(maxi(1, int(m.matches))),
+			float(m.tail_combo_verdicts) / float(maxi(1, int(m.matches)))])
+	print("«лидер терял +» включает возврат хотя бы в ничью; «переворот» — уход в минус.")
+	print("ΔB/ход — доля поздних действий, реально изменивших итоговый board margin.\n")
+
+	print("--- C. РАСПРЕДЕЛЕНИЕ LOCK B (P50 / P75 / P90) ---")
+	for ri in rows.size():
+		var row: Dictionary = rows[ri]
+		var m: Dictionary = results[ri]
+		print("%-25s | %.3f / %.3f / %.3f" % [
+			String(row.label), _percentile(m.board_locks, 0.50),
+			_percentile(m.board_locks, 0.75), _percentile(m.board_locks, 0.90)])
+
+
+func _run_late_cell(config: Dictionary, style: String, matches: int,
+		payoff_enabled: bool, salt: int) -> Dictionary:
+	var out := _blank_late_metrics()
+	for i in matches:
+		_seed_for(i, salt)
+		var first := Rules.SIDE_YOU if i % 2 == 0 else Rules.SIDE_OPP
+		var m := _new_match(config, first, {}, {},
+			_seed_value(i, salt) ^ 0x5EEDC0DE)
+		m.combo_payoff_enabled = payoff_enabled
+		var res: Dictionary = _ai.simulate(m, style, style)
+		var trace: Array = res.get("trajectory", [])
+		if trace.is_empty():
+			continue
+		out.matches += 1
+		out.actions += trace.size()
+		var winner := String(res.get("winner", ""))
+		if String(res.get("reason", "")) == "knockout":
+			out.knockouts += 1
+		if winner == "":
+			out.draws += 1
+		else:
+			out.decisive += 1
+			var frame_lock := _trace_lock_frac(trace, winner, "frame_diff")
+			var board_lock := _trace_lock_frac(trace, winner, "board_margin")
+			(out.frame_locks as Array).append(frame_lock)
+			(out.board_locks as Array).append(board_lock)
+			if board_lock >= 2.0 / 3.0:
+				out.board_lock_late += 1
+			_collect_checkpoint(out, trace, winner, 0.61, "at61")
+			_collect_checkpoint(out, trace, winner, 2.0 / 3.0, "tail")
+		_collect_tail_dynamics(out, trace)
+	return out
+
+
+func _blank_late_metrics() -> Dictionary:
+	return {
+		"matches": 0, "decisive": 0, "draws": 0, "knockouts": 0, "actions": 0,
+		"frame_locks": [], "board_locks": [], "board_lock_late": 0,
+		"at61_leaders": 0, "at61_wrong": 0, "at61_tied": 0,
+		"tail_leaders": 0, "tail_wrong": 0, "tail_tied": 0,
+		"tail_dynamic_leaders": 0,
+		"tail_pressure": 0, "tail_reversal": 0, "tail_lead_switch": 0,
+		"tail_actions": 0, "tail_changed_actions": 0, "tail_attacks": 0,
+		"tail_captures": 0, "tail_combo_verdicts": 0,
+	}
+
+
+func _collect_checkpoint(out: Dictionary, trace: Array, winner: String,
+		fraction: float, prefix: String) -> void:
+	var idx := _fraction_index(trace.size(), fraction)
+	var margin := int((trace[idx] as Dictionary).get("board_margin", 0))
+	if margin == 0:
+		out["%s_tied" % prefix] = int(out.get("%s_tied" % prefix, 0)) + 1
+		return
+	out["%s_leaders" % prefix] = int(out.get("%s_leaders" % prefix, 0)) + 1
+	var winner_sign := 1 if winner == Rules.SIDE_YOU else -1
+	if signi(margin) != winner_sign:
+		out["%s_wrong" % prefix] = int(out.get("%s_wrong" % prefix, 0)) + 1
+
+
+func _collect_tail_dynamics(out: Dictionary, trace: Array) -> void:
+	var idx := _fraction_index(trace.size(), 2.0 / 3.0)
+	var start: Dictionary = trace[idx]
+	var start_margin := int(start.get("board_margin", 0))
+	var start_sign := signi(start_margin)
+	if start_sign != 0:
+		out.tail_dynamic_leaders += 1
+	var lost_positive := false
+	var reversed := false
+	var lead_switch := false
+	var last_nonzero := start_sign
+	for j in range(idx + 1, trace.size()):
+		var previous: Dictionary = trace[j - 1]
+		var point: Dictionary = trace[j]
+		var margin := int(point.get("board_margin", 0))
+		var point_sign := signi(margin)
+		out.tail_actions += 1
+		if margin != int(previous.get("board_margin", 0)):
+			out.tail_changed_actions += 1
+		if bool(point.get("attack", false)):
+			out.tail_attacks += 1
+		if start_sign != 0 and margin * start_sign <= 0:
+			lost_positive = true
+		if start_sign != 0 and margin * start_sign < 0:
+			reversed = true
+		if point_sign != 0:
+			if last_nonzero != 0 and point_sign != last_nonzero:
+				lead_switch = true
+			last_nonzero = point_sign
+	if start_sign != 0 and lost_positive:
+		out.tail_pressure += 1
+	if start_sign != 0 and reversed:
+		out.tail_reversal += 1
+	if lead_switch:
+		out.tail_lead_switch += 1
+	var finish: Dictionary = trace[-1]
+	out.tail_captures += maxi(0, int(finish.get("captures", 0)) -
+		int(start.get("captures", 0)))
+	out.tail_combo_verdicts += maxi(0, int(finish.get("combo_verdicts", 0)) -
+		int(start.get("combo_verdicts", 0)))
+
+
+func _trace_lock_frac(trace: Array, winner: String, key: String) -> float:
+	if trace.is_empty() or winner == "":
+		return 1.0
+	var winner_sign := 1 if winner == Rules.SIDE_YOU else -1
+	var last_not_ahead := -1
+	for i in trace.size():
+		if int((trace[i] as Dictionary).get(key, 0)) * winner_sign <= 0:
+			last_not_ahead = i
+	return float(last_not_ahead + 1) / float(trace.size())
+
+
+func _fraction_index(size: int, fraction: float) -> int:
+	return clampi(ceili(float(size) * fraction) - 1, 0, size - 1)
+
+
+func _average(values: Array) -> float:
+	if values.is_empty():
+		return 0.0
+	var total := 0.0
+	for value in values:
+		total += float(value)
+	return total / float(values.size())
+
+
+func _percentile(values: Array, quantile: float) -> float:
+	if values.is_empty():
+		return 0.0
+	var sorted := values.duplicate()
+	sorted.sort()
+	var idx := clampi(roundi(float(sorted.size() - 1) * quantile), 0, sorted.size() - 1)
+	return float(sorted[idx])
+
+
+# ------------------------------------------ аудит удачи порядка основной колоды ---
+
+func _draw_luck_suite() -> void:
+	var quick := OS.get_cmdline_user_args().has("--quick")
+	var blocks := 150 if quick else 600
+	var counterfactual_pairs := 250 if quick else 1000
+	var skill_gap_blocks := 250 if quick else 2000
+	if OS.get_cmdline_user_args().has("--long") and not quick:
+		blocks *= 3
+		counterfactual_pairs *= 3
+		skill_gap_blocks *= 3
+	var production := _candidate_config("draw_luck_production", true, true, true)
+	var styles := ["verdict_reserve", "smart"]
+	var labels := {
+		"verdict_reserve": "hold-reserve",
+		"smart": "production smart",
+	}
+	var factorial_results := {}
+
+	print("Production: U3/T8/R9, H5 = 1 гарантированная U + 4 действия, K2,")
+	print("B=3·Δрамки+Δтезисы, snapshot KO, Audience gate 2/4, текущие combo.")
+	print("Политики сами детерминированы; post-deal RNG используется только случайным T рамки,")
+	print("а эмоции имеют отдельный seed. Это позволяет парно фиксировать остальные источники.\n")
+	if OS.get_cmdline_user_args().has("--skill-gap-only"):
+		_print_skill_gap_section(production, skill_gap_blocks)
+		return
+	if OS.get_cmdline_user_args().has("--counterfactual-only"):
+		_print_draw_counterfactual_section(production, counterfactual_pairs)
+		return
+
+	print("--- A. ФАКТОРНЫЙ 2×2×2: DRAW-PACKAGE × EMOTION × INITIATIVE ---")
+	print("%-18s | draw Shapley | emotion | initiative | полностью стабильных блоков" % "политика")
+	for si in styles.size():
+		var style: String = styles[si]
+		var result := _run_luck_factorial(production, style, blocks, 3100 + si * 200)
+		factorial_results[style] = result
+		var shares: Dictionary = _luck_shapley(result.ss)
+		print("%-18s | %11.1f%% | %7.1f%% | %10.1f%% | %8.1f%%" % [
+			String(labels[style]), float(shares.deck) * 100.0,
+			float(shares.emotion) * 100.0, float(shares.initiative) * 100.0,
+			_pct(int(result.stable_blocks), int(result.blocks))])
+	print("Shapley делит пополам/на троих взаимодействия факторов; три доли суммируются в 100%.")
+	print("Это доля чувствительности результата, а не буквальная «доля заслуги» победителя.\n")
+
+	print("--- B. ПРЯМАЯ ЧУВСТВИТЕЛЬНОСТЬ: МЕНЯЕМ ОДИН ФАКТОР ---")
+	print("%-18s | фактор     | вердикт изменился | strict flip / все | flip / решит. | пар решит." % "политика")
+	for style in styles:
+		var result: Dictionary = factorial_results[style]
+		for item in [
+			["draw package", result.deck_pairs],
+			["эмоции", result.emotion_pairs],
+			["первый ход", result.initiative_pairs],
+		]:
+			var pair: Dictionary = item[1]
+			print("%-18s | %-10s | %16.1f%% | %17.1f%% | %12.1f%% | %9d" % [
+				String(labels[style]), String(item[0]),
+				_pct(int(pair.changed), int(pair.comparisons)),
+				_pct(int(pair.flips), int(pair.comparisons)),
+				_pct(int(pair.flips), int(pair.both_decisive)),
+				int(pair.both_decisive)])
+	print("strict flip / все = YOU↔OPP среди всех пар; соседняя колонка условна на двух решительных исходах.\n")
+
+	print("  Односторонний redraw при полностью фиксированном сопернике:")
+	print("%-18s | вердикт изменился | strict flip / все | flip / решит. | пар решит." % "политика")
+	for si in styles.size():
+		var style: String = styles[si]
+		var one_side := _run_one_side_redraw(production, style, counterfactual_pairs,
+			3450 + si * 100)
+		print("%-18s | %16.1f%% | %17.1f%% | %12.1f%% | %9d" % [
+			String(labels[style]), _pct(int(one_side.changed), int(one_side.comparisons)),
+			_pct(int(one_side.flips), int(one_side.comparisons)),
+			_pct(int(one_side.flips), int(one_side.both_decisive)),
+			int(one_side.both_decisive)])
+	print("Здесь перетасовывается пакет только одного игрока; колода соперника, первый ход,")
+	print("эмоции и runtime seed случайных T остаются теми же.\n")
+
+	print("--- C. ЧТО В СТАРТОВОЙ/РАННЕЙ ВЫБОРКЕ ПРЕДСКАЗЫВАЕТ ПОБЕДУ ---")
+	print("%-18s | больше R в H5 | больше K в H5 | K лежит ближе | больше R в H5+top3 | больше U в H5+top3" % "политика")
+	for style in styles:
+		var features: Dictionary = (factorial_results[style] as Dictionary).features
+		print("%-18s | %13.1f%% | %13.1f%% | %15.1f%% | %19.1f%% | %19.1f%%" % [
+			String(labels[style]),
+			_advantage_rate(features.opening_r),
+			_advantage_rate(features.opening_steals),
+			_advantage_rate(features.first_steal),
+			_advantage_rate(features.early_r),
+			_advantage_rate(features.early_u)])
+	print("Значение — винрейт стороны с большим показателем, только когда показатели различались.")
+	print("K = Кража; top3 = три верхние карты initial draw, не обязательно три фактических добора:")
+	print("новая U может раньше случайно изъять из draw один T.\n")
+	for style in styles:
+		print("  %s — ΔR стартовой руки (YOU−OPP):" % String(labels[style]))
+		_print_opening_r_bins((factorial_results[style] as Dictionary).features)
+
+	_print_draw_counterfactual_section(production, counterfactual_pairs)
+	_print_skill_gap_section(production, skill_gap_blocks)
+
+
+func _print_draw_counterfactual_section(production: Dictionary, pairs: int) -> void:
+	print("\n--- D. ГДЕ ИМЕННО СИДИТ DRAW-RNG: СТАРТОВАЯ РУКА ИЛИ ХВОСТ ---")
+	var counterfactual := _run_draw_counterfactuals(production, "verdict_reserve",
+		pairs, 3700)
+	print("%-24s | вердикт изменился | strict flip / все | flip / решит. | пар решит." % "контрфактуал")
+	for item in [
+		["весь main-deck RNG", counterfactual.full_draw],
+		["H5 та же, только tail", counterfactual.tail_only],
+		["H5 та же, tail + seed-T", counterfactual.tail_plus_frame],
+		["весь порядок тот же, seed-T", counterfactual.frame_seed],
+		["весь draw тот же, эмоции", counterfactual.emotion],
+		["весь draw тот же, 1-й ход", counterfactual.initiative],
+	]:
+		var pair: Dictionary = item[1]
+		print("%-24s | %16.1f%% | %17.1f%% | %12.1f%% | %9d" % [
+			String(item[0]), _pct(int(pair.changed), int(pair.comparisons)),
+			_pct(int(pair.flips), int(pair.comparisons)),
+			_pct(int(pair.flips), int(pair.both_decisive)), int(pair.both_decisive)])
+	print("Чистый tail-reroll сохраняет exact H5, стартовые тезисы, резерв и post-deal seed;")
+	print("меняется только неувиденная draw-стопка. Следующая строка дополнительно меняет seed")
+	print("случайного T новой рамки; seed-T меняет только его при одинаковом порядке карт.")
+	print("Эффекты взаимодействуют, поэтому эти проценты нельзя складывать или вычитать.\n")
+
+
+func _print_skill_gap_section(production: Dictionary, blocks: int) -> void:
+	print("\n--- E. МОЖЕТ ЛИ REDRAW ПЕРЕБИТЬ МАЛЫЙ ЗАЗОР ПОЛИТИКИ ---")
+	var result := _run_skill_gap_redraw(production, blocks, 3900)
+	var weak_utility := (float(result.weak_wins) + 0.5 * float(result.draws)) / \
+		float(maxi(1, int(result.matches)))
+	var rescue_denominator := 2 * int(result.stable_strong) + int(result.flips)
+	print("hold-reserve против spend-reserve (`verdict`), роли и первый ход сбалансированы.")
+	print("hold-reserve utility: %.1f%%; redraw слабой стороны меняет вердикт: %.1f%%." % [
+		(1.0 - weak_utility) * 100.0,
+		_pct(int(result.changed), int(result.comparisons))])
+	print("Strict YOU↔OPP flip: %.1f%% всех блоков; %.1f%% среди двух решительных исходов." % [
+		_pct(int(result.flips), int(result.comparisons)),
+		_pct(int(result.flips), int(result.both_decisive))])
+	print("Устойчиво сильная / устойчиво слабая: %.1f%% / %.1f%% решительных блоков;" % [
+		_pct(int(result.stable_strong), int(result.both_decisive)),
+		_pct(int(result.stable_weak), int(result.both_decisive))])
+	print("если случайно выбранная раздача слабой стороны проиграла, альтернативная спасает")
+	print("до прямой победы в %.1f%% решительных случаев." % [
+		_pct(int(result.flips), rescue_denominator)])
+	print("Это тест малого искусственного skill-gap между двумя deterministic sim-политиками,")
+	print("а не оценка разницы между сильным и слабым человеком.\n")
+
+
+func _run_skill_gap_redraw(config: Dictionary, blocks: int, salt: int) -> Dictionary:
+	var out := _blank_pair_metrics()
+	out.merge({
+		"matches": 0, "weak_wins": 0, "strong_wins": 0, "draws": 0,
+		"stable_strong": 0, "stable_weak": 0,
+	})
+	for i in blocks:
+		var weak_side := Rules.SIDE_YOU if i % 4 < 2 else Rules.SIDE_OPP
+		var strong_side := Rules.SIDE_OPP if weak_side == Rules.SIDE_YOU else Rules.SIDE_YOU
+		var first := Rules.SIDE_YOU if i % 2 == 0 else Rules.SIDE_OPP
+		var emotion_seed := _seed_value(i, salt + 101) ^ 0x5EEDC0DE
+		var play_seed := _seed_value(i, salt + 211)
+
+		seed(_seed_value(i, salt))
+		var strong_source := _new_match(config, first, {}, {}, emotion_seed)
+		seed(_seed_value(i, salt + 31))
+		var weak_a_source := _new_match(config, first, {}, {}, emotion_seed)
+		seed(_seed_value(i, salt + 47))
+		var weak_b_source := _new_match(config, first, {}, {}, emotion_seed)
+		var sides_a := {
+			strong_side: strong_source.sides[strong_side].duplicate(true),
+			weak_side: weak_a_source.sides[weak_side].duplicate(true),
+		}
+		var sides_b := {
+			strong_side: strong_source.sides[strong_side].duplicate(true),
+			weak_side: weak_b_source.sides[weak_side].duplicate(true),
+		}
+		var style_you := "verdict" if weak_side == Rules.SIDE_YOU else "verdict_reserve"
+		var style_opp := "verdict" if weak_side == Rules.SIDE_OPP else "verdict_reserve"
+
+		var match_a := _match_from_snapshot(config, first, sides_a,
+			emotion_seed, _seed_value(i, salt + 501))
+		seed(play_seed)
+		var result_a: Dictionary = _ai.simulate(match_a, style_you, style_opp)
+		var value_a := _outcome_for_side(String(result_a.get("winner", "")), weak_side)
+
+		var match_b := _match_from_snapshot(config, first, sides_b,
+			emotion_seed, _seed_value(i, salt + 502))
+		seed(play_seed)
+		var result_b: Dictionary = _ai.simulate(match_b, style_you, style_opp)
+		var value_b := _outcome_for_side(String(result_b.get("winner", "")), weak_side)
+
+		_collect_pair_values(out, value_a, value_b)
+		for value in [value_a, value_b]:
+			out.matches += 1
+			if value > 0:
+				out.weak_wins += 1
+			elif value < 0:
+				out.strong_wins += 1
+			else:
+				out.draws += 1
+		if value_a == -1 and value_b == -1:
+			out.stable_strong += 1
+		elif value_a == 1 and value_b == 1:
+			out.stable_weak += 1
+	return out
+
+
+func _outcome_for_side(winner: String, side: String) -> int:
+	return 1 if winner == side else (-1 if winner != "" else 0)
+
+
+func _run_luck_factorial(config: Dictionary, style: String, blocks: int,
+		salt: int) -> Dictionary:
+	var ss := {}
+	for mask in range(1, 8):
+		ss[mask] = 0.0
+	var out := {
+		"blocks": blocks, "stable_blocks": 0, "ss": ss,
+		"deck_pairs": _blank_pair_metrics(),
+		"emotion_pairs": _blank_pair_metrics(),
+		"initiative_pairs": _blank_pair_metrics(),
+		"features": _blank_opening_features(),
+	}
+	for block in blocks:
+		var outcomes: Array = []
+		outcomes.resize(8)
+		var unique := {}
+		# Два независимо подготовленных production-пакета: стартовый настоящий T,
+		# H5 после reserve и полный остаток draw. D меняет только владельцев A/B.
+		seed(_seed_value(block, salt))
+		var source_a := _new_match(config, Rules.SIDE_YOU, {}, {},
+			_seed_value(block, salt + 701))
+		var package_a: Dictionary = source_a.sides[Rules.SIDE_YOU].duplicate(true)
+		seed(_seed_value(block, salt + 31))
+		var source_b := _new_match(config, Rules.SIDE_YOU, {}, {},
+			_seed_value(block, salt + 702))
+		var package_b: Dictionary = source_b.sides[Rules.SIDE_OPP].duplicate(true)
+		var play_seed := _seed_value(block, salt + 211)
+		for deck_level in 2:
+			for emotion_level in 2:
+				var emotion_seed := _seed_value(block, salt + 101 + emotion_level * 37) \
+					^ 0x5EEDC0DE
+				for initiative_level in 2:
+					var first := Rules.SIDE_YOU if initiative_level == 0 else Rules.SIDE_OPP
+					var assigned := {
+						Rules.SIDE_YOU: (package_a if deck_level == 0 else package_b),
+						Rules.SIDE_OPP: (package_b if deck_level == 0 else package_a),
+					}
+					var m := _match_from_snapshot(config, first, assigned,
+						emotion_seed, _seed_value(block, salt + 501))
+					var capture_features := emotion_level == 0 and \
+						initiative_level == ((block + deck_level) % 2)
+					var opening := _opening_feature_delta(m.sides) if capture_features else {}
+					# Runtime seed-T фиксирован между D/E/I: фактор D — только prepared draw.
+					seed(play_seed)
+					var res: Dictionary = _ai.simulate(m, style, style)
+					var value := _outcome_value(String(res.get("winner", "")))
+					outcomes[_factor_index(deck_level, emotion_level, initiative_level)] = value
+					unique[value] = true
+					if capture_features:
+						_collect_opening_feature_result(out.features, opening, value,
+							first == Rules.SIDE_YOU)
+		if unique.size() == 1:
+			out.stable_blocks += 1
+		for mask in range(1, 8):
+			var coefficient := 0.0
+			for deck_level in 2:
+				for emotion_level in 2:
+					for initiative_level in 2:
+						var factor_sign := 1
+						if (mask & 1) != 0:
+							factor_sign *= 1 if deck_level == 1 else -1
+						if (mask & 2) != 0:
+							factor_sign *= 1 if emotion_level == 1 else -1
+						if (mask & 4) != 0:
+							factor_sign *= 1 if initiative_level == 1 else -1
+						coefficient += float(outcomes[
+							_factor_index(deck_level, emotion_level, initiative_level)]) \
+							* float(factor_sign)
+			coefficient /= 8.0
+			out.ss[mask] = float(out.ss[mask]) + coefficient * coefficient
+		for emotion_level in 2:
+			for initiative_level in 2:
+				_collect_pair_values(out.deck_pairs,
+					int(outcomes[_factor_index(0, emotion_level, initiative_level)]),
+					int(outcomes[_factor_index(1, emotion_level, initiative_level)]))
+		for deck_level in 2:
+			for initiative_level in 2:
+				_collect_pair_values(out.emotion_pairs,
+					int(outcomes[_factor_index(deck_level, 0, initiative_level)]),
+					int(outcomes[_factor_index(deck_level, 1, initiative_level)]))
+		for deck_level in 2:
+			for emotion_level in 2:
+				_collect_pair_values(out.initiative_pairs,
+					int(outcomes[_factor_index(deck_level, emotion_level, 0)]),
+					int(outcomes[_factor_index(deck_level, emotion_level, 1)]))
+	return out
+
+
+func _run_one_side_redraw(config: Dictionary, style: String, pairs: int,
+		salt: int) -> Dictionary:
+	var out := _blank_pair_metrics()
+	for i in pairs:
+		var first := Rules.SIDE_YOU if i % 2 == 0 else Rules.SIDE_OPP
+		var emotion_seed := _seed_value(i, salt + 101) ^ 0x5EEDC0DE
+		var play_seed := _seed_value(i, salt + 211)
+
+		# Один базовый контекст и по одному независимому redraw для каждой стороны.
+		# Источник строится с тем же first, чтобы сохранить production-коми в Базе.
+		seed(_seed_value(i, salt))
+		var base_source := _new_match(config, first, {}, {}, emotion_seed)
+		var base_sides: Dictionary = base_source.sides.duplicate(true)
+
+		seed(_seed_value(i, salt + 31))
+		var alternate_you_source := _new_match(config, first, {}, {}, emotion_seed)
+		var you_redraw_sides: Dictionary = base_sides.duplicate(true)
+		you_redraw_sides[Rules.SIDE_YOU] = \
+			alternate_you_source.sides[Rules.SIDE_YOU].duplicate(true)
+
+		seed(_seed_value(i, salt + 47))
+		var alternate_opp_source := _new_match(config, first, {}, {}, emotion_seed)
+		var opp_redraw_sides: Dictionary = base_sides.duplicate(true)
+		opp_redraw_sides[Rules.SIDE_OPP] = \
+			alternate_opp_source.sides[Rules.SIDE_OPP].duplicate(true)
+
+		var baseline := _match_from_snapshot(config, first, base_sides,
+			emotion_seed, _seed_value(i, salt + 501))
+		seed(play_seed)
+		var baseline_result: Dictionary = _ai.simulate(baseline, style, style)
+		var baseline_value := _outcome_value(String(baseline_result.get("winner", "")))
+
+		var you_redraw := _match_from_snapshot(config, first, you_redraw_sides,
+			emotion_seed, _seed_value(i, salt + 502))
+		seed(play_seed)
+		var you_redraw_result: Dictionary = _ai.simulate(you_redraw, style, style)
+		_collect_pair_values(out, baseline_value,
+			_outcome_value(String(you_redraw_result.get("winner", ""))))
+
+		var opp_redraw := _match_from_snapshot(config, first, opp_redraw_sides,
+			emotion_seed, _seed_value(i, salt + 503))
+		seed(play_seed)
+		var opp_redraw_result: Dictionary = _ai.simulate(opp_redraw, style, style)
+		_collect_pair_values(out, baseline_value,
+			_outcome_value(String(opp_redraw_result.get("winner", ""))))
+	return out
+
+
+func _luck_shapley(ss: Dictionary) -> Dictionary:
+	var total := 0.0
+	for mask in range(1, 8):
+		total += float(ss.get(mask, 0.0))
+	if total <= 0.0:
+		return {"deck": 0.0, "emotion": 0.0, "initiative": 0.0}
+	var deck := float(ss[1]) + 0.5 * float(ss[3]) + 0.5 * float(ss[5]) \
+		+ float(ss[7]) / 3.0
+	var emotion := float(ss[2]) + 0.5 * float(ss[3]) + 0.5 * float(ss[6]) \
+		+ float(ss[7]) / 3.0
+	var initiative := float(ss[4]) + 0.5 * float(ss[5]) + 0.5 * float(ss[6]) \
+		+ float(ss[7]) / 3.0
+	return {
+		"deck": deck / total,
+		"emotion": emotion / total,
+		"initiative": initiative / total,
+	}
+
+
+func _factor_index(deck_level: int, emotion_level: int, initiative_level: int) -> int:
+	return deck_level * 4 + emotion_level * 2 + initiative_level
+
+
+func _outcome_value(winner: String) -> int:
+	return 1 if winner == Rules.SIDE_YOU else (-1 if winner == Rules.SIDE_OPP else 0)
+
+
+func _blank_pair_metrics() -> Dictionary:
+	return {
+		"comparisons": 0, "changed": 0, "both_decisive": 0,
+		"flips": 0, "draw_touched": 0,
+	}
+
+
+func _collect_pair_values(out: Dictionary, a: int, b: int) -> void:
+	out.comparisons += 1
+	if a != b:
+		out.changed += 1
+	if a == 0 or b == 0:
+		out.draw_touched += 1
+	else:
+		out.both_decisive += 1
+		if a != b:
+			out.flips += 1
+
+
+func _blank_opening_features() -> Dictionary:
+	return {
+		"matches": 0, "decisive": 0, "draws": 0, "first_wins": 0,
+		"opening_r": _blank_advantage(), "opening_steals": _blank_advantage(),
+		"first_steal": _blank_advantage(), "early_r": _blank_advantage(),
+		"early_u": _blank_advantage(), "r_bins": {},
+	}
+
+
+func _blank_advantage() -> Dictionary:
+	return {"opportunities": 0, "advantage_wins": 0, "ties": 0}
+
+
+func _opening_feature_delta(sides: Dictionary) -> Dictionary:
+	var you: Dictionary = _side_opening_features(sides[Rules.SIDE_YOU])
+	var opp: Dictionary = _side_opening_features(sides[Rules.SIDE_OPP])
+	return {
+		"opening_r": int(you.opening_r) - int(opp.opening_r),
+		"opening_steals": int(you.opening_steals) - int(opp.opening_steals),
+		# Меньшая глубина лучше, поэтому положительный знак означает преимущество YOU.
+		"first_steal": int(opp.first_steal_depth) - int(you.first_steal_depth),
+		"early_r": int(you.early_r) - int(opp.early_r),
+		"early_u": int(you.early_u) - int(opp.early_u),
+	}
+
+
+func _side_opening_features(side: Dictionary) -> Dictionary:
+	var hand: Array = side.get("hand", [])
+	var draw: Array = side.get("draw", [])
+	var opening_r := 0
+	var opening_steals := 0
+	var first_steal_depth := 999
+	for card_raw in hand:
+		var card: Dictionary = card_raw
+		if String(card.get("type", "")) == Rules.TYPE_RAZBOR:
+			opening_r += 1
+		if bool(card.get("steals", false)):
+			opening_steals += 1
+			first_steal_depth = 0
+	if first_steal_depth > 0:
+		for depth in draw.size():
+			var card: Dictionary = draw[draw.size() - 1 - depth]
+			if bool(card.get("steals", false)):
+				first_steal_depth = depth + 1
+				break
+	var early_cards: Array = hand.duplicate()
+	for depth in mini(3, draw.size()):
+		early_cards.append(draw[draw.size() - 1 - depth])
+	var early_r := 0
+	var early_u := 0
+	for card_raw in early_cards:
+		var card: Dictionary = card_raw
+		match String(card.get("type", "")):
+			Rules.TYPE_RAZBOR: early_r += 1
+			Rules.TYPE_USTANOVKA: early_u += 1
+	return {
+		"opening_r": opening_r,
+		"opening_steals": opening_steals,
+		"first_steal_depth": first_steal_depth,
+		"early_r": early_r,
+		"early_u": early_u,
+	}
+
+
+func _collect_opening_feature_result(out: Dictionary, deltas: Dictionary,
+		outcome: int, first_you: bool) -> void:
+	out.matches += 1
+	if outcome == 0:
+		out.draws += 1
+		return
+	out.decisive += 1
+	if outcome == (1 if first_you else -1):
+		out.first_wins += 1
+	for key in ["opening_r", "opening_steals", "first_steal", "early_r", "early_u"]:
+		_collect_advantage(out[key], int(deltas[key]), outcome)
+	var r_key := str(int(deltas.opening_r))
+	if not (out.r_bins as Dictionary).has(r_key):
+		out.r_bins[r_key] = {"n": 0, "you_wins": 0}
+	out.r_bins[r_key].n = int(out.r_bins[r_key].n) + 1
+	if outcome > 0:
+		out.r_bins[r_key].you_wins = int(out.r_bins[r_key].you_wins) + 1
+
+
+func _collect_advantage(out: Dictionary, delta: int, outcome: int) -> void:
+	if delta == 0:
+		out.ties += 1
+		return
+	out.opportunities += 1
+	if signi(delta) == outcome:
+		out.advantage_wins += 1
+
+
+func _advantage_rate(metric: Dictionary) -> float:
+	return _pct(int(metric.advantage_wins), int(metric.opportunities))
+
+
+func _print_opening_r_bins(features: Dictionary) -> void:
+	var keys := (features.r_bins as Dictionary).keys()
+	keys.sort_custom(func(a, b): return int(a) < int(b))
+	var pieces: Array = []
+	for key in keys:
+		var bin: Dictionary = features.r_bins[key]
+		pieces.append("%+d:%4.0f%%(n=%d)" % [
+			int(key), _pct(int(bin.you_wins), int(bin.n)), int(bin.n)])
+	print("    " + " · ".join(pieces))
+
+
+func _run_draw_counterfactuals(config: Dictionary, style: String, pairs: int,
+		salt: int) -> Dictionary:
+	var out := {
+		"full_draw": _blank_pair_metrics(),
+		"tail_only": _blank_pair_metrics(),
+		"tail_plus_frame": _blank_pair_metrics(),
+		"frame_seed": _blank_pair_metrics(),
+		"emotion": _blank_pair_metrics(),
+		"initiative": _blank_pair_metrics(),
+	}
+	for i in pairs:
+		var first := Rules.SIDE_YOU if i % 2 == 0 else Rules.SIDE_OPP
+		var deck_seed := _seed_value(i, salt)
+		var play_seed := _seed_value(i, salt + 211)
+		var emotion_seed := _seed_value(i, salt + 101) ^ 0x5EEDC0DE
+		seed(deck_seed)
+		var baseline := _new_match(config, first, {}, {}, emotion_seed)
+		var sides_snapshot: Dictionary = baseline.sides.duplicate(true)
+		seed(play_seed)
+		var base_result: Dictionary = _ai.simulate(baseline, style, style)
+		var base_value := _outcome_value(String(base_result.get("winner", "")))
+
+		seed(_seed_value(i, salt + 31))
+		var full_reroll := _new_match(config, first, {}, {}, emotion_seed)
+		# Isolate the rebuilt deck package: runtime frame-T RNG must stay paired.
+		seed(play_seed)
+		var full_result: Dictionary = _ai.simulate(full_reroll, style, style)
+		_collect_pair_values(out.full_draw, base_value,
+			_outcome_value(String(full_result.get("winner", ""))))
+
+		var tail_only := _match_from_snapshot(config, first, sides_snapshot,
+			emotion_seed, _seed_value(i, salt + 401))
+		seed(_seed_value(i, salt + 47))
+		for side in [Rules.SIDE_YOU, Rules.SIDE_OPP]:
+			(tail_only.sides[side].draw as Array).shuffle()
+		seed(play_seed)
+		var tail_only_result: Dictionary = _ai.simulate(tail_only, style, style)
+		_collect_pair_values(out.tail_only, base_value,
+			_outcome_value(String(tail_only_result.get("winner", ""))))
+
+		var tail_plus_frame := _match_from_snapshot(config, first, sides_snapshot,
+			emotion_seed, _seed_value(i, salt + 405))
+		seed(_seed_value(i, salt + 47))
+		for side in [Rules.SIDE_YOU, Rules.SIDE_OPP]:
+			(tail_plus_frame.sides[side].draw as Array).shuffle()
+		seed(_seed_value(i, salt + 258))
+		var tail_plus_frame_result: Dictionary = _ai.simulate(tail_plus_frame,
+			style, style)
+		_collect_pair_values(out.tail_plus_frame, base_value,
+			_outcome_value(String(tail_plus_frame_result.get("winner", ""))))
+
+		var frame_seed_reroll := _match_from_snapshot(config, first, sides_snapshot,
+			emotion_seed, _seed_value(i, salt + 404))
+		seed(_seed_value(i, salt + 259))
+		var frame_seed_result: Dictionary = _ai.simulate(frame_seed_reroll, style, style)
+		_collect_pair_values(out.frame_seed, base_value,
+			_outcome_value(String(frame_seed_result.get("winner", ""))))
+
+		var emotion_reroll := _match_from_snapshot(config, first, sides_snapshot,
+			_seed_value(i, salt + 137) ^ 0x5EEDC0DE, _seed_value(i, salt + 402))
+		seed(play_seed)
+		var emotion_result: Dictionary = _ai.simulate(emotion_reroll, style, style)
+		_collect_pair_values(out.emotion, base_value,
+			_outcome_value(String(emotion_result.get("winner", ""))))
+
+		var other_first := Rules.SIDE_OPP if first == Rules.SIDE_YOU else Rules.SIDE_YOU
+		var initiative_reroll := _match_from_snapshot(config, other_first, sides_snapshot,
+			emotion_seed, _seed_value(i, salt + 403))
+		seed(play_seed)
+		var initiative_result: Dictionary = _ai.simulate(initiative_reroll, style, style)
+		_collect_pair_values(out.initiative, base_value,
+			_outcome_value(String(initiative_result.get("winner", ""))))
+	return out
+
+
+func _match_from_snapshot(config: Dictionary, first: String, sides_snapshot: Dictionary,
+		emotion_seed: int, setup_seed: int) -> RefCounted:
+	seed(setup_seed)
+	var m := _new_match(config, first, {}, {}, emotion_seed)
+	m.sides = sides_snapshot.duplicate(true)
+	return m
+
+
+# ------------------------------------------------- лестница навыка vs удача ---
+
+## Аудит 2026-07-27 мерил чувствительность к колоде ТОЛЬКО в зеркале одинаковых
+## детерминированных политик. Там исход по построению является функцией асимметричных
+## случайных входов — больше свободных переменных нет, поэтому высокий flip почти
+## тавтологичен. Здесь мерится отношение сигнал/шум: сколько винрейта вообще способна
+## купить разница политик и как flip падает по мере роста этой разницы.
+func _skill_ladder_suite() -> void:
+	var quick := OS.get_cmdline_user_args().has("--quick")
+	var ladder_matches := 300 if quick else 1200
+	var redraw_pairs := 200 if quick else 900
+	if OS.get_cmdline_user_args().has("--long") and not quick:
+		ladder_matches *= 2
+		redraw_pairs *= 2
+	var production := _candidate_config("skill_ladder_production", true, true, true)
+	var ladder := ["coinflip", "aggro", "wide", "tall", "balanced", "smart",
+		"verdict", "verdict_reserve"]
+
+	print("Production-контракт тот же, что в draw-luck: U3/T8/R9, H5, K2, B=3Р+1Т,")
+	print("snapshot KO, публичный резерв, Audience gate 2/4, текущие combo.")
+	print("Каждая пара играет обе роли на ОДНИХ и тех же seed — раздачи спарены,")
+	print("меняются только политики. coinflip — детерминированный выбор легального хода.\n")
+
+	if OS.get_cmdline_user_args().has("--agreement-only"):
+		_print_agreement_section(production, ladder_matches)
+		return
+
+	print("--- A. ЛЕСТНИЦА: СКОЛЬКО ВИНРЕЙТА ПОКУПАЕТ ПОЛИТИКА ---")
+	print("Ячейка — винрейт политики СТРОКИ против политики СТОЛБЦА, роли сбалансированы.")
+	var header := "%-16s" % "политика"
+	for style in ladder:
+		header += " | %7s" % style.substr(0, 7)
+	print(header + " |  средн.")
+	var pair_rates := {}
+	for ai in ladder.size():
+		var row := "%-16s" % ladder[ai]
+		var sum := 0.0
+		var count := 0
+		for bi in ladder.size():
+			if ai == bi:
+				row += " | %6s " % "—"
+				continue
+			var key := "%d:%d" % [mini(ai, bi), maxi(ai, bi)]
+			if not pair_rates.has(key):
+				pair_rates[key] = _run_ladder_pair(production, ladder[mini(ai, bi)],
+					ladder[maxi(ai, bi)], ladder_matches, 4200 + mini(ai, bi) * 40 + maxi(ai, bi))
+			var rate: float = float(pair_rates[key])
+			if ai > bi:
+				rate = 100.0 - rate
+			row += " | %6.1f%%" % rate
+			sum += rate
+			count += 1
+		print(row + " | %6.1f%%" % (sum / float(maxi(1, count))))
+	print("\nЭто потолок навыка в текущем ruleset: разброс строки «средн.» показывает,")
+	print("насколько вообще качество решений отделимо от раздачи.\n")
+
+	print("--- B. FLIP ПАДАЕТ ЛИ С РОСТОМ ЗАЗОРА НАВЫКА ---")
+	print("Односторонний redraw при фиксированном сопернике, но политики РАЗНЫЕ.")
+	print("%-30s | винрейт A | strict/all | strict/решит. | матчей до 95%%" % "пара A против B")
+	var gap_pairs := [
+		["verdict_reserve", "verdict_reserve"],
+		["verdict_reserve", "verdict"],
+		["verdict_reserve", "smart"],
+		["verdict_reserve", "balanced"],
+		["verdict_reserve", "tall"],
+		["verdict_reserve", "aggro"],
+		["verdict_reserve", "coinflip"],
+		["smart", "coinflip"],
+	]
+	for gi in gap_pairs.size():
+		var pair: Array = gap_pairs[gi]
+		var result := _run_gap_redraw(production, String(pair[0]), String(pair[1]),
+			redraw_pairs, 4700 + gi * 60)
+		var winrate := float(result.a_winrate)
+		var flip_all := _pct(int(result.flips), int(result.comparisons))
+		var flip_decisive := _pct(int(result.flips), int(result.both_decisive))
+		var label := "%s vs %s" % [pair[0], pair[1]]
+		print("%-30s | %8.1f%% | %10.1f%% | %13.1f%% | %13s" % [
+			label, winrate, flip_all, flip_decisive, _format_detect(winrate)])
+	print("\nstrict/all и strict/решит. имеют разные знаменатели; с mirror flip из")
+	print("другого suite напрямую сравнивается только strict/all. Матрица показывает")
+	print("matchup-структуру, а не линейную лестницу навыка; близкие значения требуют")
+	print("более длинного прогона.\n")
+
+	_print_agreement_section(production, ladder_matches)
+
+
+func _print_agreement_section(production: Dictionary, ladder_matches: int) -> void:
+	print("\n--- C. ШИРИНА ПРОСТРАНСТВА РЕШЕНИЙ ---")
+	print("Доля точек решения, где основная политика выбирает ТО ЖЕ, что и эталонная.")
+	print("Если расхождений почти нет, «навык» в текущем ruleset нечему выражать,")
+	print("и раздача остаётся единственной свободной переменной.")
+	print("%-34s | точек решения | тот же тип | тип и цель" % "основная / эталон")
+	for probe in [
+		["verdict_reserve", "aggro"],
+		["verdict_reserve", "smart"],
+		["verdict_reserve", "coinflip"],
+		["smart", "aggro"],
+	]:
+		var agreement := _run_shadow_agreement(production, String(probe[0]),
+			String(probe[1]), maxi(60, ladder_matches / 4), 5400)
+		print("%-34s | %13d | %9.1f%% | %10.1f%%" % [
+			"%s / %s" % [probe[0], probe[1]], int(agreement.total),
+			_pct(int(agreement.same_type), int(agreement.total)),
+			_pct(int(agreement.same_full), int(agreement.total))])
+	print("")
+
+
+func _run_ladder_pair(config: Dictionary, style_a: String, style_b: String,
+		matches: int, salt: int) -> float:
+	# Один и тот же salt в обеих ориентациях: раздачи и первый ход идентичны,
+	# различаются только политики сторон. Это парный дизайн, а не два независимых прогона.
+	# Харнесс именно candidate: _run_cell проверяет инвариант «матч кончается счётом»,
+	# который production-конфиг со snapshot KO нарушает by design.
+	var a_you := _run_candidate_cell(config, style_a, style_b, matches, {}, {}, salt)
+	var a_opp := _run_candidate_cell(config, style_b, style_a, matches, {}, {}, salt)
+	var n_you := int(a_you.wins_you) + int(a_you.wins_opp) + int(a_you.draws)
+	var n_opp := int(a_opp.wins_you) + int(a_opp.wins_opp) + int(a_opp.draws)
+	var rate_you := 0.5 if n_you == 0 else \
+		(float(a_you.wins_you) + 0.5 * float(a_you.draws)) / float(n_you)
+	var rate_opp := 0.5 if n_opp == 0 else \
+		(float(a_opp.wins_opp) + 0.5 * float(a_opp.draws)) / float(n_opp)
+	return (rate_you + rate_opp) * 50.0
+
+
+func _run_gap_redraw(config: Dictionary, style_a: String, style_b: String,
+		pairs: int, salt: int) -> Dictionary:
+	var out := _blank_pair_metrics()
+	var a_score := 0.0
+	var a_matches := 0
+	for i in pairs:
+		# Первый ход и назначение политик балансируются независимо: 2×2 на каждые
+		# четыре блока, чтобы ни коми Базы, ни роль не смещали винрейт A.
+		var first := Rules.SIDE_YOU if i % 2 == 0 else Rules.SIDE_OPP
+		var a_side := Rules.SIDE_YOU if (i / 2) % 2 == 0 else Rules.SIDE_OPP
+		var style_you := style_a if a_side == Rules.SIDE_YOU else style_b
+		var style_opp := style_b if a_side == Rules.SIDE_YOU else style_a
+		var emotion_seed := _seed_value(i, salt + 101) ^ 0x5EEDC0DE
+		var play_seed := _seed_value(i, salt + 211)
+
+		seed(_seed_value(i, salt))
+		var base_source := _new_match(config, first, {}, {}, emotion_seed)
+		var base_sides: Dictionary = base_source.sides.duplicate(true)
+
+		seed(_seed_value(i, salt + 31))
+		var alt_you_source := _new_match(config, first, {}, {}, emotion_seed)
+		var you_sides: Dictionary = base_sides.duplicate(true)
+		you_sides[Rules.SIDE_YOU] = alt_you_source.sides[Rules.SIDE_YOU].duplicate(true)
+
+		seed(_seed_value(i, salt + 47))
+		var alt_opp_source := _new_match(config, first, {}, {}, emotion_seed)
+		var opp_sides: Dictionary = base_sides.duplicate(true)
+		opp_sides[Rules.SIDE_OPP] = alt_opp_source.sides[Rules.SIDE_OPP].duplicate(true)
+
+		var baseline := _match_from_snapshot(config, first, base_sides,
+			emotion_seed, _seed_value(i, salt + 501))
+		seed(play_seed)
+		var base_result: Dictionary = _ai.simulate(baseline, style_you, style_opp)
+		var base_winner := String(base_result.get("winner", ""))
+		var base_value := _outcome_value(base_winner)
+		a_matches += 1
+		a_score += 1.0 if base_winner == a_side else (0.5 if base_winner == "" else 0.0)
+
+		var you_redraw := _match_from_snapshot(config, first, you_sides,
+			emotion_seed, _seed_value(i, salt + 502))
+		seed(play_seed)
+		var you_result: Dictionary = _ai.simulate(you_redraw, style_you, style_opp)
+		_collect_pair_values(out, base_value,
+			_outcome_value(String(you_result.get("winner", ""))))
+
+		var opp_redraw := _match_from_snapshot(config, first, opp_sides,
+			emotion_seed, _seed_value(i, salt + 503))
+		seed(play_seed)
+		var opp_result: Dictionary = _ai.simulate(opp_redraw, style_you, style_opp)
+		_collect_pair_values(out, base_value,
+			_outcome_value(String(opp_result.get("winner", ""))))
+	out["a_winrate"] = 50.0 if a_matches == 0 else a_score / float(a_matches) * 100.0
+	return out
+
+
+## Сколько матчей нужно, чтобы двусторонний 95%-тест отличил сильную политику от слабой.
+func _format_detect(winrate_pct: float) -> String:
+	var edge: float = absf(winrate_pct - 50.0) / 100.0
+	if edge < 0.005:
+		return "не отличима"
+	var n: float = pow(0.98 / edge, 2.0)
+	if n > 99999.0:
+		return "> 99 999"
+	return "%d" % int(round(n))
+
+
+## Прогоняет обычное зеркало основной политики и на каждом её ходе спрашивает, что
+## выбрала бы эталонная. Тень не влияет на матч: сравниваются только решения.
+func _run_shadow_agreement(config: Dictionary, style: String, shadow: String,
+		matches: int, salt: int) -> Dictionary:
+	_ai.reset_shadow(Rules.SIDE_YOU, shadow)
+	for i in matches:
+		_seed_for(i, salt)
+		var first := Rules.SIDE_YOU if i % 2 == 0 else Rules.SIDE_OPP
+		var m := _new_match(config, first, {}, {}, _seed_value(i, salt) ^ 0x5EEDC0DE)
+		_ai.simulate(m, style, style)
+	var out := {
+		"total": _ai.shadow_total,
+		"same_type": _ai.shadow_same_type,
+		"same_full": _ai.shadow_same_full,
+	}
+	_ai.reset_shadow("", "")
+	return out
+
+
+# --------------------------------------- exact-action agency diagnostics ---
+
+## Не новая механика, а диагностический runner production-контракта. Baseline играет
+## детерминированный verdict_reserve, но в каждой точке перечисляются ФИЗИЧЕСКИЕ
+## альтернативы: exact hand_index × target; в клинче — pass + exact legal card.
+## Каждая альтернатива ветвится ровно один раз, затем обе стороны снова следуют baseline.
+func _agency_actions_suite() -> void:
+	var quick := OS.get_cmdline_user_args().has("--quick")
+	var matches := 8 if quick else 250
+	if OS.get_cmdline_user_args().has("--long") and not quick:
+		matches = 500
+	var production := _candidate_config("agency_actions_production", true, true, true)
+	var aggregate := {
+		"all": _blank_agency_row(),
+		"main": _blank_agency_row(),
+		"clinch": _blank_agency_row(),
+		"thirds": [_blank_agency_row(), _blank_agency_row(), _blank_agency_row()],
+		"matches": 0,
+		"baseline_replay_mismatch": 0,
+		"branch_prefix_mismatch": 0,
+		"invalid_branches": 0,
+		"guard_hits": 0,
+	}
+
+	print("Production: U3/T8/R9, H5=1 reserve U+4, K2, B=3Р+1Т, snapshot KO,")
+	print("Audience gate 2/4, emotion cards, A3/combo payoff; policy=verdict_reserve.")
+	print("Каждый branch стартует из одного initial snapshot. Перед ordinal N обе RNG-ветки")
+	print("получают hash(match_seed, N): branch не наследует случайный сдвиг прошлого выбора.")
+	print("quick=%s, initial snapshots=%d.\n" % [str(quick), matches])
+
+	var symmetry := _agency_canon_symmetry_invariant(production, quick)
+	print("--- 0. PRODUCTION SETUP / SYMMETRY INVARIANT ---")
+	print("canon override mirror: YOU %.1f%%, first %.1f%%; materialized Bases: %s; n=%d" % [
+		float(symmetry.you_rate), float(symmetry.first_rate),
+		"OK" if bool(symmetry.materialized) else "FAIL", int(symmetry.matches)])
+	if not bool(symmetry.ok):
+		_failures += 1
+		print("FAIL: canon-vs-canon вышел за широкий симметрийный коридор 35–65%%.")
+	print("")
+
+	for i in matches:
+		var first := Rules.SIDE_YOU if i % 2 == 0 else Rules.SIDE_OPP
+		var deck_seed := _seed_value(i, 6100)
+		var emotion_seed := _seed_value(i, 6111) ^ 0x5EEDC0DE
+		var setup_seed := _seed_value(i, 6122)
+		var run_seed := _seed_value(i, 6133)
+		seed(deck_seed)
+		var source := _new_match(production, first, {}, {}, emotion_seed)
+		var initial_sides: Dictionary = source.sides.duplicate(true)
+
+		var baseline := _agency_run(production, first, initial_sides, emotion_seed,
+			setup_seed, run_seed)
+		var replay := _agency_run(production, first, initial_sides, emotion_seed,
+			setup_seed, run_seed)
+		aggregate.matches += 1
+		if String(baseline.signature) != String(replay.signature):
+			aggregate.baseline_replay_mismatch += 1
+		if bool(baseline.guard_hit) or bool(replay.guard_hit):
+			aggregate.guard_hits += 1
+		var baseline_value := _outcome_value(String(baseline.winner))
+		var nodes: Array = baseline.nodes
+		var total_nodes := nodes.size()
+		for ni in total_nodes:
+			var node: Dictionary = nodes[ni]
+			node["third"] = mini(2, int(float(ni) * 3.0 / float(maxi(1, total_nodes))))
+			node["winner_sensitive"] = false
+			node["tested_alternatives"] = 0
+			node["changed_alternatives"] = 0
+			node["strict_flips"] = 0
+			node["both_decisive"] = 0
+			var selected_key := String(node.selected_key)
+			for option_value in node.options:
+				var option: Dictionary = option_value
+				var alternative_key := String(option.key)
+				if alternative_key == selected_key:
+					continue
+				var branch := _agency_run(production, first, initial_sides, emotion_seed,
+					setup_seed, run_seed, baseline.script, ni, alternative_key)
+				if bool(branch.prefix_mismatch):
+					aggregate.branch_prefix_mismatch += 1
+					continue
+				if bool(branch.invalid):
+					aggregate.invalid_branches += 1
+					continue
+				if bool(branch.guard_hit):
+					aggregate.guard_hits += 1
+				var branch_value := _outcome_value(String(branch.winner))
+				node.tested_alternatives += 1
+				if branch_value != baseline_value:
+					node.winner_sensitive = true
+					node.changed_alternatives += 1
+				if baseline_value != 0 and branch_value != 0:
+					node.both_decisive += 1
+					if baseline_value == -branch_value:
+						node.strict_flips += 1
+			_agency_collect_node(aggregate.all, node)
+			_agency_collect_node(aggregate[String(node.phase)], node)
+			_agency_collect_node(aggregate.thirds[int(node.third)], node)
+
+	print("--- A. ГДЕ ВООБЩЕ ЕСТЬ ВЫБОР ---")
+	print("%-12s | nodes | 1 option | >=2 options | winner-sensitive | alt verdict Δ | strict flip/all | strict/decisive" % "срез")
+	_print_agency_row("все", aggregate.all)
+	_print_agency_row("main", aggregate.main)
+	_print_agency_row("clinch", aggregate.clinch)
+	print("")
+
+	print("--- B. ПО ТРЕТЯМ BASELINE DECISION ORDINAL ---")
+	for ti in 3:
+		_print_agency_row(["первая", "средняя", "финальная"][ti],
+			aggregate.thirds[ti])
+	print("")
+
+	print("--- C. REPLAY / BRANCH INVARIANTS ---")
+	print("baseline replay mismatch: %d/%d; prefix mismatch: %d; invalid branches: %d; guard hits: %d" % [
+		int(aggregate.baseline_replay_mismatch), int(aggregate.matches),
+		int(aggregate.branch_prefix_mismatch), int(aggregate.invalid_branches),
+		int(aggregate.guard_hits)])
+	if int(aggregate.baseline_replay_mismatch) > 0 \
+			or int(aggregate.branch_prefix_mismatch) > 0 \
+			or int(aggregate.invalid_branches) > 0 \
+			or int(aggregate.guard_hits) > 0:
+		_failures += 1
+	print("winner-sensitive node = хотя бы одна exact альтернатива дала иной тернарный")
+	print("вердикт; strict flip = YOU↔OPP, ничья не считается. Треть — ordinal baseline,")
+	print("не нормализованная длительность counterfactual branch.")
+
+
+func _blank_agency_row() -> Dictionary:
+	return {
+		"nodes": 0, "one_option": 0, "multi_option": 0,
+		"winner_sensitive": 0, "alternatives": 0,
+		"changed_alternatives": 0, "strict_flips": 0, "both_decisive": 0,
+	}
+
+
+func _agency_collect_node(row: Dictionary, node: Dictionary) -> void:
+	row.nodes += 1
+	if int((node.options as Array).size()) <= 1:
+		row.one_option += 1
+	else:
+		row.multi_option += 1
+	if bool(node.winner_sensitive):
+		row.winner_sensitive += 1
+	row.alternatives += int(node.tested_alternatives)
+	row.changed_alternatives += int(node.changed_alternatives)
+	row.strict_flips += int(node.strict_flips)
+	row.both_decisive += int(node.both_decisive)
+
+
+func _print_agency_row(label: String, row: Dictionary) -> void:
+	print("%-12s | %5d | %8.1f%% | %11.1f%% | %15.1f%% | %12.1f%% | %14.1f%% | %14.1f%%" % [
+		label, int(row.nodes),
+		_pct(int(row.one_option), int(row.nodes)),
+		_pct(int(row.multi_option), int(row.nodes)),
+		_pct(int(row.winner_sensitive), int(row.nodes)),
+		_pct(int(row.changed_alternatives), int(row.alternatives)),
+		_pct(int(row.strict_flips), int(row.alternatives)),
+		_pct(int(row.strict_flips), int(row.both_decisive))])
+
+
+## Полный exact-action match. replay_script форсирует только префикс ДО branch_ordinal;
+## сама альтернатива задаётся branch_key, а после неё снова включается verdict_reserve.
+func _agency_run(config: Dictionary, first: String, initial_sides: Dictionary,
+		emotion_seed: int, setup_seed: int, run_seed: int,
+		replay_script: Array = [], branch_ordinal: int = -1,
+		branch_key: String = "") -> Dictionary:
+	var m := _match_from_snapshot(config, first, initial_sides, emotion_seed, setup_seed)
+	_ai.set_style(Rules.SIDE_YOU, "verdict_reserve")
+	_ai.set_style(Rules.SIDE_OPP, "verdict_reserve")
+	var nodes: Array = []
+	var script: Array = []
+	var signature_parts: Array = []
+	var ordinal := 0
+	var guard := 0
+	var prefix_mismatch := false
+	var invalid := false
+	while not m.game_over and guard < 1200:
+		guard += 1
+		_agency_reseed(m, _agency_keyed_seed(run_seed, ordinal))
+		if m.clinch_active():
+			var clinch_options := _agency_clinch_options(m)
+			var clinch_key := _agency_select_key(m, clinch_options, replay_script,
+				branch_ordinal, branch_key, ordinal, true)
+			if clinch_key == "" or not _agency_has_key(clinch_options, clinch_key):
+				prefix_mismatch = ordinal < branch_ordinal
+				invalid = not prefix_mismatch
+				break
+			var clinch_node := _agency_node(m, "clinch", ordinal, clinch_options,
+				clinch_key)
+			nodes.append(clinch_node)
+			script.append(clinch_key)
+			signature_parts.append("%s>%s" % [_agency_state_hash(m), clinch_key])
+			var was_active: bool = bool(m.clinch_active())
+			if not _agency_apply_option(m, _agency_option_for_key(clinch_options,
+					clinch_key)):
+				invalid = true
+				break
+			ordinal += 1
+			if was_active and not m.clinch_active() and not m.game_over:
+				m.advance()
+			continue
+
+		var status: String = m.begin_turn(m.current)
+		if status == "ko" or status == "crowd" or status == "end" or status == "over":
+			break
+		var main_options := _agency_main_options(m, status)
+		if main_options.is_empty():
+			invalid = true
+			break
+		var main_key := _agency_select_key(m, main_options, replay_script,
+			branch_ordinal, branch_key, ordinal, false)
+		if main_key == "" or not _agency_has_key(main_options, main_key):
+			prefix_mismatch = ordinal < branch_ordinal
+			invalid = not prefix_mismatch
+			break
+		var main_node := _agency_node(m, "main", ordinal, main_options, main_key)
+		nodes.append(main_node)
+		script.append(main_key)
+		signature_parts.append("%s>%s" % [_agency_state_hash(m), main_key])
+		var selected := _agency_option_for_key(main_options, main_key)
+		if not _agency_apply_option(m, selected):
+			invalid = true
+			break
+		ordinal += 1
+		if String(selected.kind) == "open_clinch":
+			if not m.clinch_active() and not m.game_over:
+				invalid = true
+				break
+		elif not m.game_over:
+			m.advance()
+	if not m.game_over:
+		m._end_by_decision()
+	var guard_hit := guard >= 1200
+	signature_parts.append("%s|%s|%s" % [
+		_agency_state_hash(m), String(m.winner), String(m.end_reason)])
+	return {
+		"winner": String(m.winner), "reason": String(m.end_reason),
+		"nodes": nodes, "script": script,
+		"signature": "#".join(signature_parts),
+		"prefix_mismatch": prefix_mismatch, "invalid": invalid,
+		"guard_hit": guard_hit,
+	}
+
+
+func _agency_node(m: RefCounted, phase: String, ordinal: int,
+		options: Array, selected_key: String) -> Dictionary:
+	return {
+		"phase": phase, "ordinal": ordinal,
+		"side": String(m.clinch_pending_side()) if phase == "clinch" else String(m.current),
+		"options": options.duplicate(true), "selected_key": selected_key,
+	}
+
+
+func _agency_main_options(m: RefCounted, status: String) -> Array:
+	var out: Array = []
+	var side := String(m.current)
+	if status == "pass":
+		out.append(_agency_option("turn_pass", "", -1, -1, {}))
+		return out
+	if status == "reframe":
+		for hand_index in m.recovery_indices(side):
+			var recovery_card: Dictionary = m.sides[side].hand[int(hand_index)]
+			out.append(_agency_option("reframe", Rules.TYPE_USTANOVKA,
+				int(hand_index), -1, recovery_card))
+		return out
+	var legal: Array = m.legal_types(side)
+	var hand: Array = m.sides[side].hand
+	var opp_lines: Array = m.sides[m.other(side)].lines
+	for hand_index in hand.size():
+		var card: Dictionary = hand[hand_index]
+		var type := String(card.get("type", ""))
+		if not legal.has(type):
+			continue
+		var named_id := String(card.get("named", ""))
+		if type == Rules.TYPE_RAZBOR:
+			for target in opp_lines.size():
+				var kind := "main"
+				if bool(m.clinch_enabled):
+					kind = "open_clinch" if named_id == "" \
+						or bool(card.get("clinch", false)) else "named"
+				elif named_id != "":
+					kind = "named"
+				out.append(_agency_option(kind, type, hand_index, target, card))
+		else:
+			var kind := "named" if named_id != "" else "main"
+			out.append(_agency_option(kind, type, hand_index, -1, card))
+	return out
+
+
+func _agency_clinch_options(m: RefCounted) -> Array:
+	var out: Array = [_agency_option("clinch_pass", "", -1, -1, {})]
+	var side := String(m.clinch_pending_side())
+	var phase := String(m.clinch.get("phase", ""))
+	if not m.clinch_can_act(side):
+		return out
+	for hand_index in m.clinch_legal_indices(side, phase):
+		var card: Dictionary = m.sides[side].hand[int(hand_index)]
+		out.append(_agency_option("clinch_play", String(card.get("type", "")),
+			int(hand_index), -1, card))
+	return out
+
+
+func _agency_option(kind: String, type: String, hand_index: int,
+		target: int, card: Dictionary) -> Dictionary:
+	var card_copy := card.duplicate(true)
+	var key := "%s|%s|%d|%d|%s" % [
+		kind, type, hand_index, target, _agency_card_key(card_copy)]
+	return {
+		"kind": kind, "type": type, "hand_index": hand_index,
+		"target": target, "card": card_copy, "key": key,
+	}
+
+
+func _agency_select_key(m: RefCounted, options: Array, replay_script: Array,
+		branch_ordinal: int, branch_key: String, ordinal: int,
+		in_clinch: bool) -> String:
+	if branch_ordinal >= 0 and ordinal < branch_ordinal:
+		if ordinal >= replay_script.size():
+			return ""
+		return String(replay_script[ordinal])
+	if branch_ordinal >= 0 and ordinal == branch_ordinal:
+		return branch_key
+	return _agency_policy_clinch_key(m, options) if in_clinch \
+		else _agency_policy_main_key(m, options)
+
+
+func _agency_policy_main_key(m: RefCounted, options: Array) -> String:
+	if options.size() == 1:
+		return String((options[0] as Dictionary).key)
+	if String((options[0] as Dictionary).kind) == "reframe":
+		return String((options[0] as Dictionary).key)
+	var side := String(m.current)
+	var act: Dictionary = _ai.pick(m, side, "verdict_reserve")
+	if act.is_empty():
+		return ""
+	var type := String(act.get("type", ""))
+	var target := int(act.get("target", -1))
+	var named_index := int(act.get("named_index", -1))
+	if named_index >= 0:
+		var named_kind := "open_clinch" if bool(act.get("named_clinch", false)) else "named"
+		for option_value in options:
+			var option: Dictionary = option_value
+			if String(option.kind) == named_kind and int(option.hand_index) == named_index \
+					and (target < 0 or int(option.target) == target):
+				return String(option.key)
+	var candidates: Array = []
+	for option_value in options:
+		var option: Dictionary = option_value
+		if String(option.type) != type:
+			continue
+		if target >= 0 and int(option.target) != target:
+			continue
+		if String((option.card as Dictionary).get("named", "")) != "":
+			continue
+		candidates.append(option)
+	if candidates.is_empty():
+		for option_value in options:
+			var option: Dictionary = option_value
+			if String(option.type) == type and (target < 0 or int(option.target) == target):
+				candidates.append(option)
+	if candidates.is_empty():
+		return ""
+	if type == Rules.TYPE_RAZBOR:
+		var prefer: bool = bool(_ai.atk_prefer_steal(m, side, m.other(side),
+			int((candidates[0] as Dictionary).target)))
+		for option_value in candidates:
+			var option: Dictionary = option_value
+			if bool((option.card as Dictionary).get("steals", false)) == prefer:
+				return String(option.key)
+	return String((candidates[0] as Dictionary).key)
+
+
+func _agency_policy_clinch_key(m: RefCounted, options: Array) -> String:
+	var pass_key := String((options[0] as Dictionary).key)
+	if options.size() <= 1:
+		return pass_key
+	var side := String(m.clinch_pending_side())
+	var attacker := String(m.clinch.get("attacker", ""))
+	var defender := String(m.clinch.get("defender", ""))
+	var idx := int(m.clinch.get("idx", -1))
+	if idx < 0 or idx >= m.sides[defender].lines.size():
+		return pass_key
+	var line: Dictionary = m.sides[defender].lines[idx]
+	var play: bool = bool(_ai.def_will_clinch(m, side, line) if side == defender \
+		else _ai.atk_will_clinch(m, side, line))
+	if not play:
+		return pass_key
+	if side == defender:
+		var answer_index := int(_ai.def_answer_index(m, side))
+		if answer_index >= 0:
+			for option_value in options:
+				var option: Dictionary = option_value
+				if int(option.hand_index) == answer_index:
+					return String(option.key)
+	else:
+		var prefer: bool = bool(_ai.atk_prefer_steal(m, attacker, defender, idx))
+		for option_value in options:
+			var option: Dictionary = option_value
+			if String(option.kind) == "clinch_play" \
+					and bool((option.card as Dictionary).get("steals", false)) == prefer:
+				return String(option.key)
+	for option_value in options:
+		var option: Dictionary = option_value
+		if String(option.kind) == "clinch_play":
+			return String(option.key)
+	return pass_key
+
+
+func _agency_apply_option(m: RefCounted, option: Dictionary) -> bool:
+	var kind := String(option.kind)
+	var side := String(m.clinch_pending_side()) if kind.begins_with("clinch_") \
+		else String(m.current)
+	match kind:
+		"turn_pass":
+			return true
+		"reframe":
+			return not m.play_redeploy(side, int(option.hand_index)).is_empty()
+		"main":
+			return not m.play_action(side, String(option.type), int(option.target),
+				int(option.hand_index)).is_empty()
+		"named":
+			return not m.play_named(side, int(option.hand_index),
+				int(option.target)).is_empty()
+		"open_clinch":
+			var card: Dictionary = option.card
+			return not m.begin_clinch(side, m.other(side), int(option.target),
+				bool(card.get("steals", false)), int(option.hand_index)).is_empty()
+		"clinch_pass":
+			return not m.clinch_submit("pass").is_empty()
+		"clinch_play":
+			var card: Dictionary = option.card
+			return not m.clinch_submit("play", bool(card.get("steals", false)),
+				int(option.hand_index)).is_empty()
+	return false
+
+
+func _agency_has_key(options: Array, key: String) -> bool:
+	for option_value in options:
+		if String((option_value as Dictionary).key) == key:
+			return true
+	return false
+
+
+func _agency_option_for_key(options: Array, key: String) -> Dictionary:
+	for option_value in options:
+		var option: Dictionary = option_value
+		if String(option.key) == key:
+			return option
+	return {}
+
+
+func _agency_reseed(m: RefCounted, seed_value: int) -> void:
+	if m.has_method("agency_reseed"):
+		m.agency_reseed(seed_value)
+	else:
+		seed(seed_value)
+
+
+func _agency_keyed_seed(run_seed: int, ordinal: int) -> int:
+	var value: int = (run_seed ^ (ordinal + 1) * 0x9E3779B1) & 0x7FFFFFFF
+	value = (((value >> 16) ^ value) * 0x45D9F3B) & 0x7FFFFFFF
+	value = (((value >> 16) ^ value) * 0x45D9F3B) & 0x7FFFFFFF
+	return ((value >> 16) ^ value) & 0x7FFFFFFF
+
+
+func _agency_state_hash(m: RefCounted) -> String:
+	var state := {
+		"current": String(m.current), "turn": int(m.turn_count),
+		"game_over": bool(m.game_over), "winner": String(m.winner),
+		"reason": String(m.end_reason), "hall": int(m.hall), "heat": int(m.heat),
+		"captures": int(m.captures), "capture_theses": int(m.capture_theses),
+		"crowd_streak": m.crowd_streak.duplicate(true),
+		"named_played": m.named_played.duplicate(true),
+		"sides": m.sides.duplicate(true), "clinch": m.clinch.duplicate(true),
+		"emotion_you": m.emotion_state(Rules.SIDE_YOU).duplicate(true),
+		"emotion_opp": m.emotion_state(Rules.SIDE_OPP).duplicate(true),
+		"serials": [
+			int(m.get("_thesis_serial")), int(m.get("_frame_serial")),
+			int(m.get("_action_serial")), int(m.get("_play_serial")),
+			int(m.get("_relation_serial")),
+		],
+	}
+	return str(hash(JSON.stringify(state)))
+
+
+func _agency_card_key(card: Dictionary) -> String:
+	if card.is_empty():
+		return "-"
+	return "%s/%s/%s/%s/%s/%s/%s/%s" % [
+		String(card.get("type", "")), String(card.get("name", "")),
+		String(card.get("named", "")), str(bool(card.get("steals", false))),
+		String(card.get("scheme", "")), String(card.get("suit", "")),
+		String(card.get("hook", "")), String(card.get("claim_id", "")),
+	]
+
+
+## Regression для найденного setup-bug: custom deck override обязан получить exact
+## стартовый thesis object ДО opening reserve. Широкий 35–65% коридор ловит прежние
+## ~75%, но не превращает небольшой quick в статистический баланс-сертификат.
+func _agency_canon_symmetry_invariant(config: Dictionary, quick: bool) -> Dictionary:
+	var canon := {"u": U, "t": T, "r": R, "steals": STEAL}
+	var materialized := true
+	seed(_seed_value(0, 6200))
+	var probe := _new_match(config, Rules.SIDE_YOU, canon, canon,
+		_seed_value(0, 6201) ^ 0x5EEDC0DE)
+	for side in [Rules.SIDE_YOU, Rules.SIDE_OPP]:
+		var lines: Array = probe.sides[side].lines
+		if lines.is_empty() or (lines[0] as Dictionary).get("thesis_stack", []).size() != BASE:
+			materialized = false
+	var n := 120 if quick else 400
+	var mirror := _run_candidate_cell(config, "verdict_reserve", "verdict_reserve",
+		n, canon, canon, 6210)
+	var decisive := int(mirror.wins_you) + int(mirror.wins_opp)
+	var you_rate := _pct(int(mirror.wins_you), decisive)
+	var first_rate := _pct(int(mirror.first_wins), int(mirror.decisive))
+	return {
+		"matches": n, "materialized": materialized,
+		"you_rate": you_rate, "first_rate": first_rate,
+		"ok": materialized and you_rate >= 35.0 and you_rate <= 65.0 \
+			and first_rate >= 35.0 and first_rate <= 65.0,
+	}
