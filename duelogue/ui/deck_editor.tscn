@@ -60,63 +60,58 @@ offset_right = -24.0
 offset_bottom = -40.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/separation = 20
+theme_override_constants/separation = 16
 
 [node name="LeftPanel" type="ScrollContainer" parent="Body"]
-custom_minimum_size = Vector2(400, 0)
+custom_minimum_size = Vector2(320, 0)
 layout_mode = 2
+horizontal_scroll_mode = 0
 
 [node name="LeftBox" type="VBoxContainer" parent="Body/LeftPanel"]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/separation = 14
+theme_override_constants/separation = 10
 
 [node name="SlotsTitle" type="Label" parent="Body/LeftPanel/LeftBox"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.8118, 0.8392, 0.8784, 1)
-theme_override_font_sizes/font_size = 15
-text = "СОСТАВ ОБОЙМЫ — слоты по типам"
+theme_override_font_sizes/font_size = 14
+text = "СОСТАВ ОБОЙМЫ"
 
 [node name="SlotsBox" type="VBoxContainer" parent="Body/LeftPanel/LeftBox"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_constants/separation = 12
-
-[node name="CorridorHint" type="Label" parent="Body/LeftPanel/LeftBox"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.5412, 0.5765, 0.6392, 1)
-theme_override_font_sizes/font_size = 12
-text = "Коридоры — из симов §11.4: за краями обойма заведомо
-перекошена (напр. Тезисы 12 → доминанта 72%). Жёлтый
-счётчик = вне коридора; играть можно — цена известна."
-autowrap_mode = 3
+theme_override_constants/separation = 8
 
 [node name="SizeTitle" type="Label" parent="Body/LeftPanel/LeftBox"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.8118, 0.8392, 0.8784, 1)
-theme_override_font_sizes/font_size = 15
-text = "РАЗМЕР ОБОЙМЫ — те же пропорции, другой масштаб"
+theme_override_font_sizes/font_size = 14
+text = "РАЗМЕР ОБОЙМЫ"
 
 [node name="SizeBox" type="VBoxContainer" parent="Body/LeftPanel/LeftBox"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 6
 
 [node name="NamedTitle" type="Label" parent="Body/LeftPanel/LeftBox"]
 layout_mode = 2
+mouse_filter = 0
 theme_override_colors/font_color = Color(0.8118, 0.8392, 0.8784, 1)
-theme_override_font_sizes/font_size = 15
-text = "ИМЕННЫЕ ПРИЁМЫ — по 1 копии, замещают карту своей базы"
+theme_override_font_sizes/font_size = 14
+tooltip_text = "По 1 копии, замещают карту своей базы"
+text = "ИМЕННЫЕ ПРИЁМЫ"
 
 [node name="NamedBox" type="VBoxContainer" parent="Body/LeftPanel/LeftBox"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 4
 
 [node name="TotalLabel" type="Label" parent="Body/LeftPanel/LeftBox"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_font_sizes/font_size = 15
+theme_override_font_sizes/font_size = 14
+autowrap_mode = 3
 
 [node name="WarnLabel" type="Label" parent="Body/LeftPanel/LeftBox"]
 unique_name_in_owner = true
@@ -133,7 +128,7 @@ text = "Сохранить обойму"
 
 [node name="PresetRow" type="HBoxContainer" parent="Body/LeftPanel/LeftBox"]
 layout_mode = 2
-theme_override_constants/separation = 10
+theme_override_constants/separation = 8
 
 [node name="PresetClassicBtn" type="Button" parent="Body/LeftPanel/LeftBox/PresetRow"]
 unique_name_in_owner = true

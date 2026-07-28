@@ -90,25 +90,28 @@ func _to_profile() -> Dictionary:
 func _build_slot_rows() -> void:
 	for def in SLOT_DEFS:
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 10)
+		row.add_theme_constant_override("separation", 8)
 		var name_l := Label.new()
-		name_l.text = "%s  (коридор %d–%d)" % [def.label, int(def.lo), int(def.hi)]
-		name_l.custom_minimum_size = Vector2(280, 0)
-		name_l.add_theme_font_size_override("font_size", 14)
+		name_l.text = String(def.label)
+		name_l.tooltip_text = "Коридор: %d–%d карт" % [int(def.lo), int(def.hi)]
+		name_l.mouse_filter = Control.MOUSE_FILTER_STOP
+		name_l.custom_minimum_size = Vector2(140, 0)
+		name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_l.add_theme_font_size_override("font_size", 13)
 		row.add_child(name_l)
 		var minus := Button.new()
 		minus.text = "−"
-		minus.custom_minimum_size = Vector2(34, 30)
+		minus.custom_minimum_size = Vector2(28, 26)
 		minus.pressed.connect(_bump.bind(String(def.key), -1))
 		row.add_child(minus)
 		var count_l := Label.new()
-		count_l.custom_minimum_size = Vector2(44, 0)
+		count_l.custom_minimum_size = Vector2(34, 0)
 		count_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		count_l.add_theme_font_size_override("font_size", 17)
+		count_l.add_theme_font_size_override("font_size", 16)
 		row.add_child(count_l)
 		var plus := Button.new()
 		plus.text = "+"
-		plus.custom_minimum_size = Vector2(34, 30)
+		plus.custom_minimum_size = Vector2(28, 26)
 		plus.pressed.connect(_bump.bind(String(def.key), 1))
 		row.add_child(plus)
 		_slots_box.add_child(row)
@@ -119,26 +122,26 @@ func _build_slot_rows() -> void:
 ## из SIZE_PRESETS — тестировать 20/24/30 в один клик, не гоняя все счётчики руками.
 func _build_size_controls() -> void:
 	var stepper := HBoxContainer.new()
-	stepper.add_theme_constant_override("separation", 10)
+	stepper.add_theme_constant_override("separation", 8)
 	var minus := Button.new()
 	minus.text = "−"
-	minus.custom_minimum_size = Vector2(34, 30)
+	minus.custom_minimum_size = Vector2(28, 26)
 	minus.pressed.connect(_step_total.bind(-1))
 	stepper.add_child(minus)
 	_size_total_label = Label.new()
-	_size_total_label.custom_minimum_size = Vector2(60, 0)
+	_size_total_label.custom_minimum_size = Vector2(52, 0)
 	_size_total_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_size_total_label.add_theme_font_size_override("font_size", 17)
+	_size_total_label.add_theme_font_size_override("font_size", 16)
 	stepper.add_child(_size_total_label)
 	var plus := Button.new()
 	plus.text = "+"
-	plus.custom_minimum_size = Vector2(34, 30)
+	plus.custom_minimum_size = Vector2(28, 26)
 	plus.pressed.connect(_step_total.bind(1))
 	stepper.add_child(plus)
 	_size_box.add_child(stepper)
 
 	var presets := HBoxContainer.new()
-	presets.add_theme_constant_override("separation", 8)
+	presets.add_theme_constant_override("separation", 6)
 	var hint := Label.new()
 	hint.text = "быстро:"
 	hint.add_theme_font_size_override("font_size", 12)
@@ -148,34 +151,25 @@ func _build_size_controls() -> void:
 	for n in SIZE_PRESETS:
 		var b := Button.new()
 		b.text = str(int(n))
-		b.custom_minimum_size = Vector2(44, 28)
-		b.add_theme_font_size_override("font_size", 13)
+		b.custom_minimum_size = Vector2(40, 26)
+		b.add_theme_font_size_override("font_size", 12)
 		b.pressed.connect(_scale_to.bind(int(n)))
 		presets.add_child(b)
 	_size_box.add_child(presets)
 
 
+## Аккуратный список тумблеров: правило приёма — в tooltip (наведение), не под именем,
+## чтобы список не раздувался абзацами текста.
 func _build_named_list() -> void:
 	for id in NamedCards.ids():
 		var card := NamedCards.make(String(id))
-		var box := VBoxContainer.new()
-		box.add_theme_constant_override("separation", 2)
 		var check := CheckBox.new()
 		check.text = "%s — %s" % [String(card.name), _base_label(card)]
 		check.tooltip_text = String(card.text)
-		check.add_theme_font_size_override("font_size", 14)
+		check.add_theme_font_size_override("font_size", 13)
 		check.button_pressed = (_deck.named as Array).has(id)
 		check.toggled.connect(_on_named_toggled.bind(String(id)))
-		box.add_child(check)
-		var rule := Label.new()
-		rule.text = String(card.text)
-		rule.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		rule.custom_minimum_size = Vector2(0, 0)
-		rule.add_theme_font_size_override("font_size", 11)
-		rule.add_theme_color_override("font_color", Color(0.63, 0.67, 0.74))
-		rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		box.add_child(rule)
-		_named_box.add_child(box)
+		_named_box.add_child(check)
 		_named_checks[String(id)] = check
 
 
