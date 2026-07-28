@@ -8,12 +8,24 @@ extends Control
 ##
 ## Канон и коридоры — индикаторы, не запреты: полигон должен позволять и заведомо кривые
 ## обоймы (симы D/A показали цену краёв — редактор их подсвечивает, но не запрещает).
+##
+## Правая колонка — живой грид ВСЕХ карт текущей обоймы (настоящие виджеты ui/card/card.tscn,
+## та же техника «add_child → setup», что и рука в debate_screen). Именные подставлены на
+## место замещённой ваниль-карты (зеркалит named_cards.inject) — превью показывает ИТОГ,
+## а не счётчики отдельно от приёмов. Слева — блок «РАЗМЕР ОБОЙМЫ»: масштабирует все счётчики
+## к новому итогу, сохраняя текущее СООТНОШЕНИЕ типов (largest remainder), чтобы можно было
+## гонять один и тот же архетип на 20/24/30 картах без ручного пересчёта каждого слота.
 
 const NamedCards := preload("res://duelogue/core/cards/named_cards.gd")
 const C := preload("res://duelogue/core/cards/card_types.gd")
+const DeckLib := preload("res://duelogue/core/cards/deck.gd")
+const NarEngine := preload("res://duelogue/core/narrative/narrative_engine.gd")
+const CardScene := preload("res://duelogue/ui/card/card.tscn")
 
 const CANON_TOTAL := 20
-const SLOT_MAX := 15
+const SLOT_MAX := 40
+const SIZE_PRESETS := [20, 24, 30]
+const GRID_COLUMNS := 4
 ## Ряды счётчиков: ключ рабочей обоймы → лейбл + сим-коридор (подсветка краёв).
 const SLOT_DEFS := [
 	{"key": "u", "label": "Установки", "lo": 2, "hi": 5},
@@ -21,25 +33,33 @@ const SLOT_DEFS := [
 	{"key": "plain", "label": "Разборы (обычные)", "lo": 4, "hi": 10},
 	{"key": "steals", "label": "Кражи", "lo": 1, "hi": 3},
 ]
+const SLOT_KEYS := ["u", "t", "plain", "steals"]
 
 var _deck := {}           ## рабочая копия: {u, t, plain, steals, named: []}
 var _count_labels := {}   ## key → Label счётчика
 var _named_checks := {}   ## id приёма → CheckBox
+var _size_total_label: Label
+var _nar := NarEngine.new()   ## только device_label() — чтение мехлейбла карты, без rng-состояния
 
 @onready var _slots_box: VBoxContainer = %SlotsBox
 @onready var _named_box: VBoxContainer = %NamedBox
+@onready var _size_box: VBoxContainer = %SizeBox
 @onready var _total_label: Label = %TotalLabel
 @onready var _warn_label: Label = %WarnLabel
 @onready var _save_btn: Button = %SaveBtn
+@onready var _card_grid: GridContainer = %CardGrid
+@onready var _grid_title: Label = %GridTitle
 
 
 func _ready() -> void:
+	_card_grid.columns = GRID_COLUMNS
 	%BackBtn.pressed.connect(_to_menu)
 	_save_btn.pressed.connect(_save)
 	%PresetClassicBtn.pressed.connect(_preset.bind(false))
 	%PresetNamedBtn.pressed.connect(_preset.bind(true))
 	_deck = _from_profile(Profile.deck)
 	_build_slot_rows()
+	_build_size_controls()
 	_build_named_list()
 	_refresh()
 
@@ -95,6 +115,46 @@ func _build_slot_rows() -> void:
 		_count_labels[String(def.key)] = count_l
 
 
+## Блок «РАЗМЕР ОБОЙМЫ»: строка -/N/+ (шаг ±1 карта, ratio-preserving) + быстрые пресеты
+## из SIZE_PRESETS — тестировать 20/24/30 в один клик, не гоняя все счётчики руками.
+func _build_size_controls() -> void:
+	var stepper := HBoxContainer.new()
+	stepper.add_theme_constant_override("separation", 10)
+	var minus := Button.new()
+	minus.text = "−"
+	minus.custom_minimum_size = Vector2(34, 30)
+	minus.pressed.connect(_step_total.bind(-1))
+	stepper.add_child(minus)
+	_size_total_label = Label.new()
+	_size_total_label.custom_minimum_size = Vector2(60, 0)
+	_size_total_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_size_total_label.add_theme_font_size_override("font_size", 17)
+	stepper.add_child(_size_total_label)
+	var plus := Button.new()
+	plus.text = "+"
+	plus.custom_minimum_size = Vector2(34, 30)
+	plus.pressed.connect(_step_total.bind(1))
+	stepper.add_child(plus)
+	_size_box.add_child(stepper)
+
+	var presets := HBoxContainer.new()
+	presets.add_theme_constant_override("separation", 8)
+	var hint := Label.new()
+	hint.text = "быстро:"
+	hint.add_theme_font_size_override("font_size", 12)
+	hint.add_theme_color_override("font_color", Color(0.5412, 0.5765, 0.6392))
+	hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	presets.add_child(hint)
+	for n in SIZE_PRESETS:
+		var b := Button.new()
+		b.text = str(int(n))
+		b.custom_minimum_size = Vector2(44, 28)
+		b.add_theme_font_size_override("font_size", 13)
+		b.pressed.connect(_scale_to.bind(int(n)))
+		presets.add_child(b)
+	_size_box.add_child(presets)
+
+
 func _build_named_list() -> void:
 	for id in NamedCards.ids():
 		var card := NamedCards.make(String(id))
@@ -143,6 +203,47 @@ func _on_named_toggled(pressed: bool, id: String) -> void:
 	_refresh()
 
 
+func _step_total(delta: int) -> void:
+	_scale_to(_deck_total() + delta)
+
+
+## Меняет ИТОГ обоймы, сохраняя текущее соотношение u/t/plain/steals (largest remainder:
+## округляем доли вниз, недостающие до target карты раздаём слотам с наибольшим остатком —
+## сумма после округления обязана попасть в target точно). Состав пуст (total=0) — стартуем
+## от канона, а не от деления на ноль.
+func _scale_to(target: int) -> void:
+	target = maxi(1, target)
+	var basis: Dictionary = _deck
+	var basis_total := _deck_total()
+	if basis_total <= 0:
+		basis = {"u": 3, "t": 8, "plain": 7, "steals": 2}
+		basis_total = 20
+	var result := {}
+	var remainders := []   # [остаток, исходный индекс, ключ] — сортируем сами: sort_custom
+	var floor_sum := 0     # не гарантирует стабильность при равных долях, индекс — тай-брейк
+	for i in SLOT_KEYS.size():
+		var key: String = SLOT_KEYS[i]
+		var share := float(basis[key]) / float(basis_total) * float(target)
+		var whole := floori(share)
+		result[key] = whole
+		remainders.append([share - float(whole), i, key])
+		floor_sum += whole
+	remainders.sort_custom(func(a, b):
+		return a[0] > b[0] if a[0] != b[0] else a[1] < b[1])
+	for i in (target - floor_sum):
+		var key: String = remainders[i][2]
+		result[key] += 1
+	for key in SLOT_KEYS:
+		_deck[key] = clampi(int(result[key]), 0, SLOT_MAX)
+	if int(_deck.u) < 1:
+		_deck.u = 1
+	_refresh()
+
+
+func _deck_total() -> int:
+	return int(_deck.u) + int(_deck.t) + int(_deck.plain) + int(_deck.steals)
+
+
 func _preset(with_named: bool) -> void:
 	_deck = _from_profile(Profile.classic())
 	if with_named:
@@ -173,16 +274,18 @@ func _refresh() -> void:
 		# Подсветка краёв сим-коридоров (жёлтым): играть можно, но цена известна (§11.4).
 		l.add_theme_color_override("font_color",
 			Color(0.91, 0.91, 0.91) if v >= int(def.lo) and v <= int(def.hi) else Color(1.0, 0.82, 0.29))
-	var total := int(_deck.u) + int(_deck.t) + int(_deck.plain) + int(_deck.steals)
+	var total := _deck_total()
 	var named_n := (_deck.named as Array).size()
 	_total_label.text = "Всего карт: %d  (канон %d)   ·   именных внутри: %d" % [total, CANON_TOTAL, named_n]
 	_total_label.add_theme_color_override("font_color",
 		Color(0.44, 0.81, 0.5) if total == CANON_TOTAL else Color(1.0, 0.82, 0.29))
+	_size_total_label.text = str(total)
 	# Валидация замен: именных приёмов базы не может быть больше, чем карт этой базы.
 	var warn := _validate()
 	_warn_label.add_theme_color_override("font_color", Color(0.85, 0.35, 0.3))
 	_warn_label.text = warn
 	_save_btn.disabled = warn != ""
+	_build_card_grid(total)
 
 
 func _validate() -> String:
@@ -207,3 +310,67 @@ func _validate() -> String:
 			return "Именных приёмов базы «%s» больше, чем карт в счётчике (%d > %d) — добавь карт или сними приём." % [
 				labels[key], int(need[key]), int(_deck[key])]
 	return ""
+
+
+# ------------------------------------------------------------ грид карт -------
+
+## Живой грид: каждая карта текущей обоймы — настоящий виджет ui/card/card.tscn (та же
+## техника, что и рука в debate_screen._rebuild_hand — add_child в уже-живой контейнер,
+## затем сразу setup(), без combo_catalog-style двухфазной отложенной сборки, потому что
+## тут карты вешаются НАПРЯМУЮ на _card_grid, а не сквозь несколько уровней detached-обёрток).
+func _build_card_grid(total: int) -> void:
+	for c in _card_grid.get_children():
+		c.queue_free()
+	for card in _card_list():
+		var inst: Button = CardScene.instantiate()
+		_card_grid.add_child(inst)
+		var face := _card_face(card)
+		inst.setup(card, String(face[0]), String(face[1]), true)
+		inst.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		inst.focus_mode = Control.FOCUS_NONE
+	_grid_title.text = "СОСТАВ ОБОЙМЫ — %d карт" % total
+
+
+## Плоский список карт текущей обоймы: счётчики разворачиваются той же фабрикой, что и
+## реальная колода (Deck.make_card), именные подставляются на место замещённой ваниль —
+## превью показывает ИТОГОВЫЙ состав, а не счётчики отдельно от приёмов (см. named_cards.inject).
+func _card_list() -> Array:
+	var cards: Array = []
+	for i in int(_deck.u):
+		cards.append(DeckLib.make_card(C.TYPE_USTANOVKA, i))
+	for i in int(_deck.t):
+		cards.append(DeckLib.make_card(C.TYPE_TEZIS, i))
+	for i in int(_deck.plain):
+		cards.append(DeckLib.make_card(C.TYPE_RAZBOR, i))
+	for i in int(_deck.steals):
+		cards.append({"type": C.TYPE_RAZBOR, "name": "Кража", "steals": true})
+	for id in (_deck.named as Array):
+		var nc := NamedCards.make(String(id))
+		if not nc.is_empty():
+			_replace_one_vanilla(cards, nc)
+	return cards
+
+
+## Зеркалит named_cards.inject(): сперва точное совпадение (тип + steals-природа), иначе
+## любая ваниль той же базы — размер обоймы не раздувается именными сверху счётчиков.
+func _replace_one_vanilla(cards: Array, nc: Dictionary) -> void:
+	for exact in [true, false]:
+		for i in cards.size():
+			var c: Dictionary = cards[i]
+			if c.has("named") or String(c.type) != String(nc.type):
+				continue
+			if exact and bool(c.get("steals", false)) != bool(nc.steals):
+				continue
+			cards[i] = nc
+			return
+
+
+## Лицо карты вне боя (нет модели/hand_preview): именная — своё имя + правило-твист;
+## ваниль — мехлейбл (схема/приём, как в руке debate_screen) сверху и её ролевое имя
+## снизу, тот же порядок пары «титул/бабл», что и на столе.
+func _card_face(card: Dictionary) -> Array:
+	var is_named: bool = card.has("named")
+	var title: String = String(card.get("name", "")) if is_named or String(card.type) == C.TYPE_USTANOVKA \
+		else _nar.device_label(card)
+	var body: String = String(card.get("text", "")) if is_named else String(card.get("name", ""))
+	return [title, body]
