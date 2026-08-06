@@ -6,6 +6,7 @@
 [ext_resource type="Texture2D" uid="uid://du137dey3t6l0" path="res://duelogue/assets/states_test/idle.png" id="4"]
 [ext_resource type="Texture2D" uid="uid://csv785uek18na" path="res://duelogue/assets/characters/red_advocate/idle.png" id="5"]
 [ext_resource type="Shader" uid="uid://uex1ce1dnuij" path="res://duelogue/assets/shaders/dither.gdshader" id="6"]
+[ext_resource type="Shader" path="res://duelogue/assets/shaders/fire_aura.gdshader" id="7"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_stage_dither"]
 shader = ExtResource("6")
@@ -14,6 +15,14 @@ shader_parameter/color_levels = 6.0
 shader_parameter/dark_ceiling = 0.15
 shader_parameter/dark_soft = 0.0
 shader_parameter/strength = 0.25
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_fire_you"]
+shader = ExtResource("7")
+shader_parameter/intensity = 0.0
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_fire_opp"]
+shader = ExtResource("7")
+shader_parameter/intensity = 0.0
 
 [node name="Stage" type="Control" unique_id=1332663421]
 layout_mode = 3
@@ -48,12 +57,26 @@ stretch_mode = 6
 unique_name_in_owner = true
 texture_filter = 6
 
+[node name="FireYou" type="ColorRect" parent="Actors"]
+unique_name_in_owner = true
+material = SubResource("ShaderMaterial_fire_you")
+mouse_filter = 2
+position = Vector2(-20, 110)
+size = Vector2(440, 565)
+
 [node name="ActorYou" type="Sprite2D" parent="Actors" unique_id=2005178208]
 unique_name_in_owner = true
 material = SubResource("ShaderMaterial_stage_dither")
 position = Vector2(200, 381.8)
 scale = Vector2(0.35, 0.35)
 texture = ExtResource("4")
+
+[node name="FireOpp" type="ColorRect" parent="Actors"]
+unique_name_in_owner = true
+material = SubResource("ShaderMaterial_fire_opp")
+mouse_filter = 2
+position = Vector2(730, 110)
+size = Vector2(440, 565)
 
 [node name="ActorOpp" type="Sprite2D" parent="Actors" unique_id=1095861634]
 unique_name_in_owner = true
