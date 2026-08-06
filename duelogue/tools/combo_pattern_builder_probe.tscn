@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://duelogue/tools/combo_pattern_builder_probe.gd" id="1"]
+
+[node name="ComboPatternBuilderProbe" type="Node"]
+script = ExtResource("1")
