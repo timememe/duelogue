@@ -84,6 +84,10 @@ var crowd_streak := {}
 ## Смещение стрелки зала (+ в пользу you): стартовый крен run-слоя (§3.1 zal_run) и цена
 ## грязных именных приёмов (Ad hominem, §4). 0 = ваниль; двигается снаружи/твистами.
 var zal_bias := 0
+## Отдельный жёлоб для пилота статусов/перков (core/status/, брейншторм-сессия): та же
+## роль, что у zal_bias, но пишет его ТОЛЬКО zal_status_bridge.compute(), не игровые
+## эффекты — раздельно, чтобы статус-слой не затирал/не путался с dirty-приёмами.
+var status_zal_bias := 0
 ## Экспериментальный шов: по умолчанию zal() остаётся старой производной доски. Профиль
 ## может передать независимый Lean из AudienceCore; гейт/TKO читают тот же публичный API.
 var external_zal_enabled := false
@@ -139,6 +143,7 @@ func reset(
 	board_ko_enabled = p_board_ko_enabled
 	crowd_streak = {SIDE_YOU: 0, SIDE_OPP: 0}
 	zal_bias = 0
+	status_zal_bias = 0
 	external_zal_enabled = false
 	external_zal = 0
 	external_zal_cap = ZAL_MAX
@@ -582,10 +587,10 @@ func shine(side: String) -> int:
 ## zal_bias (стартовый крен забега / цена грязных приёмов). Плюс — в сторону игрока.
 func zal() -> int:
 	if external_zal_enabled:
-		return clampi(external_zal + zal_bias, -external_zal_cap, external_zal_cap)
+		return clampi(external_zal + zal_bias + status_zal_bias, -external_zal_cap, external_zal_cap)
 	var you_w := score(SIDE_YOU) + shine(SIDE_YOU)
 	var opp_w := score(SIDE_OPP) + shine(SIDE_OPP)
-	return clampi(you_w - opp_w + zal_bias, -ZAL_MAX, ZAL_MAX)
+	return clampi(you_w - opp_w + zal_bias + status_zal_bias, -ZAL_MAX, ZAL_MAX)
 
 
 func set_external_zal(value: int, enabled: bool = true, cap: int = ZAL_MAX) -> void:

@@ -12,6 +12,7 @@ const CardScene := preload("res://duelogue/ui/card/card.tscn")  ## шаблон 
 const CardArt := preload("res://duelogue/core/cards/card_art.gd")
 const CharacterCore := preload("res://duelogue/core/characters/character_core.gd")  ## ядро персонажей (актёры на сцену)
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")  ## настройка скорости печати (меню)
+const StatusIcon := preload("res://duelogue/ui/status_icon.gd")  ## перк-иконка с кастомным тултипом-у-курсора
 
 const COL_TEZIS := "43c59e"
 const COL_RAZBOR := "e45b5b"
@@ -20,6 +21,12 @@ const COL_YOU := "43c59e"
 const COL_OPP := "d98c4c"
 const COL_DIM := "8a93a3"
 const COL_GOLD := "e5b84b"
+
+## Перк-иконки поверх кафедры (core/status/): круглая заглушка без арт-ассетов — первая
+## буква label на цветном кружке (зелёный=perk, красный=debuff), полное имя+durability/source
+## в tooltip. Своя мини-функция, не _card_style() — тот заточен под карты с полями/рамкой.
+const STATUS_ICON_SIZE := 22.0
+const STATUS_ICON_GAP := 5.0
 
 const CARD_W := 42.0
 const CARD_H := 56.0
@@ -121,6 +128,8 @@ var _drag_marked_frame: Button   ## текущая рамка-цель под а
 @onready var _opp_strain_bg: ColorRect = %OppStrainBg
 @onready var _opp_strain_fill: ColorRect = %OppStrainFill
 @onready var _opp_strain_label: Label = %OppStrainLabel
+@onready var _you_status_row: Control = %YouStatusRow  ## перк-иконки поверх кафедры (core/status/)
+@onready var _opp_status_row: Control = %OppStatusRow
 @onready var _final_overlay: Control = %FinalOverlay
 @onready var _final_profile: Label = %FinalProfile
 @onready var _final_winner: Label = %FinalWinner
@@ -376,6 +385,7 @@ func _refresh() -> void:
 			int(audience.get("heat", 0)), int(audience.get("heat_max", 0)), gate_note]
 	_update_bar(z)
 	_update_emotion_hud()
+	_update_status_hud()
 	var input_mode := String(controller.input_mode())
 	_rebuild_frames(_opp_row, board_lines_for_mode(model.sides[C.SIDE_OPP].lines,
 		input_mode), false, _opp_sep0)
@@ -414,6 +424,70 @@ func _render_strain(state: Dictionary, bg: ColorRect, fill: ColorRect, label: La
 	elif int(state.get("cooldown", 0)) > 0:
 		status = "РАЗРЯДКА"
 	label.text = "%s\n%d/%d\n%s" % [who, strain, maximum, status]
+
+
+func _update_status_hud() -> void:
+	if controller == null:
+		return
+	_rebuild_status_row(_you_status_row, controller.status_list(C.SIDE_YOU))
+	_rebuild_status_row(_opp_status_row, controller.status_list(C.SIDE_OPP))
+
+
+func _rebuild_status_row(row: Control, statuses: Array) -> void:
+	for c in row.get_children():
+		c.queue_free()
+	for i in statuses.size():
+		var icon := _status_icon(statuses[i])
+		icon.position = Vector2(i * (STATUS_ICON_SIZE + STATUS_ICON_GAP), 0)
+		row.add_child(icon)
+
+
+const STATUS_DURABILITY_RU := {
+	"fundamental": "навсегда", "base": "стартовый", "temporary": "временный",
+}
+const STATUS_SOURCE_RU := {
+	"outgoing": "свой", "incoming": "от оппонента/условий",
+}
+
+
+## Круглая заглушка-иконка одного статуса: цвет по polarity, буква по label. Полное описание
+## живёт в кастомном тултипе (status_icon.gd._make_custom_tooltip) — Godot сам показывает его
+## у курсора по задержке наведения, пока не нужны арт-ассеты под конкретные перки.
+func _status_icon(entry: Dictionary) -> Control:
+	var perk := String(entry.get("polarity", "")) == "perk"
+	var fill := Color.html(COL_YOU if perk else COL_RAZBOR)
+	var panel := StatusIcon.new()
+	panel.size = Vector2(STATUS_ICON_SIZE, STATUS_ICON_SIZE)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = fill
+	sb.border_color = fill.lightened(0.35)
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(int(STATUS_ICON_SIZE / 2.0))
+	panel.add_theme_stylebox_override("panel", sb)
+	var label := Label.new()
+	label.text = String(entry.get("label", "?")).left(1).to_upper()
+	label.size = panel.size
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", Color.html("ffffff"))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(label)
+	panel.tooltip_text = _status_tooltip_text(entry, perk)
+	return panel
+
+
+func _status_tooltip_text(entry: Dictionary, perk: bool) -> String:
+	var durability := String(entry.get("durability", ""))
+	var duration_note := ""
+	if durability == "temporary":
+		duration_note = " (%d ход.)" % int(entry.get("remaining_turns", 0))
+	return "%s\n%s · %s%s · %s" % [
+		String(entry.get("label", "")),
+		"перк" if perk else "дебаф",
+		STATUS_DURABILITY_RU.get(durability, durability), duration_note,
+		STATUS_SOURCE_RU.get(String(entry.get("source", "")), String(entry.get("source", "")))]
 
 
 ## Подсказка и кнопки клинча/отмены — из режима ввода контроллера.

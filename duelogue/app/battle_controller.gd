@@ -16,6 +16,8 @@ const NarEngine := preload("res://duelogue/core/narrative/narrative_engine.gd")
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 const EmotionCore := preload("res://duelogue/core/emotion/emotion_core.gd")
 const DefaultReactions := preload("res://duelogue/core/emotion/reaction_decks/volatile_default.gd")
+const StatusRules := preload("res://duelogue/core/status/status_rules.gd")
+const ZalStatusBridge := preload("res://duelogue/core/status/zal_status_bridge.gd")
 const AudienceCore := preload("res://duelogue/core/audience/audience_core.gd")
 const OutcomeProfiles := preload("res://duelogue/core/outcome/outcome_profiles.gd")
 const OutcomeEvaluator := preload("res://duelogue/core/outcome/outcome_evaluator.gd")
@@ -79,6 +81,10 @@ var model: RefCounted
 var nar: RefCounted
 var ai: RefCounted
 var emotion: RefCounted
+## Пилот статусов/перков (core/status/, брейншторм-сессия): {side: [record, ...]}, только
+## зал подключён как коннектор пока. Читается только через status_list() ниже — UI не трогает
+## StatusRules напрямую.
+var status_state := {}
 var audience: RefCounted
 var outcome: RefCounted
 var match_id := 0
@@ -357,6 +363,12 @@ func emotion_state(side: String) -> Dictionary:
 	return emotion.state(side) if emotion != null else {}
 
 
+## UI читает статусы стороны только отсюда — {id, label, polarity, durability, source,
+## remaining_turns} на запись, см. status_rules.list_active().
+func status_list(side: String) -> Array:
+	return StatusRules.list_active(status_state, side)
+
+
 func audience_state() -> Dictionary:
 	if model == null or audience == null:
 		return {}
@@ -529,6 +541,9 @@ func start_match() -> void:
 	_log.match_id = match_id
 	nar.start(_theme_data, match_id, {"you": "contra", "opp": "pro"})
 	emotion.start(DefaultReactions.data(), match_id ^ 0x5EED, [SIDE_YOU, SIDE_OPP])
+	status_state = StatusRules.new_state()
+	_debug_seed_statuses()
+	ZalStatusBridge.apply_to_model(status_state, model, SIDE_YOU, SIDE_OPP)
 	_draw0 = maxi(1, _draw_left())
 	_mode = "opening"
 	_opening_stage = "active"
@@ -576,6 +591,18 @@ func _stack_combo_drill(side: Dictionary) -> void:
 	DeckLib.refill(side, HAND)
 
 
+## ВРЕМЕННО — заглушка для проверки статус-иконок в UI (кафедры), пока в игре нет ни одного
+## реального триггера, который бы САМ присваивал перк/дебаф (получаемые статусы через события
+## combo_register/эмоций — открытый пункт, см. память duelogue-perk-status-system). Убрать/
+## заменить реальными триггерами, когда они появятся; сейчас каждая сторона стартует с одним
+## fundamental и одним temporary статусом просто чтобы иконки было на чём проверить.
+func _debug_seed_statuses() -> void:
+	StatusRules.apply(status_state, SIDE_YOU, "unbending", 0)
+	StatusRules.apply(status_state, SIDE_YOU, "ovation", 0)
+	StatusRules.apply(status_state, SIDE_OPP, "tainted_name", 0)
+	StatusRules.apply(status_state, SIDE_OPP, "booed", 0)
+
+
 # --------------------------------------------------------------- flow ---------
 
 func _run_until_player() -> void:
@@ -586,6 +613,8 @@ func _run_until_player() -> void:
 			return
 		if model.game_over:
 			await _show_end(); _changed(); return
+		StatusRules.tick_turn(status_state, model.current)
+		ZalStatusBridge.apply_to_model(status_state, model, SIDE_YOU, SIDE_OPP)
 		var st: String = model.begin_turn(model.current)
 		_narrate_judge_count()
 		if st == "ko" or st == "crowd" or st == "end" or st == "over":
