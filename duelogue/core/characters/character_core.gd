@@ -315,7 +315,11 @@ func _on_utterance(side: String, text: String, meta: Dictionary) -> void:
 	await get_tree().create_timer(maxf(0.0, ReadingPace.BOARD_BEAT - DOLLY_REVEAL_LEAD)).timeout
 	# Муд едет и в сцену: тот же стейт ведёт портрет И профиль живого фона (MOOD_FX). Кассета —
 	# отдельно, только вход/ракурс камеры (director_core_v0.1.md); {} = дефолтный вход.
-	_reaction.show_utterance(side, text, tex, mood, _portrait_flip_h_for(side), eyebrow, cassette)
+	# device (2026-08-06): та же метка приёма/схемы, что уже идёт в живой лог боевого экрана
+	# (battle_controller._say → meta.device) — раньше сюда не долетала, крупный план был немым.
+	var device_name := String(meta.get("device", ""))
+	_reaction.show_utterance(side, text, tex, mood, _portrait_flip_h_for(side), eyebrow, cassette,
+		device_name)
 
 
 ## Яркий исход по стороне side — стейт «пошатнулся» (событийный, ставит контроллер).
@@ -348,7 +352,7 @@ func _on_combo_verdict(side: String, combo_name: String, topology: String) -> vo
 	var eyebrow := "🪤 ЛОВУШКА СРАБОТАЛА" if is_trap else "⚡ ЗАЩИТА ДЕРЖИТ"
 	_reaction.show_utterance(side,
 		("Попался! «%s»." % combo_name) if is_trap else ("Не сдвинулось! «%s»." % combo_name),
-		tex, mood, _portrait_flip_h_for(side), eyebrow, cassette)
+		tex, mood, _portrait_flip_h_for(side), eyebrow, cassette, combo_name)
 
 
 func _on_turn_changed(_side: String) -> void:

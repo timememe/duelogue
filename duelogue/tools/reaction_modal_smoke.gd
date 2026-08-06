@@ -16,6 +16,7 @@ var finishes := 0
 
 func _ready() -> void:
 	_check_shot_director()
+	_check_device_name()
 
 	var reaction = ReactionScene.instantiate()
 	add_child(reaction)
@@ -160,6 +161,59 @@ func _check_shot_director() -> void:
 	cassette_probe.show_utterance("you", "Проверка кассеты", null, "burst", false, "", burst_cassette)
 	_check(cassette_probe._gen == 1, "show_utterance с непустой кассетой реально запускается")
 	cassette_probe.queue_free()
+
+
+## Имя приёма за героем (DeviceLine/DeviceLabel, reaction_scene.gd): видимость по непустому
+## аргументу, порядок узлов кодирует «за героем, но над фоновыми шейдерами», калибруемые
+## переменные реально долетают до узлов, show_impact и пустое имя прячут оба узла обратно.
+func _check_device_name() -> void:
+	var probe = ReactionScene.instantiate()
+	add_child(probe)
+	probe.device_line_color = Color(0.1, 0.2, 0.9, 1.0)
+	probe.device_font_size = 48
+	probe.device_font_color = Color(0.9, 0.1, 0.1, 1.0)
+	probe.show_utterance("you", "Проверка приёма", null, "", false, "", {}, "КОНТРПРИМЕР")
+	var line: ColorRect = probe.get_node("DeviceLine")
+	var label: Label = probe.get_node("DeviceLabel")
+	var portrait := probe.get_node("Portrait")
+	var bg_shader := probe.get_node("BgShader")
+	_check(line.visible and label.visible and label.text == "КОНТРПРИМЕР",
+		"имя приёма показывается крупно, когда его передали")
+	_check(bg_shader.get_index() < line.get_index() and line.get_index() < label.get_index() and
+		label.get_index() < portrait.get_index(),
+		"порядок узлов: фоновые шейдеры → линия → текст приёма → герой поверх всех")
+	var line_mat := line.material as ShaderMaterial
+	_check(line_mat.get_shader_parameter("line_color") == probe.device_line_color,
+		"цвет линии берётся из калибруемой переменной device_line_color")
+	_check(is_zero_approx(line.offset_left) and is_zero_approx(line.offset_right) and
+		line.anchor_right == 1.0,
+		"линия на всю ширину экрана, без отступов по краям")
+	_check(label.get_theme_color("font_color") == probe.device_font_color,
+		"цвет шрифта берётся из калибруемой переменной device_font_color")
+	_check(not label.has_theme_color_override("font_outline_color"),
+		"аутлайн у надписи приёма убран — только сплошной цвет")
+	_check(is_equal_approx(label.anchor_left, 2.0 / 3.0) and label.anchor_right == 1.0,
+		"портрет 'you' слева → подпись приёма уходит в правую треть")
+	probe.device_font_size = 40
+	probe.show_utterance("you", "Проверка", null, "", false, "", {}, "Ы")
+	_check(label.get_theme_font_size("font_size") == 40,
+		"короткое имя приёма не сжимается ниже запрошенного калибруемого размера")
+	probe.device_font_size = 64
+	probe.show_utterance("you", "Проверка", null, "", false, "", {},
+		"Устоявшееся значение по определению без всякого сомнения")
+	var fitted := label.get_theme_font_size("font_size")
+	_check(fitted < 64 and fitted >= probe.DEVICE_FONT_MIN,
+		"длинное многословное имя приёма сжимается до нижнего порога, не ломая вёрстку")
+	probe.show_utterance("opp", "Проверка приёма", null, "", false, "", {}, "ИСТОЧНИК?")
+	_check(is_zero_approx(label.anchor_left) and is_equal_approx(label.anchor_right, 1.0 / 3.0),
+		"портрет 'opp' справа → подпись приёма уходит в левую треть")
+	probe.show_utterance("you", "Без приёма", null)
+	_check(not line.visible and not label.visible,
+		"пустое имя приёма (старый вызов show_utterance) снова прячет линию и текст")
+	probe.show_impact("you", null, 0.5)
+	_check(not line.visible and not label.visible,
+		"show_impact прячет имя приёма, не оставляет прошлый кадр висеть")
+	probe.queue_free()
 
 
 func _check(ok: bool, label: String) -> void:

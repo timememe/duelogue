@@ -30,6 +30,35 @@ const BUBBLE_BOTTOM_MARGIN := 22.0
 const BUBBLE_YOU_COLOR := Color("6fd9a0")
 const BUBBLE_OPP_COLOR := Color("f1a064")
 
+## Имя приёма крупным планом за героем (DeviceLine/DeviceLabel) — калибруемые переменные,
+## тюнятся в инспекторе узла без правки кода. Шрифт «стильный» тем же приёмом, что уже принят
+## в combo_name_banner.gd (_make_label): чёрная обводка вместо кастомного файла шрифта —
+## своего .ttf/.otf в проекте пока нет (см. duelogue/assets — шрифтовых ресурсов нет), поэтому
+## это не смена гарнитуры, а её имитация размером/весом/обводкой на дефолтном шрифте темы.
+@export var device_line_color: Color = Color(0.95, 0.78, 0.25, 0.9)
+@export var device_line_edge_color: Color = Color(1.0, 0.97, 0.85, 1.0)
+@export var device_line_fade_width: float = 0.45
+@export var device_font_size: int = 64
+@export var device_font_color: Color = Color(1, 1, 1, 0.92)
+## Persona-style лёгкий наклон подписи (2026-08-06) — динамика без обвеса нового арта/шрифта.
+## 0 = выключить, если наклон не понравится на глаз.
+@export var device_label_tilt_deg: float = -4.0
+
+## Верхний размер сжимается сюда, если имя приёма (особенно двухсловные комбо-названия) не
+## влезает по высоте в треть экрана — иначе буквы наезжали на следующую строку и ломали вёрстку.
+## Шаг подобран грубо (крупный текст, разница в 2пт не читается на глаз), не самоцель точности.
+const DEVICE_FONT_MIN := 26
+const DEVICE_FONT_STEP := 2
+
+## Треть экрана, куда садится подпись — считается от side (2026-08-06, правка): портрет
+## говорящего всегда прижат к своей рамке-якорю (_frame_you слева/_frame_opp справа), значит
+## имя приёма нужно класть в ПРОТИВОПОЛОЖНУЮ треть, иначе крупный портрет перекрывает надпись
+## почти целиком. Линия при этом остаётся во всю ширину — треть только у текста.
+const DEVICE_LABEL_THIRD := {
+	"you": Vector2(2.0 / 3.0, 1.0),   ## портрет слева → подпись в правой трети
+	"opp": Vector2(0.0, 1.0 / 3.0),   ## портрет справа → подпись в левой трети
+}
+
 ## Фон крупного плана — аниме-спидлайны (mood_bg.gdshader): длинные штрихи-«веретёна» летят
 ## по направлению эмоции, их края/хвосты РАССЫПАЮТСЯ ДИЗЕРОМ (зерно живёт в самих линиях,
 ## фон-градиент гладкий). Градиент — цвета стороны (§UI: зелёный "вы"/оранжевый "опп", тона
@@ -111,6 +140,9 @@ static var BG_SLIDE_EASE: int = Tween.EASE_OUT
 @onready var _speaker_label: Label = %SpeakerLabel
 @onready var _eyebrow: Label = $Bubble/Eyebrow
 @onready var _bubble_label: Label = $Bubble/Label
+@onready var _device_line: ColorRect = $DeviceLine
+@onready var _device_line_mat: ShaderMaterial = _device_line.material as ShaderMaterial
+@onready var _device_label: Label = $DeviceLabel
 
 var _gen := 0            ## генерация; новый show_* инвалидирует ожидающие await прошлого
 var _active_tween: Tween  ## текущий tween (убиваем перед стартом нового — без борьбы за свойства)
@@ -131,6 +163,8 @@ func _ready() -> void:
 	_bg_opp_default.visible = false
 	_bg_you_default.visible = false
 	_bg_shader.visible = false
+	_device_line.visible = false
+	_device_label.visible = false
 	_bg_mood_base = _bg_mood.position
 	_bg_opp_default_base = _bg_opp_default.position
 	_bg_you_default_base = _bg_you_default.position
@@ -299,12 +333,58 @@ func _layout_bubble(side: String) -> void:
 	_bubble_frame_mat.set_shader_parameter("border_color", speaker_color.lightened(0.12))
 
 
+## Имя приёма крупным планом: линия и текст сидят МЕЖДУ фоновыми шейдерами (BgMood/BgShader,
+## объявлены раньше в дереве) и портретом (Portrait, объявлен позже) — герой всегда поверх,
+## линия всегда под текстом, но над фоном (порядок задан порядком узлов в reaction_scene.tscn,
+## не z_index). Пустое имя = ничего не показываем, старые вызовы show_utterance() без этого
+## аргумента ведут себя как раньше.
+func _layout_device_name(name: String, side: String) -> void:
+	var shown := name != ""
+	_device_line.visible = shown
+	_device_label.visible = shown
+	if not shown:
+		return
+	_device_line_mat.set_shader_parameter("line_color", device_line_color)
+	_device_line_mat.set_shader_parameter("edge_color", device_line_edge_color)
+	_device_line_mat.set_shader_parameter("fade_width", device_line_fade_width)
+	var third: Vector2 = DEVICE_LABEL_THIRD.get(side, DEVICE_LABEL_THIRD["you"])
+	_device_label.anchor_left = third.x
+	_device_label.anchor_right = third.y
+	_device_label.pivot_offset = _device_label.size / 2.0
+	_device_label.rotation_degrees = device_label_tilt_deg
+	_device_label.text = name
+	var box_width := size.x * (third.y - third.x)
+	var box_height := _device_label.offset_bottom - _device_label.offset_top
+	_device_label.add_theme_font_size_override("font_size",
+		_fit_device_font_size(name, box_width, box_height))
+	_device_label.add_theme_color_override("font_color", device_font_color)
+
+
+## Сжимает размер шрифта, пока перенесённый по словам текст (autowrap word_smart на самой
+## Label) не влезает по высоте в отведённую треть — иначе двухсловные имена (частые у combo_name)
+## переполняли Label и наезжали на соседние строки/узлы. Пол задан DEVICE_FONT_MIN — дальше не
+## сжимаем, короткое слово почти никогда сюда не доходит.
+func _fit_device_font_size(name: String, box_width: float, box_height: float) -> int:
+	var font := _device_label.get_theme_font("font")
+	if font == null or box_width <= 0.0:
+		return device_font_size
+	var fs := device_font_size
+	while fs > DEVICE_FONT_MIN:
+		var measured := font.get_multiline_string_size(
+			name, HORIZONTAL_ALIGNMENT_CENTER, box_width, fs)
+		if measured.y <= box_height:
+			break
+		fs -= DEVICE_FONT_STEP
+	return fs
+
+
 ## Реакция-реплика: сторона side говорит text (реплика карты), портрет portrait_tex,
 ## mood — стейт говорящего (§16) — красит живой фон профилем эмоции (MOOD_FX).
 ## Длительность сцены НЕ фиксирована — определяется скоростью печати текста в бабле плюс
 ## паузой на дочитывание (см. ReadingPace — общая формула с пейсингом battle_controller).
 func show_utterance(side: String, text: String, portrait_tex: Texture2D, mood: String = "",
-	portrait_flip_h: bool = false, eyebrow: String = "", cassette: Dictionary = {}) -> void:
+	portrait_flip_h: bool = false, eyebrow: String = "", cassette: Dictionary = {},
+	device_name: String = "") -> void:
 	_gen += 1
 	var my_gen := _gen
 	_begin_modal_scene()
@@ -318,6 +398,7 @@ func show_utterance(side: String, text: String, portrait_tex: Texture2D, mood: S
 	_layout_portrait(side, portrait_tex)
 	_portrait.texture = portrait_tex
 	_portrait.flip_h = portrait_flip_h
+	_layout_device_name(device_name, side)
 	_layout_bubble(side)
 	_bubble.visible = true
 	_eyebrow.visible = eyebrow != ""
@@ -367,6 +448,8 @@ func show_impact(side: String, portrait_tex: Texture2D, intensity: float = 1.0,
 	_portrait.texture = portrait_tex
 	_portrait.flip_h = portrait_flip_h
 	_bubble.visible = false
+	_device_line.visible = false
+	_device_label.visible = false
 	modulate.a = 1.0
 	if _active_tween:
 		_active_tween.kill()
