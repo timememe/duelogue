@@ -10,7 +10,10 @@ shader_type canvas_item;
 // а честно тянется из плотности поля × intensity, чтобы фон был прозрачным, а не чёрным.
 // intensity 0 = потушено (альфа честно 0); 1 = пик — выше (reach), шире (width), плотнее
 // (density_bias) и быстрее (speed) одновременно = «объём и частота» растут вместе со шкалой
-// эмоции. Коннектор — stage_core.gd, слушает EventBus.emotion_changed.
+// эмоции. v2.1: контур тоже дребезжит, не только заливка внутри него — left/right/top-границы
+// огибающей смещаются собственными fbm-семплами (edge_flicker), силуэт рвётся неровными
+// языками вместо статичного конуса; подошва заглушена (anchor), ноги пламени не гуляют.
+// Коннектор — stage_core.gd, слушает EventBus.emotion_changed.
 
 uniform float intensity : hint_range(0.0, 1.0) = 0.0;      // 0 = потушено, 1 = пик (strain/max стороны)
 uniform vec4 color_ember : source_color = vec4(0.35, 0.06, 0.03, 1.0);  // холодный край/низкий heat
@@ -29,6 +32,10 @@ uniform float base_width : hint_range(0.0, 1.0) = 0.34;    // ширина у п
 uniform float max_width : hint_range(0.0, 1.0) = 0.62;     // ширина у подошвы на intensity=1 («объём»)
 uniform float max_density_bias : hint_range(0.0, 0.6) = 0.22; // на пике толкает поле плотнее (меньше дыр)
 uniform float edge_soft : hint_range(0.0, 0.3) = 0.05;     // мягкость краевого спада ширины/верха
+
+uniform float base_edge_flicker : hint_range(0.0, 0.3) = 0.02; // дребезг контура на intensity=0 (доля ширины рамки)
+uniform float max_edge_flicker : hint_range(0.0, 0.3) = 0.12;  // дребезг контура на intensity=1 — силуэт рвётся языками
+uniform float edge_flicker_scale : hint_range(0.5, 8.0) = 2.5; // масштаб волн дребезга по высоте/ширине
 
 uniform float flame_levels : hint_range(2.0, 16.0) = 6.0;  // ступеней посадки поля (посветеризация)
 uniform float dither_px : hint_range(1.0, 8.0) = 2.0;      // чанк-«пиксель» зерна Байер-дизера
@@ -91,6 +98,7 @@ void fragment() {
 	float reach = mix(base_reach, max_reach, intensity);
 	float width = mix(base_width, max_width, intensity);
 	float density_bias = max_density_bias * intensity;
+	float flicker = mix(base_edge_flicker, max_edge_flicker, intensity);
 
 	float rise = 1.0 - UV.y;  // 0 у подошвы рамки (там нога актёра), 1 у верхнего края рамки
 	vec2 p = vec2((UV.x - 0.5) * noise_scale, rise * noise_scale * 1.4 - TIME * speed);
@@ -103,11 +111,28 @@ void fragment() {
 	float f = fbm(p + warp * warp_strength);
 	f = clamp(f + density_bias, 0.0, 1.0);
 
+	// Дребезг контура: тот же fbm, но по (высота/ширина, время) — левый край, правый край и
+	// макушка сдвигаются по ОТДЕЛЬНЫМ семплам (разные сдвиги координат), поэтому силуэт рвётся
+	// неровными языками, а не дышит одним синхронным пульсом. anchor гасит дребезг у самой
+	// подошвы — ноги пламени стоят на месте, шевелится тело и макушка.
+	float anchor = smoothstep(0.0, 0.15, rise);
+	float wobble_l = (fbm(vec2(rise * edge_flicker_scale, TIME * speed * 0.8)) - 0.5) * 2.0 * flicker * anchor;
+	float wobble_r = (fbm(vec2(rise * edge_flicker_scale + 23.4, TIME * speed * 0.8 - 11.1)) - 0.5) * 2.0 * flicker * anchor;
+	float tip_wobble = (fbm(vec2(UV.x * edge_flicker_scale * 2.0 + 7.7, TIME * speed * 0.8 + 3.3)) - 0.5) * 2.0 * flicker;
+
 	// Огибающая силуэта: у подошвы шире, к верху сужается и гаснет — ширина/высота растут
-	// вместе с intensity, это и есть "объём". reach/width уже интенсивность-зависимые.
+	// вместе с intensity, это и есть "объём". Левая/правая граница и макушка смещены на
+	// wobble_l/wobble_r/tip_wobble — дребезжит сама ГРАНИЦА, не только заполнение внутри неё.
+	float dx = UV.x - 0.5;
 	float taper = mix(width, width * 0.16, smoothstep(0.0, 1.0, rise / max(reach, 0.001)));
-	float edge = 1.0 - smoothstep(taper * 0.5 - edge_soft, taper * 0.5, abs(UV.x - 0.5));
-	float top_fade = 1.0 - smoothstep(reach * 0.75, reach, rise);
+	float half_taper = taper * 0.5;
+	float boundary_l = -half_taper - wobble_l;
+	float boundary_r = half_taper + wobble_r;
+	float edge_l = smoothstep(boundary_l, boundary_l + edge_soft, dx);
+	float edge_r = 1.0 - smoothstep(boundary_r - edge_soft, boundary_r, dx);
+	float edge = edge_l * edge_r;
+	float top_boundary = reach + tip_wobble;
+	float top_fade = 1.0 - smoothstep(top_boundary * 0.75, top_boundary, rise);
 	float envelope = edge * top_fade;
 
 	float shape = clamp(f * envelope, 0.0, 1.0);

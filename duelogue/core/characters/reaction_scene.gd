@@ -43,6 +43,20 @@ const BUBBLE_OPP_COLOR := Color("f1a064")
 ## Persona-style лёгкий наклон подписи (2026-08-06) — динамика без обвеса нового арта/шрифта.
 ## 0 = выключить, если наклон не понравится на глаз.
 @export var device_label_tilt_deg: float = -4.0
+## Межстрочный интервал подписи (2026-08-07) — theme-константа Label, отрицательные значения
+## сжимают ниже «родного» интервала шрифта (дефолт темы на глаз ощущался разреженным на
+## крупном многострочном тексте). Грубая отправная точка, как и DEVICE_FONT_STEP ниже — крутить
+## в инспекторе узла по месту.
+@export var device_label_line_spacing: int = -10
+## Добавка к размеру/позиции бокса подписи поверх авто-раскладки по трети экрана
+## (_layout_device_name/DEVICE_LABEL_THIRD) — сама треть остаётся правилом («класть в
+## противоположную от портрета», см. ниже), эти два поля — точечная подстройка без правки кода
+## и без выноса бокса из-под защиты авто-раскладки (растёт ВНУТРЬ экрана от внешнего края —
+## см. _layout_device_name, эту гарантию она держит независимо от значения добавки).
+## +245 по ширине — калибровка через device_label_lab.tscn (2026-08-08): трети экрана впритык
+## не хватало, короткие имена ещё влезали, двухсловные уже подпирали перенос без места на дых.
+@export var device_label_size_delta: Vector2 = Vector2(245.0, 0.0)
+@export var device_label_offset: Vector2 = Vector2.ZERO
 
 ## Верхний размер сжимается сюда, если имя приёма (особенно двухсловные комбо-названия) не
 ## влезает по высоте в треть экрана — иначе буквы наезжали на следующую строку и ломали вёрстку.
@@ -154,6 +168,13 @@ var _bg_you_default_base := Vector2.ZERO
 var _bg_shader_base := Vector2.ZERO
 var _parallax_offset := Vector2.ZERO
 
+## Геометрия DeviceLabel из reaction_scene.tscn, снятая один раз в _ready — точка отсчёта для
+## _layout_device_name. Читать оттуда каждый show_utterance напрямую с узла нельзя: узел живой
+## (следующий вызов должен пересчитать бокс с нуля от исходной разметки), а не расти/съезжать
+## от своего же состояния после предыдущего вызова.
+var _device_label_base_top := 0.0
+var _device_label_base_height := 0.0
+
 
 func _ready() -> void:
 	visible = false
@@ -165,6 +186,13 @@ func _ready() -> void:
 	_bg_shader.visible = false
 	_device_line.visible = false
 	_device_label.visible = false
+	# AUTOWRAP_WORD, не _SMART (2026-08-07): _SMART форс-разбивает по буквам слово, которое не
+	# влезло в ширину бокса, — это и есть баг «перенос букв слова на след. строку». Обычный WORD
+	# рвёт только по пробелам; не влезающее целиком слово вместо этого выйдет за ширину — и от
+	# этого страхует _fit_device_font_size (сжимает шрифт, пока не влезает САМОЕ широкое слово).
+	_device_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_device_label_base_top = _device_label.offset_top
+	_device_label_base_height = _device_label.offset_bottom - _device_label.offset_top
 	_bg_mood_base = _bg_mood.position
 	_bg_opp_default_base = _bg_opp_default.position
 	_bg_you_default_base = _bg_you_default.position
@@ -337,7 +365,8 @@ func _layout_bubble(side: String) -> void:
 ## объявлены раньше в дереве) и портретом (Portrait, объявлен позже) — герой всегда поверх,
 ## линия всегда под текстом, но над фоном (порядок задан порядком узлов в reaction_scene.tscn,
 ## не z_index). Пустое имя = ничего не показываем, старые вызовы show_utterance() без этого
-## аргумента ведут себя как раньше.
+## аргумента ведут себя как раньше. Бокс = треть экрана (DEVICE_LABEL_THIRD, «противоположная
+## портрету») плюс калибруемая добавка device_label_size_delta/device_label_offset поверх неё.
 func _layout_device_name(name: String, side: String) -> void:
 	var shown := name != ""
 	_device_line.visible = shown
@@ -348,34 +377,70 @@ func _layout_device_name(name: String, side: String) -> void:
 	_device_line_mat.set_shader_parameter("edge_color", device_line_edge_color)
 	_device_line_mat.set_shader_parameter("fade_width", device_line_fade_width)
 	var third: Vector2 = DEVICE_LABEL_THIRD.get(side, DEVICE_LABEL_THIRD["you"])
-	_device_label.anchor_left = third.x
-	_device_label.anchor_right = third.y
-	_device_label.pivot_offset = _device_label.size / 2.0
+	# ОДИН анкор на оба края (не anchor_left=third.x/anchor_right=third.y раздельно — регрессия
+	# 2026-08-08, чинили её же: anchor-разница УЖЕ давала ширину трети, а offset_right поверх
+	# неё добавлял её ЕЩЁ РАЗ, бокс выходил вдвое шире трети и «you» вылезал за правый край
+	# экрана). Ширина теперь ЦЕЛИКОМ из box_size через offset_left/right от ОДНОЙ точки анкора —
+	# внешнего края экрана со стороны side ("opp" якорится в 0.0 и растёт вправо, "you" — в 1.0
+	# и растёт влево), анкор больше не участвует в ширине вообще.
+	var outer_anchor := third.x if side == "opp" else third.y
+	_device_label.anchor_left = outer_anchor
+	_device_label.anchor_right = outer_anchor
+	# Абсолютные offset_*, не += к текущим: узел живой и держит значения ПРЕДЫДУЩЕГО вызова,
+	# инкремент поверх них означал бы, что бокс уезжает/растёт с каждой репликой подряд.
+	# Пересчитываем с нуля от снятой в _ready базы (_device_label_base_top/height — исходная
+	# разметка из reaction_scene.tscn).
+	var box_size := Vector2(size.x * (third.y - third.x), _device_label_base_height) \
+		+ device_label_size_delta
+	if side == "opp":
+		_device_label.offset_left = device_label_offset.x
+		_device_label.offset_right = device_label_offset.x + box_size.x
+	else:
+		_device_label.offset_left = device_label_offset.x - box_size.x
+		_device_label.offset_right = device_label_offset.x
+	_device_label.offset_top = _device_label_base_top + device_label_offset.y
+	_device_label.offset_bottom = _device_label.offset_top + box_size.y
+	_device_label.pivot_offset = box_size / 2.0
 	_device_label.rotation_degrees = device_label_tilt_deg
+	_device_label.add_theme_constant_override("line_spacing", device_label_line_spacing)
 	_device_label.text = name
-	var box_width := size.x * (third.y - third.x)
-	var box_height := _device_label.offset_bottom - _device_label.offset_top
 	_device_label.add_theme_font_size_override("font_size",
-		_fit_device_font_size(name, box_width, box_height))
+		_fit_device_font_size(name, box_size.x, box_size.y))
 	_device_label.add_theme_color_override("font_color", device_font_color)
 
 
-## Сжимает размер шрифта, пока перенесённый по словам текст (autowrap word_smart на самой
-## Label) не влезает по высоте в отведённую треть — иначе двухсловные имена (частые у combo_name)
-## переполняли Label и наезжали на соседние строки/узлы. Пол задан DEVICE_FONT_MIN — дальше не
-## сжимаем, короткое слово почти никогда сюда не доходит.
+## Сжимает размер шрифта, пока перенесённый по словам текст не влезает в отведённый бокс —
+## иначе двухсловные имена (частые у combo_name) переполняли Label и наезжали на соседние
+## строки/узлы. Пол задан DEVICE_FONT_MIN — дальше не сжимаем, короткое слово почти никогда
+## сюда не доходит. Держит ДВЕ проверки, а не одну: (a) высота переноса по словам в box_height —
+## как раньше, и (b) ширина САМОГО ШИРОКОГО ОТДЕЛЬНОГО СЛОВА в box_width — без неё Label в
+## режиме AUTOWRAP_WORD (см. _ready) просто вылезал бы этим словом за край бокса, ничего не
+## сжимая, раз общая многострочная высота уже «влезала».
 func _fit_device_font_size(name: String, box_width: float, box_height: float) -> int:
 	var font := _device_label.get_theme_font("font")
 	if font == null or box_width <= 0.0:
 		return device_font_size
 	var fs := device_font_size
 	while fs > DEVICE_FONT_MIN:
-		var measured := font.get_multiline_string_size(
-			name, HORIZONTAL_ALIGNMENT_CENTER, box_width, fs)
-		if measured.y <= box_height:
+		if _device_name_fits(font, name, box_width, box_height, fs):
 			break
 		fs -= DEVICE_FONT_STEP
 	return fs
+
+
+## Правда, только если при размере шрифта fs ни одно слово не шире box_width (иначе
+## AUTOWRAP_WORD не переносит его по буквам, а молча вылезает за бокс — тот самый баг, который
+## _fit_device_font_size обязана предотвратить) И перенесённый по словам текст умещается по
+## высоте в box_height. Слова режутся по пробелу — реальные имена приёмов (Grammar.CARD_DEVICE,
+## combo_register.gd) дефисов/переносов внутри слова не используют, более тонкий разбор не нужен.
+func _device_name_fits(font: Font, name: String, box_width: float, box_height: float,
+	fs: int) -> bool:
+	for word in name.split(" ", false):
+		if font.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x > box_width:
+			return false
+	var measured := font.get_multiline_string_size(
+		name, HORIZONTAL_ALIGNMENT_CENTER, box_width, fs)
+	return measured.y <= box_height
 
 
 ## Реакция-реплика: сторона side говорит text (реплика карты), портрет portrait_tex,

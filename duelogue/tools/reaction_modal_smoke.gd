@@ -192,21 +192,54 @@ func _check_device_name() -> void:
 		"цвет шрифта берётся из калибруемой переменной device_font_color")
 	_check(not label.has_theme_color_override("font_outline_color"),
 		"аутлайн у надписи приёма убран — только сплошной цвет")
-	_check(is_equal_approx(label.anchor_left, 2.0 / 3.0) and label.anchor_right == 1.0,
-		"портрет 'you' слева → подпись приёма уходит в правую треть")
+	var you_w: float = probe.size.x / 3.0 + probe.device_label_size_delta.x
+	_check(is_equal_approx(label.position.x, probe.size.x - you_w) and
+		is_equal_approx(label.position.x + label.size.x, probe.size.x),
+		"портрет 'you' слева → подпись приёма уходит в правую треть (+калибровка), прижатую к правому краю экрана")
+	_check(label.position.x >= -0.5 and label.position.x + label.size.x <= probe.size.x + 0.5,
+		"бокс подписи приёма стороны 'you' не вылезает за пределы экрана по X")
 	probe.device_font_size = 40
 	probe.show_utterance("you", "Проверка", null, "", false, "", {}, "Ы")
 	_check(label.get_theme_font_size("font_size") == 40,
 		"короткое имя приёма не сжимается ниже запрошенного калибруемого размера")
 	probe.device_font_size = 64
-	probe.show_utterance("you", "Проверка", null, "", false, "", {},
-		"Устоявшееся значение по определению без всякого сомнения")
+	var long_name := "Устоявшееся значение по определению без всякого сомнения"
+	probe.show_utterance("you", "Проверка", null, "", false, "", {}, long_name)
 	var fitted := label.get_theme_font_size("font_size")
 	_check(fitted < 64 and fitted >= probe.DEVICE_FONT_MIN,
 		"длинное многословное имя приёма сжимается до нижнего порога, не ломая вёрстку")
+	_check(label.autowrap_mode == TextServer.AUTOWRAP_WORD,
+		"перенос строго по словам (AUTOWRAP_WORD, не _SMART) — буквы одного слова никогда не рвутся на две строки")
+	var probe_font := label.get_theme_font("font")
+	var widest_word_w := 0.0
+	for word in long_name.split(" ", false):
+		widest_word_w = maxf(widest_word_w,
+			probe_font.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, fitted).x)
+	var box_w: float = probe.size.x * (1.0 - 2.0 / 3.0) + probe.device_label_size_delta.x
+	_check(widest_word_w <= box_w + 0.5,
+		"на подобранном размере шрифта даже самое широкое слово укладывается в ширину бокса — переносить по буквам не требуется")
+	_check(label.get_theme_constant("line_spacing") == probe.device_label_line_spacing,
+		"межстрочный интервал берётся из калибруемой переменной device_label_line_spacing")
 	probe.show_utterance("opp", "Проверка приёма", null, "", false, "", {}, "ИСТОЧНИК?")
-	_check(is_zero_approx(label.anchor_left) and is_equal_approx(label.anchor_right, 1.0 / 3.0),
-		"портрет 'opp' справа → подпись приёма уходит в левую треть")
+	var opp_w: float = probe.size.x / 3.0 + probe.device_label_size_delta.x
+	_check(is_zero_approx(label.position.x) and
+		is_equal_approx(label.position.x + label.size.x, opp_w),
+		"портрет 'opp' справа → подпись приёма уходит в левую треть (+калибровка), прижатую к левому краю экрана")
+	_check(label.position.x >= -0.5 and label.position.x + label.size.x <= probe.size.x + 0.5,
+		"бокс подписи приёма стороны 'opp' не вылезает за пределы экрана по X")
+	# Калибруемая добавка к боксу (2026-08-07) — точечная подстройка поверх авто-раскладки,
+	# не должна копиться от вызова к вызову (иначе бокс уезжал/рос бы с каждой новой репликой).
+	probe.device_label_size_delta = Vector2(20.0, 10.0)
+	probe.device_label_offset = Vector2(15.0, -5.0)
+	probe.show_utterance("you", "Проверка", null, "", false, "", {}, "ПРОВЕРКА")
+	var size_after_first := label.size
+	var pos_after_first := label.position
+	probe.show_utterance("you", "Проверка", null, "", false, "", {}, "ПРОВЕРКА")
+	_check(label.size.is_equal_approx(size_after_first) and
+		label.position.is_equal_approx(pos_after_first),
+		"калибруемые device_label_size_delta/device_label_offset не копятся при повторных вызовах")
+	probe.device_label_size_delta = Vector2.ZERO
+	probe.device_label_offset = Vector2.ZERO
 	probe.show_utterance("you", "Без приёма", null)
 	_check(not line.visible and not label.visible,
 		"пустое имя приёма (старый вызов show_utterance) снова прячет линию и текст")

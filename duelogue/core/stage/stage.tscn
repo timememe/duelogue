@@ -6,7 +6,7 @@
 [ext_resource type="Texture2D" uid="uid://du137dey3t6l0" path="res://duelogue/assets/states_test/idle.png" id="4"]
 [ext_resource type="Texture2D" uid="uid://csv785uek18na" path="res://duelogue/assets/characters/red_advocate/idle.png" id="5"]
 [ext_resource type="Shader" uid="uid://uex1ce1dnuij" path="res://duelogue/assets/shaders/dither.gdshader" id="6"]
-[ext_resource type="Shader" path="res://duelogue/assets/shaders/fire_aura.gdshader" id="7"]
+[ext_resource type="Shader" uid="uid://d21fjydoa2cm0" path="res://duelogue/assets/shaders/fire_aura.gdshader" id="7"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_stage_dither"]
 shader = ExtResource("6")
@@ -19,10 +19,48 @@ shader_parameter/strength = 0.25
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_fire_you"]
 shader = ExtResource("7")
 shader_parameter/intensity = 0.0
+shader_parameter/color_ember = Color(0.35, 0.06, 0.03, 1)
+shader_parameter/color_mid = Color(0.92, 0.35, 0.06, 1)
+shader_parameter/color_hot = Color(1, 0.75, 0.15, 0.92)
+shader_parameter/color_core = Color(1, 0.96, 0.78, 1)
+shader_parameter/noise_scale = 1.1
+shader_parameter/warp_strength = 1.1
+shader_parameter/base_speed = 1.25
+shader_parameter/max_speed = 8.0
+shader_parameter/base_reach = 0.5
+shader_parameter/max_reach = 1.0
+shader_parameter/base_width = 0.33
+shader_parameter/max_width = 0.44
+shader_parameter/max_density_bias = 0.35
+shader_parameter/edge_soft = 0.09
+shader_parameter/base_edge_flicker = 0.02
+shader_parameter/max_edge_flicker = 0.12
+shader_parameter/edge_flicker_scale = 2.5
+shader_parameter/flame_levels = 6.0
+shader_parameter/dither_px = 2.0
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_fire_opp"]
 shader = ExtResource("7")
 shader_parameter/intensity = 0.0
+shader_parameter/color_ember = Color(0.35, 0.06, 0.03, 1)
+shader_parameter/color_mid = Color(0.92, 0.35, 0.06, 1)
+shader_parameter/color_hot = Color(1, 0.75, 0.15, 0.92)
+shader_parameter/color_core = Color(1, 0.96, 0.78, 1)
+shader_parameter/noise_scale = 1.1
+shader_parameter/warp_strength = 1.1
+shader_parameter/base_speed = 1.25
+shader_parameter/max_speed = 8.0
+shader_parameter/base_reach = 0.5
+shader_parameter/max_reach = 1.0
+shader_parameter/base_width = 0.33
+shader_parameter/max_width = 0.44
+shader_parameter/max_density_bias = 0.35
+shader_parameter/edge_soft = 0.09
+shader_parameter/base_edge_flicker = 0.02
+shader_parameter/max_edge_flicker = 0.12
+shader_parameter/edge_flicker_scale = 2.5
+shader_parameter/flame_levels = 6.0
+shader_parameter/dither_px = 2.0
 
 [node name="Stage" type="Control" unique_id=1332663421]
 layout_mode = 3
@@ -57,12 +95,14 @@ stretch_mode = 6
 unique_name_in_owner = true
 texture_filter = 6
 
-[node name="FireYou" type="ColorRect" parent="Actors"]
+[node name="FireYou" type="ColorRect" parent="Actors" unique_id=1972008677]
 unique_name_in_owner = true
 material = SubResource("ShaderMaterial_fire_you")
+offset_left = -30.545
+offset_top = -275.0
+offset_right = 430.54498
+offset_bottom = 339.46002
 mouse_filter = 2
-position = Vector2(-20, 110)
-size = Vector2(440, 565)
 
 [node name="ActorYou" type="Sprite2D" parent="Actors" unique_id=2005178208]
 unique_name_in_owner = true
@@ -71,12 +111,14 @@ position = Vector2(200, 381.8)
 scale = Vector2(0.35, 0.35)
 texture = ExtResource("4")
 
-[node name="FireOpp" type="ColorRect" parent="Actors"]
+[node name="FireOpp" type="ColorRect" parent="Actors" unique_id=1079775608]
 unique_name_in_owner = true
 material = SubResource("ShaderMaterial_fire_opp")
+offset_left = 719.455
+offset_top = -275.0
+offset_right = 1180.545
+offset_bottom = 339.46002
 mouse_filter = 2
-position = Vector2(730, 110)
-size = Vector2(440, 565)
 
 [node name="ActorOpp" type="Sprite2D" parent="Actors" unique_id=1095861634]
 unique_name_in_owner = true
