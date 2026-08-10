@@ -14,6 +14,8 @@ extends Control
 ## меньше). Полноценная режиссура (акценты клинча/темы) по-прежнему впереди — заготовки ниже.
 
 const Parallax := preload("res://duelogue/core/stage/parallax.gd")
+const COURTROOM_BG := preload("res://duelogue/assets/bg_courtroom_v2.png")
+const PROTOTYPE_BG := preload("res://duelogue/assets/archive/legacy_pixel_character/bg_test.png")
 const PARALLAX_BG := 5.0
 const PARALLAX_ACTORS := 12.0
 const PARALLAX_PROPS_FRONT := 20.0
@@ -32,13 +34,52 @@ var _props_front_base := Vector2.ZERO
 var _parallax_offset := Vector2.ZERO
 
 
+## Каталог окружений для меню подготовки. Пока сцены отличаются фоном и атмосферой, а
+## общая геометрия актёров/кафедр остаётся в stage.tscn и продолжает правиться в редакторе.
+static func catalog_entries() -> Array:
+	return [
+		{
+			"id": "courtroom",
+			"name": "Зал Арбитража",
+			"description": "Основная сцена: тёмный зал с золотыми трибунами и весами.",
+			"texture": COURTROOM_BG,
+		},
+		{
+			"id": "prototype_arena",
+			"name": "Прототипная арена",
+			"description": "Светлая пиксельная сцена из раннего прототипа DUELOGUE.",
+			"texture": PROTOTYPE_BG,
+		},
+	]
+
+
+static func catalog_entry(id: String) -> Dictionary:
+	for raw in catalog_entries():
+		var entry: Dictionary = raw
+		if String(entry.id) == id:
+			return entry.duplicate(true)
+	return {}
+
+
 func _ready() -> void:
+	_apply_selected_stage()
 	EventBus.match_started.connect(_on_match_started)
 	EventBus.clinch_started.connect(_on_clinch_started)
 	EventBus.emotion_changed.connect(_on_emotion_changed)
 	_bg_base = _bg.position
 	_actors_base = _actors.position
 	_props_front_base = _props_front.position
+
+
+func _apply_selected_stage() -> void:
+	var prof := get_node_or_null("/root/Profile")
+	var id := String(prof.settings.get("stage_id", "courtroom")) if prof != null else "courtroom"
+	var entry := catalog_entry(id)
+	if entry.is_empty():
+		entry = catalog_entry("courtroom")
+	var texture := entry.get("texture") as Texture2D
+	if texture != null:
+		_bg.texture = texture
 
 
 func _process(delta: float) -> void:

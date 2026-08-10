@@ -140,7 +140,19 @@ func _ready() -> void:
 func _player_deck() -> Dictionary:
 	var prof := get_node_or_null("/root/Profile")
 	if prof != null and prof.deck is Dictionary and not (prof.deck as Dictionary).is_empty():
-		return prof.deck
+		return (prof.deck as Dictionary).duplicate(true)
+	return {"u": DECK_U, "t": DECK_T, "r": DECK_R, "steals": STEAL_CARDS, "named": []}
+
+
+## Обойма оппонента выбирается в меню подготовки из того же каталога, но не меняет
+## активную обойму игрока. Удалённая после выбора запись безопасно откатывается на классику.
+func _opponent_deck() -> Dictionary:
+	var prof := get_node_or_null("/root/Profile")
+	if prof != null:
+		var id := String(prof.settings.get("opponent_deck_id", ""))
+		var entry: Dictionary = prof.get_deck_entry(id)
+		if entry.get("deck") is Dictionary and not (entry.deck as Dictionary).is_empty():
+			return (entry.deck as Dictionary).duplicate(true)
 	return {"u": DECK_U, "t": DECK_T, "r": DECK_R, "steals": STEAL_CARDS, "named": []}
 
 
@@ -519,19 +531,21 @@ func start_match() -> void:
 		int(audience_config.get("lean_cap", RulesCore.ZAL_MAX)))
 	_audience_conduct_delta = 0
 	_audience_reaction_seen = false
-	# Сторона игрока пересобирается из ПРОФИЛЯ (редактор колоды): счётчики + именные
-	# заменой. Оппонент остаётся каноном констант (асимметрия — сознательный полигон).
+	# Обе стороны пересобираются из выбранных в подготовке обойм: активная игрока и отдельная
+	# запись оппонента. Именные карты в обеих обоймах замещают ванильные тем же путём.
 	var d := _player_deck()
+	var opp_d := _opponent_deck()
 	model.sides[SIDE_YOU] = DeckLib.build_side(int(d.u), int(d.t), int(d.r), BASE_THESES, int(d.steals), HAND)
+	model.sides[SIDE_OPP] = DeckLib.build_side(int(opp_d.u), int(opp_d.t), int(opp_d.r), BASE_THESES, int(opp_d.steals), HAND)
 	NamedCards.inject(model.sides[SIDE_YOU], d.get("named", []))
-	NamedCards.inject(model.sides[SIDE_OPP], NAMED_OPP)
+	NamedCards.inject(model.sides[SIDE_OPP], opp_d.get("named", NAMED_OPP))
 	if combo_drill:
 		_stack_combo_drill(model.sides[SIDE_YOU])
 		_stack_combo_drill(model.sides[SIDE_OPP])
-	# Пересборка sides[SIDE_YOU] выше заново завела ленивый filler на Базе (reset() уже
-	# досеял было реальный тезис, но эта строка его перезаписала) — досеваем ещё раз,
-	# симметрично тому, что OPP получил внутри reset() и не терял пересборкой.
+	# Пересборка обеих sides выше заново завела ленивый filler на Базе — досеваем реальные
+	# стартовые тезисы после замены обеих сторон.
 	model.seed_starting_theses(SIDE_YOU)
+	model.seed_starting_theses(SIDE_OPP)
 	DeckLib.prepare_opening_reserve(model.sides[SIDE_YOU], HAND)
 	DeckLib.prepare_opening_reserve(model.sides[SIDE_OPP], HAND)
 	_gate_told = {}
@@ -555,12 +569,15 @@ func start_match() -> void:
 		"first": "you" if _first_side == SIDE_YOU else "opp",
 		"match_id": match_id,
 		"outcome_profile": active_outcome_profile(),
+		"opponent_deck_id": String(Profile.settings.get("opponent_deck_id", "")),
+		"opponent_character_id": String(Profile.settings.get("opponent_character_id", "red_advocate")),
+		"stage_id": String(Profile.settings.get("stage_id", "courtroom")),
 	})
 	EventBus.audience_changed.emit(audience_state())
 	_emit({
 		"ev": "start", "ts": match_id,
 		"first": "you" if _first_side == SIDE_YOU else "opp",
-		"ruleset": {"base": BASE_THESES, "steal_cards": int(d.steals), "deck": "U%d T%d R%d" % [int(d.u), int(d.t), int(d.r)], "named": ", ".join(d.get("named", [])), "opp_style": _opp_style, "freeze": CLINCH_FREEZE, "gate": "%d/%d" % [int(links.get("gate_x", 0)), int(links.get("gate_y", 0))], "loot": CAPTURE_LOOT, "zal_ko": "%d/%d" % [int(links.get("crowd_ko", 0)), int(links.get("crowd_hold", 1))], "outcome_profile": active_outcome_profile_id()},
+		"ruleset": {"base": BASE_THESES, "steal_cards": int(d.steals), "deck": "U%d T%d R%d" % [int(d.u), int(d.t), int(d.r)], "named": ", ".join(d.get("named", [])), "opp_deck": "U%d T%d R%d" % [int(opp_d.u), int(opp_d.t), int(opp_d.r)], "opp_named": ", ".join(opp_d.get("named", [])), "opp_style": _opp_style, "freeze": CLINCH_FREEZE, "gate": "%d/%d" % [int(links.get("gate_x", 0)), int(links.get("gate_y", 0))], "loot": CAPTURE_LOOT, "zal_ko": "%d/%d" % [int(links.get("crowd_ko", 0)), int(links.get("crowd_hold", 1))], "outcome_profile": active_outcome_profile_id()},
 		"theme": nar.theme.id,
 	})
 	_tx_header(_first_side)

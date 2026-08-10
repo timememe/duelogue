@@ -29,6 +29,8 @@ var editing_deck_id := ""  ## транзит-хэндофф deck_catalog → dec
 var settings := {
 	"opp_style": "smart", "chars_per_sec": 30.0, "cutscenes": true,
 	"outcome_profile": "combat_cohesion", "outcome_contract_version": 3,
+	"opponent_character_id": "red_advocate", "opponent_deck_id": "",
+	"stage_id": "courtroom",
 }
 
 
@@ -178,6 +180,14 @@ func _ensure_catalog() -> void:
 
 func set_setting(key: String, value: Variant) -> void:
 	settings[key] = value
+	_apply_presentation()
+	save_profile()
+
+
+## Пакетная запись формы подготовки: один сейв вместо отдельной записи каждого поля.
+func set_settings(values: Dictionary) -> void:
+	for key in values:
+		settings[key] = values[key]
 	_apply_presentation()
 	save_profile()
 

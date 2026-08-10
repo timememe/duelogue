@@ -1,6 +1,6 @@
 extends Control
 
-## DUELOGUE — ГЛАВНОЕ МЕНЮ (main scene). Навигация сцен: катка (debate_screen), сезон
+## DUELOGUE — ГЛАВНОЕ МЕНЮ (main scene). Навигация сцен: подготовка к катке (debate_setup), сезон
 ## (run_map_screen), каталог (catalog_hub — одна кнопка, внутри вкладки Колоды/Темы/Комбо;
 ## Колоды/Темы дальше ведут в свои редакторы на конкретную запись); настройки — панель
 ## поверх (пишутся в autoload Profile и персистятся). Каркас — нодами в main_menu.tscn.
@@ -16,7 +16,7 @@ const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 
 
 func _ready() -> void:
-	%BattleBtn.pressed.connect(_go.bind("res://duelogue/ui/debate_screen.tscn"))
+	%BattleBtn.pressed.connect(_go.bind("res://duelogue/ui/debate_setup.tscn"))
 	%RunBtn.pressed.connect(_go.bind("res://duelogue/ui/run_map_screen.tscn"))
 	%CatalogBtn.pressed.connect(_go.bind("res://duelogue/ui/catalog_hub.tscn"))
 	%SettingsBtn.pressed.connect(_open_settings)

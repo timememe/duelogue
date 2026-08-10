@@ -115,6 +115,14 @@ static func catalog_entries() -> Array:
 		},
 	]
 
+
+static func catalog_entry(id: String) -> Dictionary:
+	for raw in catalog_entries():
+		var entry: Dictionary = raw
+		if String(entry.id) == id:
+			return entry.duplicate(true)
+	return {}
+
 var _stage              ## ядро сцены (через bind) — даёт постоянные stage-спрайты сторон
 ## Мини-сцена реакции (через bind) — статический узел debate_screen.tscn. Нетипизировано
 ## намеренно: зовём кастомные show_utterance/show_impact из скрипта сцены, которых нет в
@@ -124,6 +132,8 @@ var _reaction
 ## тоже нетипизирован по той же причине: кастомный show_combo).
 var _combo_banner
 var _sprites := {}      ## side → Sprite2D (актёр на общем плане)
+var _state_maps := {"you": YOU_STATE_TEX, "opp": OPP_STATE_TEX}
+var _portrait_flips := PORTRAIT_FLIP_H.duplicate()
 ## Режиссёр камера-кассет (context/director_core_v0.1.md) — пересеивается на match_started.
 var _director := ShotDirector.new()
 var _dolly_tween: Tween  ## долли-наезд на общем плане (см. _dolly_to_speaker/_reset_dolly)
@@ -137,9 +147,12 @@ func bind(stage, reaction, combo_banner = null) -> void:
 
 
 func _ready() -> void:
+	_apply_match_characters()
 	if _stage != null:
 		_sprites["you"] = _stage.actor_sprite("you")
 		_sprites["opp"] = _stage.actor_sprite("opp")
+		set_stage_sprite_texture("you", (_state_maps.you as Dictionary).get("idle") as Texture2D)
+		set_stage_sprite_texture("opp", (_state_maps.opp as Dictionary).get("idle") as Texture2D)
 	EventBus.match_started.connect(_on_match_started)
 	EventBus.utterance.connect(_on_utterance)
 	EventBus.impact.connect(_on_impact)
@@ -149,6 +162,20 @@ func _ready() -> void:
 	# план полностью отыграл и погас, а не молча под фейд-ином, как раньше (см. _reset_dolly).
 	if _reaction != null:
 		_reaction.connect("scene_finished", _reset_dolly)
+
+
+## Персонаж оппонента — выбранный в подготовке state-map. Игрок пока закреплён за синим
+## адвокатом; один и тот же каталог позволяет без специальных веток поставить любой скин
+## на сторону ИИ.
+func _apply_match_characters() -> void:
+	var prof := get_node_or_null("/root/Profile")
+	if prof == null:
+		return
+	var selected := catalog_entry(String(prof.settings.get("opponent_character_id", "red_advocate")))
+	if selected.is_empty() or not selected.get("states") is Dictionary:
+		return
+	_state_maps["opp"] = (selected.states as Dictionary).duplicate()
+	_portrait_flips["opp"] = bool(selected.get("flip_h", false))
 
 
 ## Кассетный режиссёр пересеивается на каждую партию — тот же приём, что emotion.start в
@@ -184,25 +211,29 @@ func _fallback_mood_for_card(card_type: String, steals: bool) -> String:
 ## Портрет реакции по типу карты, если нарратив ещё не передал отдельный mood.
 ## "" (нет карты — пас/наррация) → нейтральный idle-портрет.
 func _portrait_for(side: String, card_type: String, steals: bool) -> Texture2D:
-	var states: Dictionary = OPP_STATE_TEX if side == "opp" else YOU_STATE_TEX
+	var states: Dictionary = _states_for(side)
 	return states.get(_fallback_mood_for_card(card_type, steals), states["idle"]) as Texture2D
 
 
 func _state_tex_for(side: String, mood: String, card_type: String, steals: bool) -> Texture2D:
-	var states: Dictionary = OPP_STATE_TEX if side == "opp" else YOU_STATE_TEX
+	var states: Dictionary = _states_for(side)
 	if states.has(mood):
 		return states[mood] as Texture2D
 	return _portrait_for(side, card_type, steals)
 
 
 func _portrait_flip_h_for(side: String) -> bool:
-	return bool(PORTRAIT_FLIP_H.get(side, false))
+	return bool(_portrait_flips.get(side, false))
+
+
+func _states_for(side: String) -> Dictionary:
+	return _state_maps.get(side, YOU_STATE_TEX) as Dictionary
 
 
 ## Стейт для режиссёра — тот же fallback, что уже ведёт текстуру (§16): текстуру и кассету
 ## должен вести ОДИН эффективный стейт, не два независимых расчёта, которые могут разойтись.
 func _effective_state_for(side: String, mood: String, card_type: String, steals: bool) -> String:
-	var states: Dictionary = OPP_STATE_TEX if side == "opp" else YOU_STATE_TEX
+	var states: Dictionary = _states_for(side)
 	if states.has(mood):
 		return mood
 	return _fallback_mood_for_card(card_type, steals)
