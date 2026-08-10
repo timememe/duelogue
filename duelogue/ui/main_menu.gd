@@ -1,8 +1,9 @@
 extends Control
 
-## DUELOGUE — ГЛАВНОЕ МЕНЮ (main scene). Навигация сцен: катка (debate_screen),
-## сезон (run_map_screen), редактор колоды (deck_editor); настройки — панель поверх
-## (пишутся в autoload Profile и персистятся). Каркас — нодами в main_menu.tscn.
+## DUELOGUE — ГЛАВНОЕ МЕНЮ (main scene). Навигация сцен: катка (debate_screen), сезон
+## (run_map_screen), каталог (catalog_hub — одна кнопка, внутри вкладки Колоды/Темы/Комбо;
+## Колоды/Темы дальше ведут в свои редакторы на конкретную запись); настройки — панель
+## поверх (пишутся в autoload Profile и персистятся). Каркас — нодами в main_menu.tscn.
 
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 
@@ -17,12 +18,12 @@ const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 func _ready() -> void:
 	%BattleBtn.pressed.connect(_go.bind("res://duelogue/ui/debate_screen.tscn"))
 	%RunBtn.pressed.connect(_go.bind("res://duelogue/ui/run_map_screen.tscn"))
-	%DeckBtn.pressed.connect(_go.bind("res://duelogue/ui/deck_editor.tscn"))
-	%ComboBtn.pressed.connect(_go.bind("res://duelogue/ui/combo_catalog.tscn"))
+	%CatalogBtn.pressed.connect(_go.bind("res://duelogue/ui/catalog_hub.tscn"))
 	%SettingsBtn.pressed.connect(_open_settings)
 	%QuitBtn.pressed.connect(func() -> void: get_tree().quit())
 	%CloseSettingsBtn.pressed.connect(func() -> void: _settings_panel.visible = false)
-	_deck_summary.text = "Обойма: %s" % Profile.deck_summary()
+	var active_deck := Profile.get_deck_entry(Profile.active_deck_id)
+	_deck_summary.text = "Обойма «%s»: %s" % [String(active_deck.get("name", "?")), Profile.deck_summary()]
 	_init_settings()
 
 

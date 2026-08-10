@@ -79,12 +79,11 @@ func _gen_act_map() -> void:
 	state.room_open = false
 
 
-## Пул тем для афиш — те же данные, что играет боёвка (id + топик, без инстанса контроллера).
+## Пул тем для афиш — тот же каталог, что играет боёвка (id + топик, без инстанса контроллера).
 func _theme_pool() -> Array:
 	var out: Array = []
-	for t in BattleController.THEMES:
-		var td: Dictionary = t.data()
-		out.append({"id": td.id, "topic": td.topic})
+	for e in ThemeLibrary.list_themes():
+		out.append({"id": String(e.id), "topic": String(e.name)})
 	return out
 
 

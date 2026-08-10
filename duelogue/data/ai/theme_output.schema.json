@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "topic": { "type": "string", "minLength": 1 },
+    "stances": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contra": { "$ref": "#/$defs/stance" },
+        "pro": { "$ref": "#/$defs/stance" }
+      },
+      "required": ["contra", "pro"]
+    },
+    "axes": {
+      "type": "array",
+      "minItems": 6,
+      "items": { "$ref": "#/$defs/axis" }
+    },
+    "shared_motifs": {
+      "type": "array",
+      "minItems": 3,
+      "items": { "type": "string" }
+    },
+    "voices": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contra": { "type": "string" },
+        "pro": { "type": "string" }
+      },
+      "required": ["contra", "pro"]
+    }
+  },
+  "required": ["topic", "stances", "axes", "shared_motifs", "voices"],
+  "$defs": {
+    "headline": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "text": { "type": "string", "minLength": 1 },
+        "preferred_axes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["id", "text", "preferred_axes"]
+    },
+    "stance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "label": { "type": "string", "minLength": 1 },
+        "headlines": {
+          "type": "array",
+          "minItems": 4,
+          "items": { "$ref": "#/$defs/headline" }
+        }
+      },
+      "required": ["label", "headlines"]
+    },
+    "support_bank": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "number": { "$ref": "#/$defs/string_list" },
+        "case": { "$ref": "#/$defs/string_list" },
+        "source": { "$ref": "#/$defs/string_list" },
+        "analogy": { "$ref": "#/$defs/string_list" },
+        "common": { "$ref": "#/$defs/string_list" },
+        "stake": { "$ref": "#/$defs/string_list" },
+        "definition": { "$ref": "#/$defs/string_list" },
+        "precedent": { "$ref": "#/$defs/string_list" },
+        "exception": { "$ref": "#/$defs/string_list" },
+        "distinction": { "$ref": "#/$defs/string_list" },
+        "consequence": { "$ref": "#/$defs/string_list" }
+      },
+      "required": [
+        "number", "case", "source", "analogy", "common", "stake",
+        "definition", "precedent", "exception", "distinction", "consequence"
+      ]
+    },
+    "string_list": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "axis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string", "minLength": 1 },
+        "appeal": { "type": "string", "enum": ["logos", "pathos", "ethos"] },
+        "contra": { "type": "string", "minLength": 1 },
+        "pro": { "type": "string", "minLength": 1 },
+        "motifs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "takes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "contra": {
+              "type": "array",
+              "minItems": 2,
+              "items": { "type": "string" }
+            },
+            "pro": {
+              "type": "array",
+              "minItems": 2,
+              "items": { "type": "string" }
+            }
+          },
+          "required": ["contra", "pro"]
+        },
+        "supports": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "contra": { "$ref": "#/$defs/support_bank" },
+            "pro": { "$ref": "#/$defs/support_bank" }
+          },
+          "required": ["contra", "pro"]
+        }
+      },
+      "required": ["id", "tag", "appeal", "contra", "pro", "motifs", "takes", "supports"]
+    }
+  }
+}

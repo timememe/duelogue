@@ -19,6 +19,7 @@ config/icon="res://icon.svg"
 
 EventBus="*res://duelogue/app/event_bus.gd"
 Profile="*res://duelogue/app/profile.gd"
+ThemeLibrary="*res://duelogue/app/theme_library.gd"
 
 [display]
 

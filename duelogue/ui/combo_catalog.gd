@@ -29,8 +29,6 @@ const BRANCH_SCALE := 0.58
 
 
 func _ready() -> void:
-	%BackBtn.pressed.connect(func() -> void:
-		get_tree().change_scene_to_file("res://duelogue/ui/main_menu.tscn"))
 	_build()
 
 

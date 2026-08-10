@@ -1,0 +1,218 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://duelogue/ui/character_catalog.gd" id="1"]
+
+[sub_resource type="StyleBoxFlat" id="PanelLeft"]
+bg_color = Color(0.085, 0.095, 0.12, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.2, 0.22, 0.28, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="PanelDetail"]
+bg_color = Color(0.078, 0.086, 0.108, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.16, 0.18, 0.23, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[node name="CharacterCatalog" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="Root" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 24.0
+offset_top = 8.0
+offset_right = -24.0
+offset_bottom = -14.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 10
+
+[node name="Intro" type="HBoxContainer" parent="Root"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="CountLabel" type="Label" parent="Root/Intro"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.8235, 0.2902, 1)
+theme_override_font_sizes/font_size = 14
+
+[node name="Hint" type="Label" parent="Root/Intro"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.5412, 0.5765, 0.6392, 1)
+theme_override_font_sizes/font_size = 12
+text = "Витрина показывает те же портреты и состояния, которые CharacterCore вызывает в бою."
+horizontal_alignment = 2
+
+[node name="Body" type="HBoxContainer" parent="Root"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="RosterPanel" type="PanelContainer" parent="Root/Body"]
+custom_minimum_size = Vector2(265, 0)
+layout_mode = 2
+theme_override_styles/panel = SubResource("PanelLeft")
+
+[node name="Margin" type="MarginContainer" parent="Root/Body/RosterPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="VBox" type="VBoxContainer" parent="Root/Body/RosterPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Title" type="Label" parent="Root/Body/RosterPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8118, 0.8392, 0.8784, 1)
+theme_override_font_sizes/font_size = 13
+text = "БОЙЦЫ"
+
+[node name="Separator" type="HSeparator" parent="Root/Body/RosterPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="CharacterList" type="VBoxContainer" parent="Root/Body/RosterPanel/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="RosterNote" type="Label" parent="Root/Body/RosterPanel/Margin/VBox"]
+layout_mode = 2
+size_flags_vertical = 10
+theme_override_colors/font_color = Color(0.5412, 0.5765, 0.6392, 1)
+theme_override_font_sizes/font_size = 11
+text = "Сейчас ростер совпадает с двумя сторонами прототипного боя."
+autowrap_mode = 3
+vertical_alignment = 2
+
+[node name="PreviewPanel" type="PanelContainer" parent="Root/Body"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(390, 0)
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Margin" type="MarginContainer" parent="Root/Body/PreviewPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="Portrait" type="TextureRect" parent="Root/Body/PreviewPanel/Margin"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(360, 440)
+layout_mode = 2
+texture_filter = 1
+expand_mode = 1
+stretch_mode = 5
+
+[node name="DetailPanel" type="PanelContainer" parent="Root/Body"]
+custom_minimum_size = Vector2(350, 0)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/panel = SubResource("PanelDetail")
+
+[node name="Margin" type="MarginContainer" parent="Root/Body/DetailPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 14
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 14
+
+[node name="Scroll" type="ScrollContainer" parent="Root/Body/DetailPanel/Margin"]
+layout_mode = 2
+horizontal_scroll_mode = 0
+
+[node name="VBox" type="VBoxContainer" parent="Root/Body/DetailPanel/Margin/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="NameLabel" type="Label" parent="Root/Body/DetailPanel/Margin/Scroll/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+
+[node name="RoleLabel" type="Label" parent="Root/Body/DetailPanel/Margin/Scroll/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+
+[node name="StatusLabel" type="Label" parent="Root/Body/DetailPanel/Margin/Scroll/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.8235, 0.2902, 1)
+theme_override_font_sizes/font_size = 11
+
+[node name="DescriptionLabel" type="Label" parent="Root/Body/DetailPanel/Margin/Scroll/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8118, 0.8392, 0.8784, 1)
+theme_override_font_sizes/font_size = 13
+text = "Описание"
+autowrap_mode = 3
+
+[node name="SourceLabel" type="Label" parent="Root/Body/DetailPanel/Margin/Scroll/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5412, 0.5765, 0.6392, 1)
+theme_override_font_sizes/font_size = 10
+autowrap_mode = 3
+
+[node name="Separator" type="HSeparator" parent="Root/Body/DetailPanel/Margin/Scroll/VBox"]
+layout_mode = 2
+
+[node name="StateHeader" type="HBoxContainer" parent="Root/Body/DetailPanel/Margin/Scroll/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="StateTitle" type="Label" parent="Root/Body/DetailPanel/Margin/Scroll/VBox/StateHeader"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.8118, 0.8392, 0.8784, 1)
+theme_override_font_sizes/font_size = 16
+
+[node name="StateIdLabel" type="Label" parent="Root/Body/DetailPanel/Margin/Scroll/VBox/StateHeader"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 4
+theme_override_colors/font_color = Color(0.5412, 0.5765, 0.6392, 1)
+theme_override_font_sizes/font_size = 11
+
+[node name="StateHint" type="Label" parent="Root/Body/DetailPanel/Margin/Scroll/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5412, 0.5765, 0.6392, 1)
+theme_override_font_sizes/font_size = 11
+text = "Выбери состояние для предпросмотра:"
+
+[node name="StateButtons" type="FlowContainer" parent="Root/Body/DetailPanel/Margin/Scroll/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/h_separation = 6
+theme_override_constants/v_separation = 6

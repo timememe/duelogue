@@ -47,7 +47,7 @@ offset_top = 9.0
 offset_right = 1132.0
 offset_bottom = 37.0
 theme_override_font_sizes/font_size = 13
-text = "← В меню"
+text = "← В каталог"
 
 [node name="Body" type="HBoxContainer" parent="."]
 layout_mode = 1
@@ -71,6 +71,18 @@ horizontal_scroll_mode = 0
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 10
+
+[node name="NameTitle" type="Label" parent="Body/LeftPanel/LeftBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8118, 0.8392, 0.8784, 1)
+theme_override_font_sizes/font_size = 14
+text = "НАЗВАНИЕ КОЛОДЫ"
+
+[node name="NameEdit" type="LineEdit" parent="Body/LeftPanel/LeftBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 15
+placeholder_text = "Колода"
 
 [node name="SlotsTitle" type="Label" parent="Body/LeftPanel/LeftBox"]
 layout_mode = 2
@@ -184,4 +196,4 @@ grow_horizontal = 2
 grow_vertical = 0
 theme_override_colors/font_color = Color(0.5412, 0.5765, 0.6392, 1)
 theme_override_font_sizes/font_size = 12
-text = "Обойма применяется к СЛЕДУЮЩЕЙ катке (сторона игрока; оппонент играет каноном). Сохраняется между сессиями."
+text = "Колода сохраняется в каталог. В катку и сезон (сторона игрока; оппонент играет каноном) идёт та, что отмечена активной в каталоге колод."

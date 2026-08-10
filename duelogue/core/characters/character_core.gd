@@ -74,6 +74,47 @@ const OPP_STATE_TEX := {
 
 const PORTRAIT_FLIP_H := {"you": false, "opp": false}
 
+## Единый read-only контракт для UI-каталога персонажей. Каталог читает ровно те state-map,
+## которые CharacterCore использует в бою, поэтому превью не расходится с реальным актёром.
+## Когда скины станут данными, этот API останется точкой входа, а источник можно будет заменить.
+const CATALOG_STATE_ORDER := [
+	"idle", "declare", "hold", "attack", "gotcha",
+	"burst", "evade", "swagger", "panic", "stagger",
+]
+const CATALOG_STATE_LABELS := {
+	"idle": "Нейтраль", "declare": "Заявление", "hold": "Держит удар",
+	"attack": "Атака", "gotcha": "Подловил", "burst": "Вспышка",
+	"evade": "Уклонение", "swagger": "Кураж", "panic": "Паника",
+	"stagger": "Пошатнулся",
+}
+
+
+static func catalog_entries() -> Array:
+	return [
+		{
+			"id": "blue_advocate",
+			"name": "Синий адвокат",
+			"role": "СТОРОНА ИГРОКА",
+			"status": "ПРОТОТИПНЫЙ СКИН",
+			"description": "Текущий визуальный набор протагониста. Все боевые реплики и попадания используют эти десять состояний.",
+			"source": "assets/states_test",
+			"accent": Color("4d8dff"),
+			"states": YOU_STATE_TEX,
+			"flip_h": bool(PORTRAIT_FLIP_H.you),
+		},
+		{
+			"id": "red_advocate",
+			"name": "Красная адвокатка",
+			"role": "СТОРОНА ОППОНЕНТА",
+			"status": "БОЕВОЙ СКИН",
+			"description": "Текущий визуальный набор оппонента. State-map симметричен протагонисту и подключён к той же режиссуре реакций.",
+			"source": "assets/characters/red_advocate",
+			"accent": Color("e45c62"),
+			"states": OPP_STATE_TEX,
+			"flip_h": bool(PORTRAIT_FLIP_H.opp),
+		},
+	]
+
 var _stage              ## ядро сцены (через bind) — даёт постоянные stage-спрайты сторон
 ## Мини-сцена реакции (через bind) — статический узел debate_screen.tscn. Нетипизировано
 ## намеренно: зовём кастомные show_utterance/show_impact из скрипта сцены, которых нет в

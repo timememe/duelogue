@@ -7,6 +7,10 @@ extends Node
 ##
 ## Клинч идёт через СТЕЙТ-API ядра (begin_clinch/clinch_submit) — тот же путь, что у сим-бота.
 ## Async только здесь: ходы ИИ с таймером пейсинга, пауза на решении игрока (await _clinch_decided).
+##
+## Тема — из autoload ThemeLibrary (каталог, ui/theme_catalog); этот файл про сами файлы
+## theme_*.gd больше не знает. theme_list()/active_theme_id()/select_theme(i) читают и пишут
+## ТОЛЬКО через ThemeLibrary — пауза-меню debate_screen дергает их по индексу как раньше.
 
 const RulesCore := preload("res://duelogue/core/rules/rules_core.gd")
 const Ai := preload("res://duelogue/core/ai/ai.gd")
@@ -23,11 +27,6 @@ const OutcomeProfiles := preload("res://duelogue/core/outcome/outcome_profiles.g
 const OutcomeEvaluator := preload("res://duelogue/core/outcome/outcome_evaluator.gd")
 const MatchLog := preload("res://duelogue/app/match_log.gd")
 const Grammar := preload("res://duelogue/core/cards/grammar.gd")
-const PineappleTheme := preload("res://duelogue/core/narrative/themes/theme_pineapple.gd")
-const ShawarmaTheme := preload("res://duelogue/core/narrative/themes/theme_shawarma.gd")
-const EvangelionTheme := preload("res://duelogue/core/narrative/themes/theme_evangelion.gd")
-const THEMES := [PineappleTheme, ShawarmaTheme, EvangelionTheme]
-const ACTIVE_THEME := PineappleTheme
 
 const SIDE_YOU := RulesCore.SIDE_YOU
 const SIDE_OPP := RulesCore.SIDE_OPP
@@ -133,7 +132,7 @@ func _ready() -> void:
 	emotion = EmotionCore.new()
 	audience = AudienceCore.new()
 	outcome = OutcomeEvaluator.new()
-	_theme_data = ACTIVE_THEME.data()
+	_theme_data = ThemeLibrary.get_active_theme_data()
 	_outcome_profile = OutcomeProfiles.get_profile(_profile_outcome_id())
 
 
@@ -348,13 +347,12 @@ func combo_opener_targets(index: int) -> Array:
 
 func theme_list() -> Array:
 	var out: Array = []
-	for t in THEMES:
-		var td: Dictionary = t.data()
-		out.append({"id": td.id, "topic": td.topic})
+	for e in ThemeLibrary.list_themes():
+		out.append({"id": String(e.id), "topic": String(e.name)})
 	return out
 
 func active_theme_id() -> String:
-	return String(_theme_data.get("id", ""))
+	return ThemeLibrary.active_theme_id
 
 
 ## Read-only снимок накопительного напряжения для view. Само значение strain не входит в
@@ -482,9 +480,12 @@ func opening_options() -> Array:
 	return out
 
 func select_theme(i: int) -> void:
-	if i < 0 or i >= THEMES.size():
+	var list := ThemeLibrary.list_themes()
+	if i < 0 or i >= list.size():
 		return
-	_theme_data = THEMES[i].data()
+	var entry: Dictionary = list[i]
+	ThemeLibrary.set_active_theme(String(entry.id))
+	_theme_data = (entry.data as Dictionary).duplicate(true)
 	start_match()
 
 

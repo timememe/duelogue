@@ -1,10 +1,12 @@
 extends Control
 
-## DUELOGUE — РЕДАКТОР КОЛОДЫ (обоймы). Ручная сборка стороны игрока: счётчики базовых
-## типов + именные приёмы (по 1 копии, §10.2; каждый ЗАМЕЩАЕТ ванильную карту своей базы
-## внутри счётчиков — размер обоймы задают счётчики). Пишет в autoload Profile; битва
-## читает оттуда (battle_controller._player_deck). Каркас — нодами в deck_editor.tscn
-## (правится в редакторе); ряды счётчиков и список приёмов строятся кодом из реестра.
+## DUELOGUE — РЕДАКТОР КОЛОДЫ (обоймы). Ручная сборка ОДНОЙ записи каталога (ui/deck_catalog):
+## счётчики базовых типов + именные приёмы (по 1 копии, §10.2; каждый ЗАМЕЩАЕТ ванильную карту
+## своей базы внутри счётчиков — размер обоймы задают счётчики). Какую запись открыть — решает
+## Profile.editing_deck_id (транзит-хэндофф от каталога; пусто → правим активную). Пишет через
+## Profile.save_deck_data(id, ...); если правим активную запись — battle_controller видит
+## изменения сразу же (Profile.deck зеркалится). Каркас — нодами в deck_editor.tscn (правится
+## в редакторе); ряды счётчиков и список приёмов строятся кодом из реестра.
 ##
 ## Канон и коридоры — индикаторы, не запреты: полигон должен позволять и заведомо кривые
 ## обоймы (симы D/A показали цену краёв — редактор их подсвечивает, но не запрещает).
@@ -21,6 +23,7 @@ const C := preload("res://duelogue/core/cards/card_types.gd")
 const DeckLib := preload("res://duelogue/core/cards/deck.gd")
 const NarEngine := preload("res://duelogue/core/narrative/narrative_engine.gd")
 const CardScene := preload("res://duelogue/ui/card/card.tscn")
+const CatalogHub := preload("res://duelogue/ui/catalog_hub.gd")
 
 const CANON_TOTAL := 20
 const SLOT_MAX := 40
@@ -36,11 +39,13 @@ const SLOT_DEFS := [
 const SLOT_KEYS := ["u", "t", "plain", "steals"]
 
 var _deck := {}           ## рабочая копия: {u, t, plain, steals, named: []}
+var _editing_id := ""     ## id записи каталога, которую правим (Profile.decks)
 var _count_labels := {}   ## key → Label счётчика
 var _named_checks := {}   ## id приёма → CheckBox
 var _size_total_label: Label
 var _nar := NarEngine.new()   ## только device_label() — чтение мехлейбла карты, без rng-состояния
 
+@onready var _name_edit: LineEdit = %NameEdit
 @onready var _slots_box: VBoxContainer = %SlotsBox
 @onready var _named_box: VBoxContainer = %NamedBox
 @onready var _size_box: VBoxContainer = %SizeBox
@@ -53,15 +58,32 @@ var _nar := NarEngine.new()   ## только device_label() — чтение м
 
 func _ready() -> void:
 	_card_grid.columns = GRID_COLUMNS
-	%BackBtn.pressed.connect(_to_menu)
+	%BackBtn.pressed.connect(_to_catalog)
 	_save_btn.pressed.connect(_save)
 	%PresetClassicBtn.pressed.connect(_preset.bind(false))
 	%PresetNamedBtn.pressed.connect(_preset.bind(true))
-	_deck = _from_profile(Profile.deck)
+	_name_edit.text_submitted.connect(func(_t: String) -> void: _rename())
+	_name_edit.focus_exited.connect(_rename)
+	# Хэндофф разовый: забираем и сразу гасим, иначе следующий заход в редактор без
+	# явного выбора из каталога унаследует чужой id вместо активной записи.
+	_editing_id = Profile.editing_deck_id if Profile.editing_deck_id != "" else Profile.active_deck_id
+	Profile.editing_deck_id = ""
+	var entry := Profile.get_deck_entry(_editing_id)
+	if entry.is_empty():
+		_editing_id = Profile.active_deck_id
+		entry = Profile.get_deck_entry(_editing_id)
+	_name_edit.text = String(entry.get("name", ""))
+	var entry_deck: Dictionary = entry.get("deck", Profile.classic())
+	_deck = _from_profile(entry_deck)
 	_build_slot_rows()
 	_build_size_controls()
 	_build_named_list()
 	_refresh()
+
+
+func _rename() -> void:
+	Profile.rename_deck(_editing_id, _name_edit.text)
+	_name_edit.text = String(Profile.get_deck_entry(_editing_id).get("name", _name_edit.text))
 
 
 # ------------------------------------------------ рабочая обойма ↔ профиль ----
@@ -248,13 +270,18 @@ func _preset(with_named: bool) -> void:
 
 
 func _save() -> void:
-	Profile.set_deck(_to_profile())
+	Profile.save_deck_data(_editing_id, _to_profile())
+	_rename()
 	_warn_label.add_theme_color_override("font_color", Color(0.44, 0.81, 0.5))
-	_warn_label.text = "Сохранено — эта обойма пойдёт в следующую катку."
+	if _editing_id == Profile.active_deck_id:
+		_warn_label.text = "Сохранено — эта обойма активна и пойдёт в следующую катку."
+	else:
+		_warn_label.text = "Сохранено в каталог. Активна другая колода — выберите эту в каталоге, если нужно играть ей."
 
 
-func _to_menu() -> void:
-	get_tree().change_scene_to_file("res://duelogue/ui/main_menu.tscn")
+func _to_catalog() -> void:
+	CatalogHub.requested_tab = 0  # вкладка «Колоды»
+	get_tree().change_scene_to_file("res://duelogue/ui/catalog_hub.tscn")
 
 
 # ----------------------------------------------------------------- рендер -----

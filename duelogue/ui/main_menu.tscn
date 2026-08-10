@@ -42,7 +42,7 @@ offset_bottom = 200.0
 grow_horizontal = 2
 theme_override_colors/font_color = Color(0.5412, 0.5765, 0.6392, 1)
 theme_override_font_sizes/font_size = 14
-text = "дебаты как спорт — зал решает"
+text = "зал решает"
 horizontal_alignment = 1
 
 [node name="Buttons" type="VBoxContainer" parent="."]
@@ -53,9 +53,9 @@ anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = -170.0
-offset_top = -114.0
+offset_top = -88.0
 offset_right = 170.0
-offset_bottom = 186.0
+offset_bottom = 160.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 12
@@ -65,28 +65,21 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 40)
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
-text = "Дебаты — быстрая катка"
+text = "Дебаты на тему"
 
 [node name="RunBtn" type="Button" parent="Buttons"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 40)
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
-text = "Сезон — карта забега"
+text = "Сезон"
 
-[node name="DeckBtn" type="Button" parent="Buttons"]
+[node name="CatalogBtn" type="Button" parent="Buttons"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 40)
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
-text = "Редактор колоды"
-
-[node name="ComboBtn" type="Button" parent="Buttons"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 40)
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "Комбо — каталог маршрутов"
+text = "Каталог"
 
 [node name="SettingsBtn" type="Button" parent="Buttons"]
 unique_name_in_owner = true
