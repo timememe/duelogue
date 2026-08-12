@@ -31,8 +31,20 @@ func _init() -> void:
 
 
 func _check_card(card: Dictionary, title: String) -> void:
-	_check_texture(Art.type_icon_for(card), "%s · иконка типа" % title)
+	_check_type_icon(Art.type_icon_for(card), "%s · круглая иконка типа" % title)
 	_check_texture(Art.art_for(card, title), "%s · арт приёма" % title)
+
+
+func _check_type_icon(texture: Texture2D, label: String) -> void:
+	var ok := texture != null and texture.get_width() == texture.get_height() \
+		and texture.get_width() >= 64
+	if ok:
+		var image := texture.get_image()
+		ok = image != null and image.get_pixel(0, 0).a < 0.05 \
+			and image.get_pixel(image.get_width() / 2, image.get_height() / 2).a > 0.9
+	print("  %s · %s" % ["OK" if ok else "FAIL", label])
+	if not ok:
+		failures += 1
 
 
 func _check_texture(texture: Texture2D, label: String) -> void:

@@ -29,6 +29,7 @@ var heat_amplifies := true
 
 var reaction_values := {}
 var parry_value := 1
+var scenes := 0
 var moves := 0
 var reversals := 0
 var last_scene := {}
@@ -56,6 +57,7 @@ func reset(config: Dictionary = {}) -> void:
 	parry_value = int(config.get("parry_value", 1))
 	lean = clampi(int(config.get("opening_lean", 0)), -lean_cap, lean_cap)
 	heat = clampi(int(config.get("opening_heat", 0)), 0, heat_max)
+	scenes = 0
 	moves = 0
 	reversals = 0
 	last_scene = {}
@@ -89,6 +91,7 @@ func resolve_scene(content_side: String, content_strength: int = 0, conduct_delt
 	else:
 		_resolve_legacy_scene(content_side, content_strength, conduct_delta, heat_gain,
 			reaction_seen, heat_before)
+	scenes += 1
 	return snapshot()
 
 
@@ -123,6 +126,7 @@ func snapshot(bias: int = 0) -> Dictionary:
 		"heat_max": heat_max,
 		"quiet_progress": _quiet_progress,
 		"quiet_actions": quiet_actions,
+		"scenes": scenes,
 		"moves": moves,
 		"reversals": reversals,
 		"last_scene": last_scene.duplicate(true),

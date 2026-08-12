@@ -123,6 +123,7 @@ var _outcome_profile: Dictionary = {}
 ## содержательным результатом, поэтому реакция не может сама назначить победителя клинча.
 var _audience_conduct_delta := 0
 var _audience_reaction_seen := false
+var _audience_reaction_notes: Array = []
 
 
 func _ready() -> void:
@@ -531,6 +532,7 @@ func start_match() -> void:
 		int(audience_config.get("lean_cap", RulesCore.ZAL_MAX)))
 	_audience_conduct_delta = 0
 	_audience_reaction_seen = false
+	_audience_reaction_notes = []
 	# Обе стороны пересобираются из выбранных в подготовке обойм: активная игрока и отдельная
 	# запись оппонента. Именные карты в обеих обоймах замещают ванильные тем же путём.
 	var d := _player_deck()
@@ -1235,10 +1237,31 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 		intensity += 1
 	if info.get("captured", false):
 		intensity += 1
+	var cause_action := String(info.get("landing_attack_name", "")) if landed else ""
+	if cause_action == "":
+		var cause_role := "attack" if landed else "defense"
+		for raw_step in resolved_sequence:
+			var cause_step: Dictionary = raw_step
+			if String(cause_step.get("role", "")) == cause_role:
+				cause_action = String(cause_step.get("name", cause_step.get("device", "")))
+	if cause_action == "":
+		cause_action = String(initc.get("name", initc.get("device", atk_word)))
+	var scene_cause := {
+		"actor": attacker if landed else defender,
+		"action": cause_action,
+		"target": target_claim,
+		"outcome": stimulus,
+		"landed": landed,
+	}
 	# Осознанное «хватит» — стратегическая остановка, а не потеря самообладания. Вынужденное
 	# истощение без следующей атаки по-прежнему даёт attack_stalled.
 	if landed or stop_reason != "voluntary":
-		await _emotion_event(strained_side, stimulus, mini(3, intensity), {"target": target_claim})
+		await _emotion_event(strained_side, stimulus, mini(3, intensity), {
+			"target": target_claim,
+			"cause_side": String(scene_cause.actor),
+			"cause_name": cause_action,
+			"cause_kind": "clinch",
+		})
 		if my_epoch != _epoch:
 			return
 	# Содержание получает голос только у видимого исхода: падения/захвата рамки либо
@@ -1246,7 +1269,7 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	var content_visible := bool(info.get("removed", false)) \
 		or bool(info.get("captured", false)) or pressure_rounds > 0
 	var content_side := (attacker if landed else defender) if content_visible else ""
-	_settle_audience_scene(content_side, 1 if content_visible else 0)
+	_settle_audience_scene(content_side, 1 if content_visible else 0, false, scene_cause)
 
 
 func _ask_clinch(mode: String) -> Dictionary:
@@ -1394,6 +1417,19 @@ func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_dept
 	var conduct := {"relative": 0, "signed": 0}
 	if not reaction.is_empty():
 		conduct = _record_audience_reaction(side, String(reaction.get("id", "")), stimulus)
+	var public_result := result.duplicate(true)
+	public_result["link_kind"] = link_kind
+	public_result["source_side"] = source_side
+	public_result["chain_depth"] = chain_depth
+	public_result["conduct_relative"] = int(conduct.relative)
+	public_result["conduct_signed"] = int(conduct.signed)
+	public_result["context"] = context.duplicate(true)
+	if not reaction.is_empty():
+		_audience_reaction_notes.append({
+			"side": side,
+			"title": String(reaction.get("title", "реакция")),
+		})
+	EventBus.emotion_observed.emit(side, public_result)
 	var ev := {
 		"ev": "emotion", "side": side, "stimulus": stimulus,
 		"before": int(result.before), "peak": int(result.peak), "after": int(result.after),
@@ -1470,6 +1506,7 @@ func _answer_emotional_reaction(source_side: String, context: Dictionary,
 func _begin_audience_scene() -> void:
 	_audience_conduct_delta = 0
 	_audience_reaction_seen = false
+	_audience_reaction_notes = []
 
 
 ## Возвращает обе системы координат для лога/meta: relative — впечатление о самом
@@ -1502,14 +1539,16 @@ func _record_audience_conduct(side: String, relative: int) -> Dictionary:
 
 
 func _settle_audience_scene(content_side: String, content_strength: int = 0,
-	public_behavior_seen: bool = false) -> void:
+	public_behavior_seen: bool = false, cause: Dictionary = {}) -> void:
 	if audience == null:
 		return
 	var heat_gain := 1 if content_strength > 0 or _audience_reaction_seen \
 		or public_behavior_seen or _audience_conduct_delta != 0 else 0
 	audience.resolve_scene(content_side, content_strength, _audience_conduct_delta,
 		heat_gain, _audience_reaction_seen)
-	_sync_audience()
+	var public_cause := cause.duplicate(true)
+	public_cause["reactions"] = _audience_reaction_notes.duplicate(true)
+	_sync_audience(public_cause)
 	_begin_audience_scene()
 
 
@@ -1522,12 +1561,15 @@ func _audience_quiet() -> void:
 	_sync_audience()
 
 
-func _sync_audience() -> void:
+func _sync_audience(cause: Dictionary = {}) -> void:
 	var config: Dictionary = _outcome_profile.get("audience", {})
 	if model != null and String(config.get("mode", "derived")) == "pendulum":
 		model.set_external_zal(int(audience.lean), true,
 			int(config.get("lean_cap", RulesCore.ZAL_MAX)))
-	EventBus.audience_changed.emit(audience_state())
+	var public_state := audience_state()
+	if not cause.is_empty():
+		public_state["cause"] = cause.duplicate(true)
+	EventBus.audience_changed.emit(public_state)
 	_changed()
 
 
@@ -1715,6 +1757,9 @@ func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
 	if stimulus != "":
 		await _emotion_event(model.other(side), stimulus, intensity, {
 			"target": String(info.get("target_name", "эта позиция")),
+			"cause_side": side,
+			"cause_name": String(card.get("name", "именной приём")),
+			"cause_kind": "named",
 		})
 		if my_epoch != _epoch:
 			return
@@ -1722,7 +1767,14 @@ func _log_named(side: String, card: Dictionary, info: Dictionary) -> void:
 	# Одна лишь заметная реакция остаётся голосом поведения и не делает сыгравшего победителем.
 	var content_visible := bool(info.get("removed", false)) or bool(info.get("captured", false))
 	_settle_audience_scene(side if content_visible else "", 1 if content_visible else 0,
-		named_conduct != 0)
+		named_conduct != 0, {
+			"actor": side,
+			"action": String(card.get("name", "именной приём")),
+			"target": String(info.get("target_name", "эта позиция")),
+			"outcome": "captured" if info.get("captured", false) else \
+				("frame_lost" if info.get("removed", false) else stimulus),
+			"landed": content_visible,
+		})
 
 
 func _count_razbor(side: String) -> int:

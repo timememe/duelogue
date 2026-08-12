@@ -1,10 +1,13 @@
 extends RefCounted
 
-## Реестр карточных эмблем. Все рабочие атласы имеют единый формат 2048×2048,
-## 2×2 ячейки по 1024 px. Шаблон карты получает только готовую Texture2D-ячейку.
+## Реестр карточных эмблем. Типовые жетоны — самостоятельные SVG; иллюстрации приёмов
+## остаются в атласах 2048×2048, 2×2 ячейки по 1024 px. Шаблон получает готовую Texture2D.
 
 const C := preload("res://duelogue/core/cards/card_types.gd")
-const TYPES := preload("res://duelogue/assets/cards/art/types_atlas_v2.png")
+const TYPE_FRAME := preload("res://duelogue/assets/cards/icons/frame_heart.svg")
+const TYPE_THESIS := preload("res://duelogue/assets/cards/icons/thesis_shield.svg")
+const TYPE_ANALYSIS := preload("res://duelogue/assets/cards/icons/analysis_sword.svg")
+const TYPE_THEFT := preload("res://duelogue/assets/cards/icons/theft_hand_heart.svg")
 const THESIS_A := preload("res://duelogue/assets/cards/art/thesis_atlas_a_v2.png")
 const THESIS_B := preload("res://duelogue/assets/cards/art/thesis_atlas_b_v2.png")
 const RAZBOR_A := preload("res://duelogue/assets/cards/art/razbor_atlas_a_v2.png")
@@ -40,22 +43,17 @@ const NAMED_CELLS := {
 
 const GRID_SIZE := 2.0
 const CELL_INSET_PX := 15.0
-const BOARD_ICON_INSET_PX := 130.0
 static var _cache: Dictionary = {}
 
 
-static func type_icon_for(card: Dictionary, board_crop: bool = false) -> Texture2D:
-	var pos := Vector2i.ZERO
+static func type_icon_for(card: Dictionary, _board_crop: bool = false) -> Texture2D:
 	if bool(card.get("steals", false)):
-		pos = Vector2i(0, 1)
-	else:
-		match String(card.get("type", "")):
-			C.TYPE_TEZIS: pos = Vector2i(0, 0)
-			C.TYPE_RAZBOR: pos = Vector2i(1, 0)
-			C.TYPE_USTANOVKA: pos = Vector2i(1, 1)
-	var suffix := "board" if board_crop else "card"
-	var inset := BOARD_ICON_INSET_PX if board_crop else CELL_INSET_PX
-	return _cell("type_%s_%d_%d" % [suffix, pos.x, pos.y], TYPES, pos, inset)
+		return TYPE_THEFT
+	match String(card.get("type", "")):
+		C.TYPE_TEZIS: return TYPE_THESIS
+		C.TYPE_RAZBOR: return TYPE_ANALYSIS
+		C.TYPE_USTANOVKA: return TYPE_FRAME
+	return TYPE_THESIS
 
 
 static func art_for(card: Dictionary, display_title: String) -> Texture2D:

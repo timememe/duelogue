@@ -17,6 +17,7 @@ signal narration(text: String, meta: Dictionary)                ## голос з
 ## Подписчики не мутируют правила синхронно. BattleController после полной эмоциональной
 ## цепочки сам передаёт её результат AudienceCore одним атомарным публичным событием.
 signal emotion_changed(side: String, state: Dictionary)
+signal emotion_observed(side: String, result: Dictionary)  ## полный импульс: before/peak/after/stimulus/reaction
 signal emotion_reacted(side: String, reaction: Dictionary)
 signal emotion_linked(source_side: String, responder_side: String, result: Dictionary)
 signal audience_changed(state: Dictionary)      ## независимый снимок {lean, heat, caps, reversals}

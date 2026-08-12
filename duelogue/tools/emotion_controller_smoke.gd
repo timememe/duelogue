@@ -24,10 +24,13 @@ var spoken: Array = []
 var emotion_event_calls: Array = []
 var clinch_decisions: Array = []
 var emitted_events: Array = []
+var observed_results: Array = []
 
 
 func _ready() -> void:
 	super._ready()
+	logging_enabled = false
+	EventBus.emotion_observed.connect(_capture_emotion_observed)
 	ReadingPace.CUTSCENES = false
 	start_match()
 	call_deferred("_run_smoke")
@@ -40,7 +43,17 @@ func _run_smoke() -> void:
 	var model_before := JSON.stringify(model.sides)
 	var turn_before: int = int(model.turn_count)
 	var zal_before: int = int(model.zal())
-	await _emotion_event(SIDE_YOU, "frame_lost", 3, {"target": "тестовая рамка"})
+	observed_results.clear()
+	await _emotion_event(SIDE_YOU, "frame_lost", 3, {
+		"target": "тестовая рамка", "cause_side": SIDE_OPP,
+		"cause_name": "Источник?", "cause_kind": "clinch",
+	})
+	_check(observed_results.size() == 1 and
+		int((observed_results[0] as Dictionary).get("peak", 0)) == 6 and
+		String((observed_results[0] as Dictionary).get("link_kind", "")) == "event" and
+		String(((observed_results[0] as Dictionary).get("context", {}) as Dictionary) \
+			.get("cause_name", "")) == "Источник?",
+		"контроллер публикует импульс и конкретную карту-причину для UI-истории")
 	_check(spoken.size() == 2 and bool((spoken[0] as Dictionary).meta.get("reaction", false)),
 		"контроллер подал отдельную реакционную реплику")
 	_check(String((spoken[1] as Dictionary).side) == SIDE_OPP and
@@ -308,6 +321,10 @@ func _emit(data: Dictionary) -> void:
 
 func _tx_write(_line: String) -> void:
 	pass
+
+
+func _capture_emotion_observed(side: String, result: Dictionary) -> void:
+	observed_results.append({"side": side}.merged(result.duplicate(true)))
 
 
 func _check(ok: bool, label: String) -> void:

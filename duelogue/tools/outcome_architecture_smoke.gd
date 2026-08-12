@@ -41,6 +41,8 @@ func _run() -> void:
 	_check(int(audience.lean) == 1 and int(audience.heat) == 1 and
 		int(cold_breakdown.heat_before) == 0 and int(cold_breakdown.amplitude) == 1,
 		"холодная содержательная сцена сдвигает Lean на один и греет только следующую")
+	_check(int(cold_scene.get("scenes", 0)) == 1,
+		"публичные сцены получают последовательный номер для прозрачного пути зала")
 	audience.observe_quiet()
 	_check(int(audience.lean) == 1 and int(audience.heat) == 1,
 		"одно тихое действие ещё не выдаёт охлаждение за полный раунд")

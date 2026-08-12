@@ -74,6 +74,30 @@ void fragment() {
 shader = SubResource("Shader_hand_dither")
 shader_parameter/shadow_color = Color(0.018, 0.024, 0.04, 0.86)
 
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_audience_log"]
+bg_color = Color(0.052, 0.063, 0.087, 0.97)
+border_width_left = 1
+border_width_top = 2
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.898, 0.722, 0.294, 0.72)
+corner_radius_bottom_left = 5
+corner_radius_bottom_right = 5
+shadow_color = Color(0, 0, 0, 0.48)
+shadow_size = 8
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_opponent_emotion_log"]
+bg_color = Color(0.052, 0.063, 0.087, 0.97)
+border_width_left = 2
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.851, 0.549, 0.298, 0.82)
+corner_radius_top_left = 5
+corner_radius_bottom_left = 5
+shadow_color = Color(0, 0, 0, 0.48)
+shadow_size = 8
+
 [node name="DebateScreen" type="Control" unique_id=805132598]
 layout_mode = 3
 anchors_preset = 15
@@ -121,7 +145,8 @@ offset_left = 300.0
 offset_top = 60.0
 offset_right = 864.0
 offset_bottom = 113.0
-mouse_filter = 2
+mouse_default_cursor_shape = 2
+tooltip_text = "Показать путь реакции зала"
 
 [node name="BarBg" type="ColorRect" parent="ZalBar" unique_id=1561322587]
 unique_name_in_owner = true
@@ -189,6 +214,67 @@ theme_override_colors/font_color = Color(0.9098, 0.9098, 0.9098, 1)
 theme_override_font_sizes/font_size = 12
 horizontal_alignment = 1
 
+[node name="AudienceLogPanel" type="PanelContainer" parent="ZalBar" unique_id=2100711411]
+unique_name_in_owner = true
+visible = false
+z_index = 40
+custom_minimum_size = Vector2(480, 146)
+layout_mode = 0
+offset_left = 34.0
+offset_top = 42.0
+offset_right = 514.0
+offset_bottom = 188.0
+mouse_filter = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_audience_log")
+
+[node name="Margin" type="MarginContainer" parent="ZalBar/AudienceLogPanel" unique_id=1055531418]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 10
+mouse_filter = 2
+
+[node name="Layout" type="VBoxContainer" parent="ZalBar/AudienceLogPanel/Margin" unique_id=1925570361]
+layout_mode = 2
+theme_override_constants/separation = 5
+mouse_filter = 2
+
+[node name="Header" type="HBoxContainer" parent="ZalBar/AudienceLogPanel/Margin/Layout" unique_id=1272508990]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="Title" type="Label" parent="ZalBar/AudienceLogPanel/Margin/Layout/Header" unique_id=757833630]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.898, 0.722, 0.294, 1)
+theme_override_font_sizes/font_size = 12
+text = "ПУТЬ ЗАЛА"
+
+[node name="Hint" type="Label" parent="ZalBar/AudienceLogPanel/Margin/Layout/Header" unique_id=1185708864]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5412, 0.5765, 0.6392, 1)
+theme_override_font_sizes/font_size = 10
+text = "СОДЕРЖАНИЕ + ВПЕЧАТЛЕНИЕ"
+
+[node name="Rule" type="HSeparator" parent="ZalBar/AudienceLogPanel/Margin/Layout" unique_id=1415930171]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="AudienceReactionLog" type="RichTextLabel" parent="ZalBar/AudienceLogPanel/Margin/Layout" unique_id=1220458807]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 94)
+layout_mode = 2
+size_flags_vertical = 3
+mouse_filter = 0
+theme_override_colors/default_color = Color(0.9, 0.92, 0.95, 1)
+theme_override_colors/font_selected_color = Color(0.9, 0.92, 0.95, 1)
+theme_override_colors/selection_color = Color(0.25, 0.31, 0.43, 0.55)
+theme_override_font_sizes/normal_font_size = 11
+bbcode_enabled = true
+scroll_following = true
+selection_enabled = true
+
 [node name="EmotionHud" type="Control" parent="." unique_id=1732082637]
 layout_mode = 1
 anchors_preset = 0
@@ -203,7 +289,8 @@ offset_left = 20.0
 offset_top = 155.0
 offset_right = 105.0
 offset_bottom = 400.0
-mouse_filter = 2
+mouse_default_cursor_shape = 2
+tooltip_text = "Открыть ваш эмоциональный лог"
 
 [node name="YouStrainBg" type="ColorRect" parent="EmotionHud/YouStrain" unique_id=428091190]
 unique_name_in_owner = true
@@ -236,6 +323,7 @@ text = "ВЫ
 0/6
 СРЫВ 0%"
 horizontal_alignment = 1
+mouse_filter = 2
 
 [node name="OppStrain" type="Control" parent="EmotionHud" unique_id=1297498042]
 layout_mode = 1
@@ -244,7 +332,8 @@ offset_left = 1047.0
 offset_top = 155.0
 offset_right = 1132.0
 offset_bottom = 400.0
-mouse_filter = 2
+mouse_default_cursor_shape = 2
+tooltip_text = "Открыть эмоциональный лог оппонента"
 
 [node name="OppStrainBg" type="ColorRect" parent="EmotionHud/OppStrain" unique_id=778280708]
 unique_name_in_owner = true
@@ -277,6 +366,76 @@ text = "ОПП
 0/6
 СРЫВ 0%"
 horizontal_alignment = 1
+mouse_filter = 2
+
+[node name="OpponentEmotionLogPanel" type="PanelContainer" parent="EmotionHud" unique_id=982856511]
+unique_name_in_owner = true
+visible = false
+z_index = 45
+custom_minimum_size = Vector2(324, 245)
+layout_mode = 0
+offset_left = 1029.0
+offset_top = 155.0
+offset_right = 1353.0
+offset_bottom = 400.0
+mouse_filter = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_opponent_emotion_log")
+
+[node name="Margin" type="MarginContainer" parent="EmotionHud/OpponentEmotionLogPanel" unique_id=621065621]
+layout_mode = 2
+theme_override_constants/margin_left = 11
+theme_override_constants/margin_top = 9
+theme_override_constants/margin_right = 11
+theme_override_constants/margin_bottom = 9
+
+[node name="Layout" type="VBoxContainer" parent="EmotionHud/OpponentEmotionLogPanel/Margin" unique_id=2070941565]
+layout_mode = 2
+theme_override_constants/separation = 5
+
+[node name="Header" type="HBoxContainer" parent="EmotionHud/OpponentEmotionLogPanel/Margin/Layout" unique_id=1937506839]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="EmotionHud/OpponentEmotionLogPanel/Margin/Layout/Header" unique_id=668378561]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.851, 0.549, 0.298, 1)
+theme_override_font_sizes/font_size = 12
+text = "ЭМОЦИИ ОППОНЕНТА"
+vertical_alignment = 1
+
+[node name="OpponentEmotionLogClose" type="Button" parent="EmotionHud/OpponentEmotionLogPanel/Margin/Layout/Header" unique_id=296536937]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(26, 24)
+layout_mode = 2
+mouse_default_cursor_shape = 2
+theme_override_font_sizes/font_size = 14
+text = "×"
+
+[node name="OpponentEmotionSummary" type="Label" parent="EmotionHud/OpponentEmotionLogPanel/Margin/Layout" unique_id=1538212764]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.92, 0.95, 1)
+theme_override_font_sizes/font_size = 11
+text = "ДАВЛЕНИЕ 0/6  ·  РИСК 0%
+СРЫВЫ 0  ·  ПАРИРОВКИ 0"
+
+[node name="Rule" type="HSeparator" parent="EmotionHud/OpponentEmotionLogPanel/Margin/Layout" unique_id=2101853580]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="OpponentEmotionLog" type="RichTextLabel" parent="EmotionHud/OpponentEmotionLogPanel/Margin/Layout" unique_id=1039360894]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 128)
+layout_mode = 2
+size_flags_vertical = 3
+mouse_filter = 0
+theme_override_colors/default_color = Color(0.9, 0.92, 0.95, 1)
+theme_override_colors/font_selected_color = Color(0.9, 0.92, 0.95, 1)
+theme_override_colors/selection_color = Color(0.35, 0.24, 0.16, 0.6)
+theme_override_font_sizes/normal_font_size = 11
+bbcode_enabled = true
+scroll_following = true
+selection_enabled = true
 
 [node name="YouStatusRow" type="Control" parent="." unique_id=-1283965295]
 unique_name_in_owner = true

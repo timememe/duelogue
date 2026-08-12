@@ -22,6 +22,11 @@ const COL_OPP := "d98c4c"
 const COL_DIM := "8a93a3"
 const COL_GOLD := "e5b84b"
 
+const AUDIENCE_LOG_SLIDE := 14.0
+const AUDIENCE_LOG_TWEEN_TIME := 0.18
+const OPP_EMOTION_LOG_GAP := 10.0
+const OPP_EMOTION_LOG_CLOSED_REVEAL := 18.0
+
 ## Перк-иконки поверх кафедры (core/status/): круглая заглушка без арт-ассетов — первая
 ## буква label на цветном кружке (зелёный=perk, красный=debuff), полное имя+durability/source
 ## в tooltip. Своя мини-функция, не _card_style() — тот заточен под карты с полями/рамкой.
@@ -90,6 +95,20 @@ var _you_sep0 := 0.0
 var _gate_ticks: Array = []  ## риски порогов зал-гейта на баре ({node, level}), создаются лениво
 var _bubble_owner: Control
 var _cutscene_active := false
+var _audience_history: Array[String] = []
+var _audience_last_state := {}
+var _audience_event_index := -1
+var _audience_log_open := false
+var _audience_log_open_y := 0.0
+var _audience_log_closed_y := 0.0
+var _audience_log_tween: Tween
+var _emotion_histories := {C.SIDE_YOU: [], C.SIDE_OPP: []}
+var _emotion_event_indices := {C.SIDE_YOU: -1, C.SIDE_OPP: -1}
+var _emotion_log_side := ""
+var _emotion_log_open := false
+var _emotion_log_open_x := 0.0
+var _emotion_log_closed_x := 0.0
+var _emotion_log_tween: Tween
 
 ## Драг-дроп руки (второй способ разыгрывать карту, поверх клик-клика — см. константы выше).
 var _drag_pending := {}   ## {"card": Control, "index": int} — мышь зажата, порог ещё не пройден
@@ -116,7 +135,10 @@ var _drag_marked_frame: Button   ## текущая рамка-цель под а
 @onready var _cancel_btn: Button = %CancelBtn
 @onready var _clinch_btn: Button = %ClinchBtn
 @onready var _drawer: Control = %TranscriptDrawer
+@onready var _zal_bar: Control = $ZalBar
 @onready var _bar_bg: ColorRect = %BarBg  ## геометрия бара ЗАЛа читается отсюда, не дублируется числами
+@onready var _audience_log_panel: PanelContainer = %AudienceLogPanel
+@onready var _audience_log_rt: RichTextLabel = %AudienceReactionLog
 @onready var _reaction: Control = $ReactionScene  ## мини-сцена реакции (Ace Attorney-стиль)
 @onready var _combo_banner: Control = $ComboNameBanner  ## баннер названия комбо, НЕ часть reaction_scene
 @onready var _card_bubble: Panel = %CardInfoBubble
@@ -125,9 +147,16 @@ var _drag_marked_frame: Button   ## текущая рамка-цель под а
 @onready var _you_strain_bg: ColorRect = %YouStrainBg
 @onready var _you_strain_fill: ColorRect = %YouStrainFill
 @onready var _you_strain_label: Label = %YouStrainLabel
+@onready var _you_strain: Control = $EmotionHud/YouStrain
 @onready var _opp_strain_bg: ColorRect = %OppStrainBg
 @onready var _opp_strain_fill: ColorRect = %OppStrainFill
 @onready var _opp_strain_label: Label = %OppStrainLabel
+@onready var _opp_strain: Control = $EmotionHud/OppStrain
+@onready var _emotion_log_panel: PanelContainer = %OpponentEmotionLogPanel
+@onready var _emotion_log_rt: RichTextLabel = %OpponentEmotionLog
+@onready var _emotion_summary: Label = %OpponentEmotionSummary
+@onready var _emotion_log_close: Button = %OpponentEmotionLogClose
+@onready var _emotion_log_title: Label = $EmotionHud/OpponentEmotionLogPanel/Margin/Layout/Header/Title
 @onready var _you_status_row: Control = %YouStatusRow  ## перк-иконки поверх кафедры (core/status/)
 @onready var _opp_status_row: Control = %OppStatusRow
 @onready var _final_overlay: Control = %FinalOverlay
@@ -167,10 +196,29 @@ func _ready() -> void:
 	_drawer_closed_x = size.x
 	_drawer_open_x = size.x - _drawer.size.x
 	_drawer.position.x = _drawer_closed_x
+	_audience_log_open_y = _zal_bar.size.y + 3.0
+	_audience_log_closed_y = _audience_log_open_y - AUDIENCE_LOG_SLIDE
+	_audience_log_panel.position.y = _audience_log_closed_y
+	_audience_log_panel.modulate.a = 0.0
+	_audience_log_panel.visible = false
+	_zal_bar.mouse_entered.connect(_open_audience_log)
+	_zal_bar.mouse_exited.connect(_queue_audience_log_close)
+	_audience_log_panel.mouse_entered.connect(_open_audience_log)
+	_audience_log_panel.mouse_exited.connect(_queue_audience_log_close)
+	_set_emotion_log_positions(C.SIDE_OPP)
+	_emotion_log_panel.position = Vector2(_emotion_log_closed_x, _opp_strain.position.y)
+	_emotion_log_panel.modulate.a = 0.0
+	_emotion_log_panel.visible = false
+	_you_strain.gui_input.connect(_on_strain_gui_input.bind(C.SIDE_YOU))
+	_opp_strain.gui_input.connect(_on_strain_gui_input.bind(C.SIDE_OPP))
+	_emotion_log_close.pressed.connect(_close_emotion_log)
 	# Подписка на шину партии.
 	EventBus.match_started.connect(_on_match_started)
 	EventBus.utterance.connect(_on_utterance)
 	EventBus.narration.connect(_on_narration)
+	EventBus.audience_changed.connect(_on_audience_changed)
+	EventBus.emotion_observed.connect(_on_emotion_observed)
+	EventBus.emotion_linked.connect(_on_emotion_linked)
 	EventBus.board_changed.connect(_on_board_changed)
 	EventBus.match_reported.connect(_on_match_reported)
 	controller.start_match()
@@ -219,6 +267,18 @@ func _toggle_drawer() -> void:
 
 func _on_match_started(_info: Dictionary) -> void:
 	log_lines = []
+	_audience_history = []
+	_audience_last_state = {}
+	_audience_event_index = -1
+	_audience_log_rt.text = ""
+	_emotion_histories = {C.SIDE_YOU: [], C.SIDE_OPP: []}
+	_emotion_event_indices = {C.SIDE_YOU: -1, C.SIDE_OPP: -1}
+	_emotion_log_rt.text = ""
+	for side in [C.SIDE_YOU, C.SIDE_OPP]:
+		var emotion_state: Dictionary = controller.emotion_state(side)
+		_append_emotion_history(side, _format_emotion_start(side, emotion_state))
+	if _emotion_log_side != "":
+		_render_emotion_history(_emotion_log_side)
 	_restart_btn.visible = false
 	_final_overlay.visible = false
 	_log_rt.text = ""
@@ -259,6 +319,362 @@ func _on_narration(text: String, _meta: Dictionary) -> void:
 
 func _on_board_changed() -> void:
 	_refresh()
+
+
+## Единственная публичная история зала строится по тем же атомарным снимкам, которые двигают
+## шкалу. Поэтому лог не пытается угадать эффект по репликам и всегда совпадает с механикой.
+func _on_audience_changed(state: Dictionary) -> void:
+	var snapshot := state.duplicate(true)
+	if _audience_last_state.is_empty():
+		_append_audience_history(_format_audience_start(snapshot))
+		_audience_last_state = snapshot
+		return
+	var previous: Dictionary = _audience_last_state
+	var scene: Dictionary = snapshot.get("last_scene", {})
+	var scene_committed := not scene.is_empty() \
+		and int(snapshot.get("scenes", 0)) > int(previous.get("scenes", 0))
+	var public_state_changed := int(snapshot.get("lean", 0)) != int(previous.get("lean", 0)) \
+		or int(snapshot.get("heat", 0)) != int(previous.get("heat", 0)) \
+		or int(snapshot.get("moves", 0)) != int(previous.get("moves", 0)) \
+		or int(snapshot.get("reversals", 0)) != int(previous.get("reversals", 0))
+	if scene_committed:
+		_append_audience_history(_format_audience_scene(previous, snapshot))
+	elif public_state_changed:
+		_append_audience_history(_format_audience_cooldown(previous, snapshot))
+	_audience_last_state = snapshot
+
+
+func _append_audience_history(body: String) -> void:
+	_audience_event_index += 1
+	_audience_history.append("[color=#%s]%02d[/color]  %s" % [COL_DIM,
+		_audience_event_index, body])
+	_audience_log_rt.text = "\n\n".join(_audience_history)
+	_audience_log_rt.call_deferred("scroll_to_line", maxi(0, _audience_log_rt.get_line_count() - 1))
+
+
+func _format_audience_start(state: Dictionary) -> String:
+	var lean := int(state.get("lean", 0))
+	var heat := int(state.get("heat", 0))
+	return "[color=#%s]● СТАРТ[/color]  крен %s · азарт %d/%d\n[color=#%s]Зал слушает обе стороны.[/color]" % [
+		COL_GOLD, _signed(lean), heat, int(state.get("heat_max", 0)), COL_DIM]
+
+
+func _format_audience_scene(previous: Dictionary, state: Dictionary) -> String:
+	var scene: Dictionary = state.get("last_scene", {})
+	var before_lean := int(previous.get("lean", 0))
+	var after_lean := int(state.get("lean", 0))
+	var content := int(scene.get("content_delta", 0))
+	var conduct := int(scene.get("conduct_applied", 0))
+	var reaction_seen := bool(scene.get("reaction_seen", false))
+	var surged := bool(scene.get("surged", false))
+	var direction := int(scene.get("direction", 0))
+	var heading := "ЗАЛ РАЗДЕЛИЛСЯ"
+	if surged:
+		heading = "ВСПЛЕСК ЗАЛА"
+	elif direction > 0:
+		heading = "ЗАЛ КАЧНУЛСЯ К ВАМ"
+	elif direction < 0:
+		heading = "ЗАЛ КАЧНУЛСЯ К ОППОНЕНТУ"
+	elif before_lean == after_lean:
+		heading = "ЗАЛ УДЕРЖАЛ ПОЗИЦИЮ"
+	var accent := COL_GOLD if surged or direction == 0 else (COL_YOU if direction > 0 else COL_OPP)
+	var cause: Dictionary = state.get("cause", {})
+	var story := _audience_cause_sentence(cause)
+	var reactions: Array = cause.get("reactions", [])
+	for raw_reaction in reactions:
+		var reaction_note: Dictionary = raw_reaction
+		var who := "Вы вскипели" if String(reaction_note.get("side", "")) == C.SIDE_YOU \
+			else "Оппонент вскипел"
+		story += " %s: «%s»." % [who, String(reaction_note.get("title", "реакция"))]
+	if story == "":
+		story = "Довод и впечатление погасили друг друга." if direction == 0 else \
+			("Публика купилась на ваш момент." if direction > 0 else \
+			"Публика купилась на момент оппонента.")
+	var votes: Array[String] = []
+	if content != 0:
+		votes.append("довод %s" % _signed(content))
+	if conduct != 0:
+		votes.append("впечатление %s" % _signed(conduct))
+	elif reaction_seen:
+		votes.append("реакция без голоса")
+	var vote_note := "" if votes.is_empty() else " Голоса: %s." % " · ".join(votes)
+	var surge_note := " · АЗАРТ ПРОРВАЛСЯ" if surged else ""
+	return "[color=#%s]◆ %s[/color]  крен %s → %s%s\n[color=#%s]%s%s Азарт %d → %d.[/color]" % [
+		accent, heading, _signed(before_lean), _signed(after_lean), surge_note, COL_DIM,
+		story, vote_note, int(scene.get("heat_before", previous.get("heat", 0))),
+		int(state.get("heat", 0))]
+
+
+static func _audience_cause_sentence(cause: Dictionary) -> String:
+	var action := String(cause.get("action", "")).strip_edges()
+	if action == "":
+		return ""
+	var actor := String(cause.get("actor", ""))
+	var owner := "Ваш «%s»" % action if actor == C.SIDE_YOU else "«%s» оппонента" % action
+	var target := String(cause.get("target", "")).strip_edges()
+	var quoted := "«%s»" % target if target != "" else "позицию"
+	match String(cause.get("outcome", "")):
+		"captured": return "%s увёл рамку %s целиком." % [owner, quoted]
+		"frame_lost": return "%s развалил рамку %s." % [owner, quoted]
+		"argument_lost": return "%s продавил аргумент вокруг %s." % [owner, quoted]
+		"attack_stalled": return "%s упёрся в %s и захлебнулся." % [owner, quoted]
+		"dirty_hit": return "%s ударил ниже пояса." % owner
+		_: return "%s изменил настроение сцены вокруг %s." % [owner, quoted]
+
+
+func _format_audience_cooldown(previous: Dictionary, state: Dictionary) -> String:
+	return "[color=#%s]◇ ЗАЛ ВЫДЫХАЕТ[/color]  крен %s → %s\n[color=#%s]спокойная пауза · азарт %d → %d[/color]" % [
+		COL_DIM, _signed(int(previous.get("lean", 0))), _signed(int(state.get("lean", 0))),
+		COL_DIM, int(previous.get("heat", 0)), int(state.get("heat", 0))]
+
+
+static func _signed(value: int) -> String:
+	return "%+d" % value
+
+
+func _open_audience_log() -> void:
+	_audience_log_open = true
+	if _audience_log_tween != null:
+		_audience_log_tween.kill()
+	_audience_log_panel.visible = true
+	_audience_log_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_audience_log_tween = create_tween().set_parallel(true)
+	_audience_log_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_audience_log_tween.tween_property(_audience_log_panel, "position:y",
+		_audience_log_open_y, AUDIENCE_LOG_TWEEN_TIME)
+	_audience_log_tween.tween_property(_audience_log_panel, "modulate:a", 1.0,
+		AUDIENCE_LOG_TWEEN_TIME * 0.8)
+
+
+func _queue_audience_log_close() -> void:
+	call_deferred("_close_audience_log_if_pointer_left")
+
+
+func _close_audience_log_if_pointer_left() -> void:
+	var hovered := get_viewport().gui_get_hovered_control()
+	var current: Node = hovered
+	while current != null:
+		if current == _zal_bar:
+			return
+		current = current.get_parent()
+	_close_audience_log()
+
+
+func _close_audience_log() -> void:
+	if not _audience_log_panel.visible:
+		return
+	_audience_log_open = false
+	_audience_log_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _audience_log_tween != null:
+		_audience_log_tween.kill()
+	_audience_log_tween = create_tween().set_parallel(true)
+	_audience_log_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	_audience_log_tween.tween_property(_audience_log_panel, "position:y",
+		_audience_log_closed_y, AUDIENCE_LOG_TWEEN_TIME)
+	_audience_log_tween.tween_property(_audience_log_panel, "modulate:a", 0.0,
+		AUDIENCE_LOG_TWEEN_TIME * 0.75)
+	_audience_log_tween.chain().tween_callback(func() -> void:
+		if not _audience_log_open:
+			_audience_log_panel.visible = false
+	)
+
+
+func _on_strain_gui_input(event: InputEvent, side: String) -> void:
+	if not event is InputEventMouseButton:
+		return
+	var mouse_event := event as InputEventMouseButton
+	if mouse_event.button_index != MOUSE_BUTTON_LEFT or not mouse_event.pressed:
+		return
+	if _emotion_log_open and _emotion_log_side == side:
+		_close_emotion_log()
+	else:
+		_open_emotion_log(side)
+	accept_event()
+
+
+func _on_emotion_observed(side: String, result: Dictionary) -> void:
+	if not side in [C.SIDE_YOU, C.SIDE_OPP]:
+		return
+	_append_emotion_history(side, _format_emotion_event(side, result))
+	if _emotion_log_side == side:
+		_update_emotion_summary(side)
+
+
+func _on_emotion_linked(_source_side: String, responder_side: String,
+	result: Dictionary) -> void:
+	if not responder_side in [C.SIDE_YOU, C.SIDE_OPP]:
+		return
+	var kind := String(result.get("kind", "none"))
+	if kind == "trigger":
+		return  # полноценный ответ следом придёт через emotion_observed
+	var subject := "ВЫ" if responder_side == C.SIDE_YOU else "ОППОНЕНТ"
+	var accent := COL_YOU if responder_side == C.SIDE_YOU else COL_OPP
+	if kind == "parry":
+		var parry: Dictionary = result.get("parry", {})
+		var source := "срыв оппонента" if responder_side == C.SIDE_YOU else "ваш срыв"
+		_append_emotion_history(responder_side,
+			"[color=#%s]↩ %s ПАРИРОВАЛ%s · «%s»[/color]\n[color=#%s]%s отбит без роста давления.[/color]" % [
+				accent, subject, "И" if responder_side == C.SIDE_YOU else "",
+				String(parry.get("title", "холодный ответ")), COL_DIM, source.capitalize()])
+	elif kind == "absorb":
+		var held := "ВЫ ВЫДЕРЖАЛИ" if responder_side == C.SIDE_YOU else "ОППОНЕНТ ВЫДЕРЖАЛ"
+		_append_emotion_history(responder_side,
+			"[color=#%s]○ %s ЧУЖОЙ СРЫВ[/color]\n[color=#%s]Без ответа · давление осталось %d/%d.[/color]" % [
+				COL_DIM, held, COL_DIM, int(result.get("after", 0)),
+				int(controller.emotion_state(responder_side).get("max", 6))])
+	else:
+		return
+	if _emotion_log_side == responder_side:
+		_update_emotion_summary(responder_side)
+
+
+func _append_emotion_history(side: String, body: String) -> void:
+	var index := int(_emotion_event_indices.get(side, -1)) + 1
+	_emotion_event_indices[side] = index
+	var history: Array = _emotion_histories.get(side, [])
+	history.append("[color=#%s]%02d[/color]  %s" % [COL_DIM, index, body])
+	_emotion_histories[side] = history
+	if _emotion_log_side == side:
+		_render_emotion_history(side)
+
+
+func _format_emotion_start(side: String, state: Dictionary) -> String:
+	var subject := "ВЫ СПОКОЙНЫ" if side == C.SIDE_YOU else "ОППОНЕНТ СПОКОЕН"
+	return "[color=#%s]● %s[/color]  давление %d/%d · риск %d%%\n[color=#%s]Манера: %s[/color]" % [
+		COL_GOLD, subject, int(state.get("strain", 0)), int(state.get("max", 6)),
+		roundi(float(state.get("chance", 0.0)) * 100.0), COL_DIM,
+		String(state.get("deck_label", "Эмоциональная колода"))]
+
+
+func _format_emotion_event(side: String, result: Dictionary) -> String:
+	var before := int(result.get("before", 0))
+	var peak := int(result.get("peak", before))
+	var after := int(result.get("after", peak))
+	var chance := roundi(float(result.get("chance", 0.0)) * 100.0)
+	var stimulus_id := String(result.get("stimulus", ""))
+	var stimulus := _emotion_stimulus_label(stimulus_id)
+	var reaction: Dictionary = result.get("reaction", {})
+	var context: Dictionary = result.get("context", {})
+	var cause := _emotion_cause_phrase(context)
+	var outcome := _emotion_outcome_sentence(stimulus_id, String(context.get("target", "")))
+	var accent := COL_YOU if side == C.SIDE_YOU else COL_OPP
+	if not reaction.is_empty():
+		var boiled := "ВЫ ВСКИПЕЛИ" if side == C.SIDE_YOU else "ОППОНЕНТ ВСКИПЕЛ"
+		var chain_note := " в ответ" if int(result.get("chain_depth", 0)) > 0 else ""
+		return "[color=#%s]⚡ %s%s %s[/color]\n[color=#%s]%s Давление %d → %d → %d · «%s» · разрядка −%d.[/color]" % [
+			accent, boiled, chain_note, cause, COL_DIM, outcome, before, peak, after,
+			String(reaction.get("title", "эмоциональный срыв")), maxi(0, peak - after)]
+	var heading := "ВЫ НАПРЯГЛИСЬ" if side == C.SIDE_YOU else "ОППОНЕНТ НАПРЯГСЯ"
+	accent = COL_GOLD if peak >= 4 else COL_DIM
+	if chance > 0:
+		heading = "ВЫ УДЕРЖАЛИСЬ" if side == C.SIDE_YOU else "ОППОНЕНТ УДЕРЖАЛСЯ"
+	return "[color=#%s]◆ %s %s[/color]\n[color=#%s]%s Давление %d → %d · следующий риск %d%%.[/color]" % [
+		accent, heading, cause, COL_DIM, outcome if outcome != "" else stimulus.capitalize(),
+		before, after, chance]
+
+
+static func _emotion_cause_phrase(context: Dictionary) -> String:
+	var action := String(context.get("cause_name", "")).strip_edges()
+	if action == "":
+		return ""
+	if String(context.get("cause_side", "")) == C.SIDE_YOU:
+		return "после вашего приёма «%s»" % action
+	return "после приёма оппонента «%s»" % action
+
+
+static func _emotion_outcome_sentence(stimulus: String, target: String) -> String:
+	var quoted := "«%s»" % target if target != "" else "позиция"
+	match stimulus:
+		"attack_stalled": return "Нажим на %s захлебнулся." % quoted
+		"argument_lost": return "Аргумент вокруг %s продавлен." % quoted
+		"frame_lost": return "Рамка %s развалилась." % quoted
+		"captured": return "Рамку %s увели целиком." % quoted
+		"dirty_hit": return "Прилетел грязный приём."
+		"reaction_received": return "Чужая вспышка попала в нерв."
+		_: return ""
+
+
+static func _emotion_stimulus_label(stimulus: String) -> String:
+	match stimulus:
+		"attack_stalled": return "атака захлебнулась"
+		"argument_lost": return "проигран обмен аргументами"
+		"frame_lost": return "потеряна рамка"
+		"captured": return "рамка захвачена"
+		"dirty_hit": return "грязный приём"
+		"reaction_received": return "чужой эмоциональный срыв"
+		_: return "эмоциональный импульс" if stimulus == "" else stimulus.replace("_", " ")
+
+
+func _update_emotion_summary(side: String) -> void:
+	if _emotion_summary == null:
+		return
+	var state: Dictionary = controller.emotion_state(side)
+	_emotion_summary.text = "ДАВЛЕНИЕ %d/%d  ·  РИСК %d%%\nСРЫВЫ %d  ·  ПАРИРОВКИ %d" % [
+		int(state.get("strain", 0)), int(state.get("max", 6)),
+		roundi(float(state.get("chance", 0.0)) * 100.0),
+		int(state.get("reactions", 0)), int(state.get("parries", 0))]
+
+
+func _open_emotion_log(side: String) -> void:
+	var was_visible := _emotion_log_panel.visible
+	_emotion_log_side = side
+	_emotion_log_open = true
+	_set_emotion_log_positions(side)
+	_emotion_log_panel.position.y = (_you_strain if side == C.SIDE_YOU else _opp_strain).position.y
+	if not was_visible:
+		_emotion_log_panel.position.x = _emotion_log_closed_x
+	_emotion_log_title.text = "ВАШИ ЭМОЦИИ" if side == C.SIDE_YOU else "ЭМОЦИИ ОППОНЕНТА"
+	_emotion_log_title.add_theme_color_override("font_color",
+		Color.html("#" + (COL_YOU if side == C.SIDE_YOU else COL_OPP)))
+	_render_emotion_history(side)
+	_update_emotion_summary(side)
+	if _emotion_log_tween != null:
+		_emotion_log_tween.kill()
+	_emotion_log_panel.visible = true
+	_emotion_log_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_emotion_log_tween = create_tween().set_parallel(true)
+	_emotion_log_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_emotion_log_tween.tween_property(_emotion_log_panel, "position:x",
+		_emotion_log_open_x, AUDIENCE_LOG_TWEEN_TIME)
+	_emotion_log_tween.tween_property(_emotion_log_panel, "modulate:a", 1.0,
+		AUDIENCE_LOG_TWEEN_TIME * 0.8)
+
+
+func _close_emotion_log() -> void:
+	if not _emotion_log_panel.visible:
+		return
+	_emotion_log_open = false
+	_emotion_log_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _emotion_log_tween != null:
+		_emotion_log_tween.kill()
+	_emotion_log_tween = create_tween().set_parallel(true)
+	_emotion_log_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	_emotion_log_tween.tween_property(_emotion_log_panel, "position:x",
+		_emotion_log_closed_x, AUDIENCE_LOG_TWEEN_TIME)
+	_emotion_log_tween.tween_property(_emotion_log_panel, "modulate:a", 0.0,
+		AUDIENCE_LOG_TWEEN_TIME * 0.75)
+	_emotion_log_tween.chain().tween_callback(func() -> void:
+		if not _emotion_log_open:
+			_emotion_log_panel.visible = false
+	)
+
+
+func _set_emotion_log_positions(side: String) -> void:
+	var meter := _you_strain if side == C.SIDE_YOU else _opp_strain
+	if side == C.SIDE_YOU:
+		_emotion_log_open_x = meter.position.x + meter.size.x + OPP_EMOTION_LOG_GAP
+		_emotion_log_closed_x = meter.position.x - _emotion_log_panel.size.x \
+			+ OPP_EMOTION_LOG_CLOSED_REVEAL
+	else:
+		_emotion_log_open_x = meter.position.x - _emotion_log_panel.size.x \
+			- OPP_EMOTION_LOG_GAP
+		_emotion_log_closed_x = meter.position.x - OPP_EMOTION_LOG_CLOSED_REVEAL
+
+
+func _render_emotion_history(side: String) -> void:
+	_emotion_log_rt.text = "\n\n".join(_emotion_histories.get(side, []))
+	_emotion_log_rt.call_deferred("scroll_to_line",
+		maxi(0, _emotion_log_rt.get_line_count() - 1))
 
 
 func _on_match_reported(report: Dictionary) -> void:
@@ -403,10 +819,14 @@ static func board_lines_for_mode(lines: Array, input_mode: String) -> Array:
 
 
 func _update_emotion_hud() -> void:
-	_render_strain(controller.emotion_state(C.SIDE_YOU), _you_strain_bg,
+	var player_state: Dictionary = controller.emotion_state(C.SIDE_YOU)
+	_render_strain(player_state, _you_strain_bg,
 		_you_strain_fill, _you_strain_label, "ВЫ")
-	_render_strain(controller.emotion_state(C.SIDE_OPP), _opp_strain_bg,
+	var opponent_state: Dictionary = controller.emotion_state(C.SIDE_OPP)
+	_render_strain(opponent_state, _opp_strain_bg,
 		_opp_strain_fill, _opp_strain_label, "ОПП")
+	if _emotion_log_side != "":
+		_update_emotion_summary(_emotion_log_side)
 
 
 func _render_strain(state: Dictionary, bg: ColorRect, fill: ColorRect, label: Label,
@@ -1014,7 +1434,7 @@ func _mkcard(visual: Dictionary, colhex: String, dim: bool, contested: bool) -> 
 	b.add_theme_stylebox_override("disabled", _card_style(bg, border, 3))
 	b.icon = CardArt.type_icon_for(visual, true)
 	b.expand_icon = true
-	b.add_theme_constant_override("icon_max_width", 32)
+	b.add_theme_constant_override("icon_max_width", 38)
 	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var icon_color := Color(1.0, 1.0, 1.0, 0.5 if dim else 1.0)
 	b.add_theme_color_override("icon_normal_color", icon_color)

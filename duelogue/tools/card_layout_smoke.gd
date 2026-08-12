@@ -13,6 +13,7 @@ func _run() -> void:
 	print("\n=== CARD LAYOUT · SMOKE ===")
 	await process_frame
 	await process_frame
+	await _check_type_badge()
 	await _check_body("Короткий текст в одну строку.", "короткий текст сохраняет исходный кегль")
 	await _check_body("Многострочная формулировка с длинными словами, ручными\nпереводами строк и " +
 		"достаточно подробным объяснением эффекта карты, чтобы проверить реальную высоту " +
@@ -21,6 +22,24 @@ func _run() -> void:
 		"экстремальный текст обрезается многоточием, а не выходит за пределы")
 	print("=== CARD LAYOUT: %s ===" % ("OK" if failures == 0 else "FAIL (%d)" % failures))
 	quit(0 if failures == 0 else 1)
+
+
+func _check_type_badge() -> void:
+	var card: Button = CardScene.instantiate()
+	root.add_child(card)
+	card.setup({"type": "U", "name": "Рамка"}, "Рамка", "Проверка жетона", true)
+	await process_frame
+	var icon := card.get_node("%TypeIcon") as TextureRect
+	var template := card.get_node("%CardTemplate") as TextureRect
+	var title := card.get_node("%Title") as Label
+	var ok := icon.size.x >= 32.0 and is_equal_approx(icon.size.x, icon.size.y) \
+		and icon.position.y < 0.0 and icon.z_index > template.z_index \
+		and not card.clip_contents and title.position.x >= 34.0
+	print("  %s · круглый жетон крупный, вынесен над рамкой и лежит верхним слоем" % \
+		["OK" if ok else "FAIL"])
+	if not ok:
+		failures += 1
+	card.queue_free()
 
 
 func _check_body(source: String, label: String) -> void:
