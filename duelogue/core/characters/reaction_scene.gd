@@ -30,19 +30,15 @@ const BUBBLE_BOTTOM_MARGIN := 22.0
 const BUBBLE_YOU_COLOR := Color("6fd9a0")
 const BUBBLE_OPP_COLOR := Color("f1a064")
 
-## Имя приёма крупным планом за героем (DeviceLine/DeviceLabel) — калибруемые переменные,
-## тюнятся в инспекторе узла без правки кода. Шрифт «стильный» тем же приёмом, что уже принят
-## в combo_name_banner.gd (_make_label): чёрная обводка вместо кастомного файла шрифта —
-## своего .ttf/.otf в проекте пока нет (см. duelogue/assets — шрифтовых ресурсов нет), поэтому
-## это не смена гарнитуры, а её имитация размером/весом/обводкой на дефолтном шрифте темы.
-@export var device_line_color: Color = Color(0.95, 0.78, 0.25, 0.9)
-@export var device_line_edge_color: Color = Color(1.0, 0.97, 0.85, 1.0)
+## Имя приёма крупным планом за героем (DeviceLine/DeviceLabel): Sofia Sans Condensed Black
+## (настоящая ось variable-шрифта wght=900 задана общим font-resource), всегда UPPERCASE.
+## Цвет линии — идентичность говорящей стороны: зелёный для игрока, оранжевый для оппонента.
 @export var device_line_fade_width: float = 0.45
-@export var device_font_size: int = 64
+@export var device_font_size: int = 128
 @export var device_font_color: Color = Color(1, 1, 1, 0.92)
-## Persona-style лёгкий наклон подписи (2026-08-06) — динамика без обвеса нового арта/шрифта.
-## 0 = выключить, если наклон не понравится на глаз.
-@export var device_label_tilt_deg: float = -4.0
+## Persona-style динамика: каждое новое показанное имя получает независимый случайный наклон.
+const DEVICE_LABEL_TILT_MIN_DEG := -10.0
+const DEVICE_LABEL_TILT_MAX_DEG := 10.0
 ## Межстрочный интервал подписи (2026-08-07) — theme-константа Label, отрицательные значения
 ## сжимают ниже «родного» интервала шрифта (дефолт темы на глаз ощущался разреженным на
 ## крупном многострочном тексте). Грубая отправная точка, как и DEVICE_FONT_STEP ниже — крутить
@@ -373,8 +369,11 @@ func _layout_device_name(name: String, side: String) -> void:
 	_device_label.visible = shown
 	if not shown:
 		return
-	_device_line_mat.set_shader_parameter("line_color", device_line_color)
-	_device_line_mat.set_shader_parameter("edge_color", device_line_edge_color)
+	var side_color := BUBBLE_YOU_COLOR if side == "you" else BUBBLE_OPP_COLOR
+	var line_color := side_color
+	line_color.a = 0.9
+	_device_line_mat.set_shader_parameter("line_color", line_color)
+	_device_line_mat.set_shader_parameter("edge_color", side_color.lightened(0.35))
 	_device_line_mat.set_shader_parameter("fade_width", device_line_fade_width)
 	var third: Vector2 = DEVICE_LABEL_THIRD.get(side, DEVICE_LABEL_THIRD["you"])
 	# ОДИН анкор на оба края (не anchor_left=third.x/anchor_right=third.y раздельно — регрессия
@@ -401,11 +400,13 @@ func _layout_device_name(name: String, side: String) -> void:
 	_device_label.offset_top = _device_label_base_top + device_label_offset.y
 	_device_label.offset_bottom = _device_label.offset_top + box_size.y
 	_device_label.pivot_offset = box_size / 2.0
-	_device_label.rotation_degrees = device_label_tilt_deg
+	_device_label.rotation_degrees = randf_range(
+		DEVICE_LABEL_TILT_MIN_DEG, DEVICE_LABEL_TILT_MAX_DEG)
 	_device_label.add_theme_constant_override("line_spacing", device_label_line_spacing)
-	_device_label.text = name
+	var display_name := name.to_upper()
+	_device_label.text = display_name
 	_device_label.add_theme_font_size_override("font_size",
-		_fit_device_font_size(name, box_size.x, box_size.y))
+		_fit_device_font_size(display_name, box_size.x, box_size.y))
 	_device_label.add_theme_color_override("font_color", device_font_color)
 
 

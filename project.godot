@@ -25,6 +25,10 @@ ThemeLibrary="*res://duelogue/app/theme_library.gd"
 
 window/stretch/mode="canvas_items"
 
+[gui]
+
+theme/custom_font="res://duelogue/assets/fonts/SofiaSansCondensed-Variable.ttf"
+
 [physics]
 
 3d/physics_engine="Jolt Physics"

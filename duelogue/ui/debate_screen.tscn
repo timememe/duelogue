@@ -4,6 +4,7 @@
 [ext_resource type="PackedScene" uid="uid://dwtmtf8q0p2r7" path="res://duelogue/core/stage/stage.tscn" id="2"]
 [ext_resource type="PackedScene" uid="uid://dswk2icr7etk1" path="res://duelogue/core/characters/reaction_scene.tscn" id="3"]
 [ext_resource type="Script" uid="uid://b78evlg0aphf5" path="res://duelogue/ui/combo_name_banner.gd" id="4"]
+[ext_resource type="FontFile" path="res://duelogue/assets/fonts/AntonSC-Regular.ttf" id="5_logo"]
 
 [sub_resource type="Shader" id="Shader_board_dither"]
 code = "shader_type canvas_item;
@@ -99,6 +100,7 @@ offset_top = 8.0
 offset_right = 300.0
 offset_bottom = 32.0
 theme_override_colors/font_color = Color(0.9098, 0.9098, 0.9098, 1)
+theme_override_fonts/font = ExtResource("5_logo")
 theme_override_font_sizes/font_size = 16
 text = "DUELOGUE"
 

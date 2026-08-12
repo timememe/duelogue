@@ -5,6 +5,7 @@ extends Node
 
 const ReactionScene := preload("res://duelogue/core/characters/reaction_scene.tscn")
 const ComboNameBanner := preload("res://duelogue/ui/combo_name_banner.gd")
+const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 const DebateScreen := preload("res://duelogue/ui/debate_screen.tscn")
 const ShotDirector := preload("res://duelogue/core/director/shot_director.gd")
 const CameraCassettes := preload("res://duelogue/core/director/camera_cassettes.gd")
@@ -68,16 +69,55 @@ func _ready() -> void:
 	# секвенирует: await show_combo → show_utterance, и НЕ гейтит его CUTSCENES).
 	var banner: Control = ComboNameBanner.new()
 	add_child(banner)
+	var canon_matches := true
+	for tuning_key: String in ComboNameBanner.TUNING_KEYS:
+		canon_matches = canon_matches and banner.get(tuning_key) == \
+			ComboNameBanner.CANON_TUNING[tuning_key]
+	_check(canon_matches,
+		"экспериментальные lab-ручки не меняют боевой дефолт ComboNameBanner")
+	banner.apply_tuning({
+		"back_layer_enabled": true,
+		"back_layer_scale": 1.31,
+		"back_layer_spikes": 9.0,
+		"back_layer_rotation_offset_deg": 17.0,
+	})
+	banner.show_static_preview("Двойная проверка", "you")
+	_check(banner._burst_back.visible and banner._burst_back.get_index() < banner._burst.get_index() and
+		is_equal_approx(banner._burst_back.scale.x, 1.31) and
+		is_equal_approx(float(banner._burst_back_mat.get_shader_parameter("spikes")), 9.0),
+		"combo-banner поддерживает настраиваемую вторую фигуру отдельным задним слоем")
+	_check(is_equal_approx(banner._burst_back.rotation_degrees,
+		banner.burst_rotation_deg + 17.0),
+		"фоновый слой получает независимый поворот относительно основной фигуры")
+	banner.apply_tuning(ComboNameBanner.CANON_TUNING)
 	var t0 := Time.get_ticks_msec()
 	await banner.show_combo("Консенсус сильнее", "you")
 	var elapsed := float(Time.get_ticks_msec() - t0) / 1000.0
+	var combo_weight_tag := TextServerManager.get_primary_interface().name_to_tag("wght")
+	var combo_name_font := banner._label.get_theme_font("font") as FontVariation
+	var combo_kicker_font := banner._kicker.get_theme_font("font") as FontVariation
 	_check(not banner._burst.visible and not banner._label.visible and
-		banner._label.text == "Консенсус сильнее" and
+		banner._label.text == "КОНСЕНСУС СИЛЬНЕЕ" and
 		banner._burst_mat.get_shader_parameter("burst_color") == banner.YOU_COLOR and
 		elapsed >= 1.6 and elapsed <= 2.5,
-		"баннер комбо показывает ИМЯ комбо, держит 2с и гасится сам")
+		"баннер комбо показывает ИМЯ КОМБО капсом, держит 2.06с и гасится сам")
+	_check(combo_name_font != null and combo_kicker_font != null and
+		int(combo_name_font.variation_opentype.get(combo_weight_tag, 0)) == 900 and
+		int(combo_kicker_font.variation_opentype.get(combo_weight_tag, 0)) == 900,
+		"обе надписи combo-banner используют Sofia Sans Condensed Black (wght=900)")
+	_check(banner._kicker.text == "КОМБО!" and
+		not banner._kicker.has_theme_color_override("font_outline_color") and
+		not banner._kicker.has_theme_constant_override("outline_size") and
+		not banner._label.has_theme_color_override("font_outline_color") and
+		not banner._label.has_theme_constant_override("outline_size"),
+		"кикер «КОМБО!» и название приёма отображаются без аутлайна")
+	_check(is_equal_approx(ReadingPace.banner_time(), 2.06),
+		"ReadingPace учитывает задержку фонового слоя: combo-banner длится 2.06с")
+	_check(is_zero_approx(banner._label.rotation_degrees) and
+		is_zero_approx(banner._kicker.rotation_degrees),
+		"надписи combo-banner остаются ровными, без наклона reaction-сцены")
 	await banner.show_combo("Уклонился от источника", "opp")
-	_check(banner._label.text == "Уклонился от источника" and
+	_check(banner._label.text == "УКЛОНИЛСЯ ОТ ИСТОЧНИКА" and
 		banner._burst_mat.get_shader_parameter("burst_color") == banner.OPP_COLOR,
 		"победа оппонента красит дизер-звезду в его цвет")
 	banner.queue_free()
@@ -169,22 +209,22 @@ func _check_shot_director() -> void:
 func _check_device_name() -> void:
 	var probe = ReactionScene.instantiate()
 	add_child(probe)
-	probe.device_line_color = Color(0.1, 0.2, 0.9, 1.0)
-	probe.device_font_size = 48
 	probe.device_font_color = Color(0.9, 0.1, 0.1, 1.0)
-	probe.show_utterance("you", "Проверка приёма", null, "", false, "", {}, "КОНТРПРИМЕР")
+	probe.show_utterance("you", "Проверка приёма", null, "", false, "", {}, "Контрпример")
 	var line: ColorRect = probe.get_node("DeviceLine")
 	var label: Label = probe.get_node("DeviceLabel")
 	var portrait := probe.get_node("Portrait")
 	var bg_shader := probe.get_node("BgShader")
 	_check(line.visible and label.visible and label.text == "КОНТРПРИМЕР",
-		"имя приёма показывается крупно, когда его передали")
+		"имя приёма показывается крупно и всегда переводится в UPPERCASE")
 	_check(bg_shader.get_index() < line.get_index() and line.get_index() < label.get_index() and
 		label.get_index() < portrait.get_index(),
 		"порядок узлов: фоновые шейдеры → линия → текст приёма → герой поверх всех")
 	var line_mat := line.material as ShaderMaterial
-	_check(line_mat.get_shader_parameter("line_color") == probe.device_line_color,
-		"цвет линии берётся из калибруемой переменной device_line_color")
+	var you_line_color: Color = probe.BUBBLE_YOU_COLOR
+	you_line_color.a = 0.9
+	_check(line_mat.get_shader_parameter("line_color") == you_line_color,
+		"сторона 'you' красит акцентную линию в зелёный цвет игрока")
 	_check(is_zero_approx(line.offset_left) and is_zero_approx(line.offset_right) and
 		line.anchor_right == 1.0,
 		"линия на всю ширину экрана, без отступов по краям")
@@ -192,21 +232,28 @@ func _check_device_name() -> void:
 		"цвет шрифта берётся из калибруемой переменной device_font_color")
 	_check(not label.has_theme_color_override("font_outline_color"),
 		"аутлайн у надписи приёма убран — только сплошной цвет")
+	var black_font := label.get_theme_font("font") as FontVariation
+	var weight_tag := TextServerManager.get_primary_interface().name_to_tag("wght")
+	_check(black_font != null and int(black_font.variation_opentype.get(weight_tag, 0)) == 900,
+		"название приёма использует Sofia Sans Condensed Black (wght=900)")
+	_check(probe.device_font_size == 128,
+		"базовый размер названия приёма — 128px")
+	_check(label.rotation_degrees >= probe.DEVICE_LABEL_TILT_MIN_DEG and
+		label.rotation_degrees <= probe.DEVICE_LABEL_TILT_MAX_DEG,
+		"случайный наклон названия лежит в диапазоне −10°…+10°")
 	var you_w: float = probe.size.x / 3.0 + probe.device_label_size_delta.x
 	_check(is_equal_approx(label.position.x, probe.size.x - you_w) and
 		is_equal_approx(label.position.x + label.size.x, probe.size.x),
 		"портрет 'you' слева → подпись приёма уходит в правую треть (+калибровка), прижатую к правому краю экрана")
 	_check(label.position.x >= -0.5 and label.position.x + label.size.x <= probe.size.x + 0.5,
 		"бокс подписи приёма стороны 'you' не вылезает за пределы экрана по X")
-	probe.device_font_size = 40
 	probe.show_utterance("you", "Проверка", null, "", false, "", {}, "Ы")
-	_check(label.get_theme_font_size("font_size") == 40,
+	_check(label.get_theme_font_size("font_size") == 128,
 		"короткое имя приёма не сжимается ниже запрошенного калибруемого размера")
-	probe.device_font_size = 64
 	var long_name := "Устоявшееся значение по определению без всякого сомнения"
 	probe.show_utterance("you", "Проверка", null, "", false, "", {}, long_name)
 	var fitted := label.get_theme_font_size("font_size")
-	_check(fitted < 64 and fitted >= probe.DEVICE_FONT_MIN,
+	_check(fitted < 128 and fitted >= probe.DEVICE_FONT_MIN,
 		"длинное многословное имя приёма сжимается до нижнего порога, не ломая вёрстку")
 	_check(label.autowrap_mode == TextServer.AUTOWRAP_WORD,
 		"перенос строго по словам (AUTOWRAP_WORD, не _SMART) — буквы одного слова никогда не рвутся на две строки")
@@ -221,12 +268,28 @@ func _check_device_name() -> void:
 	_check(label.get_theme_constant("line_spacing") == probe.device_label_line_spacing,
 		"межстрочный интервал берётся из калибруемой переменной device_label_line_spacing")
 	probe.show_utterance("opp", "Проверка приёма", null, "", false, "", {}, "ИСТОЧНИК?")
+	var opp_line_color: Color = probe.BUBBLE_OPP_COLOR
+	opp_line_color.a = 0.9
+	_check(line_mat.get_shader_parameter("line_color") == opp_line_color and
+		opp_line_color != you_line_color,
+		"сторона 'opp' переключает акцентную линию на оранжевый цвет оппонента")
 	var opp_w: float = probe.size.x / 3.0 + probe.device_label_size_delta.x
 	_check(is_zero_approx(label.position.x) and
 		is_equal_approx(label.position.x + label.size.x, opp_w),
 		"портрет 'opp' справа → подпись приёма уходит в левую треть (+калибровка), прижатую к левому краю экрана")
 	_check(label.position.x >= -0.5 and label.position.x + label.size.x <= probe.size.x + 0.5,
 		"бокс подписи приёма стороны 'opp' не вылезает за пределы экрана по X")
+	var seen_tilts := {}
+	var all_tilts_in_range := true
+	for i in 16:
+		probe._layout_device_name("Проверка", "you")
+		var tilt_key := snappedf(label.rotation_degrees, 0.001)
+		seen_tilts[tilt_key] = true
+		all_tilts_in_range = all_tilts_in_range and \
+			label.rotation_degrees >= probe.DEVICE_LABEL_TILT_MIN_DEG and \
+			label.rotation_degrees <= probe.DEVICE_LABEL_TILT_MAX_DEG
+	_check(all_tilts_in_range and seen_tilts.size() > 1,
+		"наклон пересчитывается для каждого показа и не залипает в одном значении")
 	# Калибруемая добавка к боксу (2026-08-07) — точечная подстройка поверх авто-раскладки,
 	# не должна копиться от вызова к вызову (иначе бокс уезжал/рос бы с каждой новой репликой).
 	probe.device_label_size_delta = Vector2(20.0, 10.0)

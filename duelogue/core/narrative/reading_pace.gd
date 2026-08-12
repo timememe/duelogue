@@ -37,20 +37,21 @@ const OFF_BEAT := 0.5
 ## вживую из dolly_lab.gd.
 static var DOLLY_RETURN_TIME := 0.2
 
-## Баннер названия комбо (2026-07-23, ui/combo_name_banner.gd): панч-ин с перелётом → пауза →
-## панч-аут, РОВНО 2 секунды суммарно (правка 2026-07-23 #3 — было 1с, мало для крупной
-## надписи), ДО обычной сцены-реплики с портретом (show_utterance). Свои, отдельные от
+## Баннер названия комбо (2026-07-23, ui/combo_name_banner.gd): задержка фонового слоя →
+## панч-ин с перелётом → пауза → панч-аут, 2.06 секунды суммарно, ДО обычной
+## сцены-реплики с портретом (show_utterance). Свои, отдельные от
 ## IMPACT_HOLD часы — баннер читается как отдельный, нейтральный жест самой игры.
 const BANNER_PUNCH_IN := 0.2
 const BANNER_HOLD := 1.5
 const BANNER_PUNCH_OUT := 0.3
+const BANNER_BACK_DELAY := 0.06
 
 
-## Длительность одного баннера (панч-ин + пауза + панч-аут) — ровно 2.0, ВСЕГДА, независимо
+## Длительность одного баннера с задержкой фонового слоя — 2.06, независимо
 ## от CUTSCENES: баннер — не катсцена-реплика, а нейтральный эффект самой игры (см.
 ## combo_name_banner.gd/character_core._on_combo_verdict), играет и с выключенными катсценами.
 static func banner_time() -> float:
-	return BANNER_PUNCH_IN + BANNER_HOLD + BANNER_PUNCH_OUT
+	return BANNER_BACK_DELAY + BANNER_PUNCH_IN + BANNER_HOLD + BANNER_PUNCH_OUT
 
 
 ## Полная длительность вердикта комбо: баннер + сцена-реплика владельца (портрет+бабл).

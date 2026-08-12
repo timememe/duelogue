@@ -7,6 +7,7 @@
 [ext_resource type="Shader" uid="uid://uex1ce1dnuij" path="res://duelogue/assets/shaders/dither.gdshader" id="6"]
 [ext_resource type="Texture2D" uid="uid://bg61cvy33mufj" path="res://duelogue/assets/bg_closeup_right_v1.png" id="7"]
 [ext_resource type="Texture2D" uid="uid://ddv71yuvmqqnd" path="res://duelogue/assets/bg_closeup_left_v1.png" id="8"]
+[ext_resource type="FontVariation" path="res://duelogue/assets/fonts/SofiaSansCondensed-Black.tres" id="9_device_black"]
 
 [sub_resource type="ShaderMaterial" id="2"]
 shader = ExtResource("5")
@@ -194,7 +195,8 @@ offset_bottom = 310.0
 grow_horizontal = 2
 mouse_filter = 2
 theme_override_colors/font_color = Color(1, 1, 1, 0.92)
-theme_override_font_sizes/font_size = 64
+theme_override_fonts/font = ExtResource("9_device_black")
+theme_override_font_sizes/font_size = 128
 horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 2

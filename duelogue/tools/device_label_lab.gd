@@ -3,7 +3,7 @@ extends Control
 ## DUELOGUE — ЛАБОРАТОРИЯ ИМЕНИ ПРИЁМА (дев-тул, открыть device_label_lab.tscn и F6):
 ## калибровка DeviceLabel/DeviceLine ВНУТРИ настоящего reaction_scene.tscn — шкалы крутят его
 ## реальные @export-переменные (device_font_size/device_label_line_spacing/
-## device_label_size_delta/device_label_offset/device_label_tilt_deg/device_line_*), раскладку
+## device_label_size_delta/device_label_offset/device_line_fade_width), раскладку
 ## каждый раз пересчитывает тот же _layout_device_name/_fit_device_font_size, что идёт в бою
 ## (приём как у fire_lab.gd: настоящая сцена, не копия — если тут не влезает, в бою тоже не
 ## влезет). Портрет/бабл выставлены статично, БЕЗ tween/автоскрытия show_utterance — крути
@@ -50,12 +50,9 @@ func _ready() -> void:
 		"device_font_size": _reaction.device_font_size,
 		"device_font_color": _reaction.device_font_color,
 		"device_label_line_spacing": _reaction.device_label_line_spacing,
-		"device_label_tilt_deg": _reaction.device_label_tilt_deg,
 		"device_label_size_delta": _reaction.device_label_size_delta,
 		"device_label_offset": _reaction.device_label_offset,
 		"device_line_fade_width": _reaction.device_line_fade_width,
-		"device_line_color": _reaction.device_line_color,
-		"device_line_edge_color": _reaction.device_line_edge_color,
 	}
 	_build_edge_guides()
 	_outline = _make_outline()
@@ -168,8 +165,8 @@ func _update_status() -> void:
 	var right := lbl.position.x + lbl.size.x
 	var overflow: bool = left < -0.5 or right > screen_w + 0.5
 	var fitted := lbl.get_theme_font_size("font_size")
-	_status.text = "Бокс: x=%.0f..%.0f (экран 0..%.0f) · шрифт подобран %dpx · %s" % [
-		left, right, screen_w, fitted,
+	_status.text = "Бокс: x=%.0f..%.0f (экран 0..%.0f) · %dpx · наклон %.1f° · %s" % [
+		left, right, screen_w, fitted, lbl.rotation_degrees,
 		"ЗА ГРАНЬЮ ЭКРАНА!" if overflow else "в пределах экрана"]
 	_status.add_theme_color_override("font_color",
 		Color(1.0, 0.35, 0.35) if overflow else Color(0.55, 0.58, 0.64))
@@ -213,18 +210,16 @@ func _build_panel() -> void:
 	vb.add_child(_name_edit)
 
 	_header(vb, "ШРИФТ")
-	_add_slider(vb, "font_size", "Базовый размер (сжимается, если не влезает)", 16.0, 64.0, 1.0,
+	_add_slider(vb, "font_size", "Базовый размер (сжимается, если не влезает)", 16.0, 160.0, 1.0,
 		_canon.device_font_size, "%.0f",
 		func(v: float) -> void: _reaction.device_font_size = roundi(v); _relayout())
 	_add_color(vb, "font_color", "Цвет текста", _canon.device_font_color, true,
 		func(c: Color) -> void: _reaction.device_font_color = c; _relayout())
 
-	_header(vb, "МЕЖСТРОЧНЫЙ ИНТЕРВАЛ / ПОВОРОТ")
+	_header(vb, "МЕЖСТРОЧНЫЙ ИНТЕРВАЛ / ПОВОРОТ −10°…+10° СЛУЧАЙНЫЙ")
 	_add_slider(vb, "line_spacing", "line_spacing (theme-константа, отриц. = теснее)",
 		-40.0, 20.0, 1.0, _canon.device_label_line_spacing, "%.0f",
 		func(v: float) -> void: _reaction.device_label_line_spacing = roundi(v); _relayout())
-	_add_slider(vb, "tilt", "Наклон, град", -20.0, 20.0, 0.5, _canon.device_label_tilt_deg, "%.1f",
-		func(v: float) -> void: _reaction.device_label_tilt_deg = v; _relayout())
 
 	_header(vb, "БОКС — добавка поверх трети экрана (0 = как в бою)")
 	_add_slider(vb, "size_dx", "Ширина ±", -300.0, 300.0, 1.0, _canon.device_label_size_delta.x,
@@ -236,14 +231,10 @@ func _build_panel() -> void:
 	_add_slider(vb, "off_y", "Позиция Y ±", -150.0, 150.0, 1.0, _canon.device_label_offset.y,
 		"%.0f", func(v: float) -> void: _reaction.device_label_offset.y = v; _relayout())
 
-	_header(vb, "АКЦЕНТНАЯ ЛИНИЯ (DeviceLine)")
+	_header(vb, "АКЦЕНТНАЯ ЛИНИЯ · ЗЕЛЁНАЯ ВЫ / ОРАНЖЕВАЯ ОПП")
 	_add_slider(vb, "line_fade", "Ширина затухания к краям", 0.05, 0.6, 0.01,
 		_canon.device_line_fade_width, "%.2f",
 		func(v: float) -> void: _reaction.device_line_fade_width = v; _relayout())
-	_add_color(vb, "line_color", "Цвет линии (центр)", _canon.device_line_color, true,
-		func(c: Color) -> void: _reaction.device_line_color = c; _relayout())
-	_add_color(vb, "line_edge", "Цвет линии (к краям)", _canon.device_line_edge_color, true,
-		func(c: Color) -> void: _reaction.device_line_edge_color = c; _relayout())
 
 	var hb2 := HBoxContainer.new()
 	hb2.add_theme_constant_override("separation", 6)
@@ -332,15 +323,12 @@ func _reset() -> void:
 		_reaction.set(key, _canon[key])
 	_set_row("font_size", _canon.device_font_size)
 	_set_row("line_spacing", _canon.device_label_line_spacing)
-	_set_row("tilt", _canon.device_label_tilt_deg)
 	_set_row("size_dx", _canon.device_label_size_delta.x)
 	_set_row("size_dy", _canon.device_label_size_delta.y)
 	_set_row("off_x", _canon.device_label_offset.x)
 	_set_row("off_y", _canon.device_label_offset.y)
 	_set_row("line_fade", _canon.device_line_fade_width)
 	(_color_rows["font_color"] as ColorPickerButton).color = _canon.device_font_color
-	(_color_rows["line_color"] as ColorPickerButton).color = _canon.device_line_color
-	(_color_rows["line_edge"] as ColorPickerButton).color = _canon.device_line_edge_color
 	_relayout()
 	_status.text = "Сброшено на канон-значения reaction_scene.gd."
 	_status.add_theme_color_override("font_color", Color(0.55, 0.58, 0.64))
@@ -353,14 +341,11 @@ func _copy() -> void:
 	lines.append("device_font_size = %d" % _reaction.device_font_size)
 	lines.append("device_font_color = %s" % _col(_reaction.device_font_color))
 	lines.append("device_label_line_spacing = %d" % _reaction.device_label_line_spacing)
-	lines.append("device_label_tilt_deg = %.1f" % _reaction.device_label_tilt_deg)
 	lines.append("device_label_size_delta = Vector2(%.0f, %.0f)" % [
 		_reaction.device_label_size_delta.x, _reaction.device_label_size_delta.y])
 	lines.append("device_label_offset = Vector2(%.0f, %.0f)" % [
 		_reaction.device_label_offset.x, _reaction.device_label_offset.y])
 	lines.append("device_line_fade_width = %.2f" % _reaction.device_line_fade_width)
-	lines.append("device_line_color = %s" % _col(_reaction.device_line_color))
-	lines.append("device_line_edge_color = %s" % _col(_reaction.device_line_edge_color))
 	var out := "\n".join(lines)
 	DisplayServer.clipboard_set(out)
 	print(out)
