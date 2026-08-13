@@ -34,7 +34,7 @@ const TYPE_TEZIS := RulesCore.TYPE_TEZIS
 const TYPE_RAZBOR := RulesCore.TYPE_RAZBOR
 const TYPE_USTANOVKA := RulesCore.TYPE_USTANOVKA
 
-# --- Константы партии (откалибровано симуляцией) ---
+# --- Базовые константы партии; новые экспериментальные связи помечены отдельно ---
 const DECK_U := 3
 const DECK_T := 8
 const DECK_R := 9
@@ -46,13 +46,12 @@ const FORTIFY := 0
 const CLINCH := true
 const CLINCH_FREEZE := true
 const CAPTURE := 1
-## Public wobble band: one-thesis frames are always capturable. Audience favour for
-## a frame owner then raises ordinary Theft reach one step per point: 2->2, 3->3,
-## 4+->4. The favourite is under pressure because the crowd wants a reversal.
-const GATE_X := 2
-const GATE_Y := 4
+## Playtest-кандидат эмоционального шатания: однотезисные рамки всегда досягаемы Кражей.
+## Текущее напряжение владельца затем поднимает reach по лестнице 2->2, 3->3, 4+->4.
+const WOBBLE_X := 2
+const WOBBLE_Y := 4
 ## Добыча захвата (реш. игрока, сим 2026-07-02): рамка переходит СО ВСЕМИ стоящими тезисами —
-## «забрал действующую рамку — забрал её силу в глазах зала». Сим: баланс не тронут (жирные
+## «забрал действующую рамку — забрал всю её силу». Сим: баланс не тронут (жирные
 ## захваты редки — защита выше порога работает), aggro чуть подтянут.
 const CAPTURE_LOOT := 1
 ## Зал-нокаут «унёс зал» (сим §9.4): крен >= ZAL_KO, доживший до начала твоего хода
@@ -99,7 +98,7 @@ var logging_enabled := true:
 var _epoch := 0          ## поколение матча; протухшие await прошлой партии выходят по нему
 var _theme_data: Dictionary
 var _mode := "locked"    ## ввод: locked | opening | move | reframe | target | clinch_defend | clinch_attack
-var _opening_stage := ""  ## active | reserve | ""
+var _opening_stage := ""  ## active | ""
 var _opening_choices: Array = []
 var _opening_active: Dictionary = {}
 var _opening_opp_active: Dictionary = {}
@@ -108,7 +107,7 @@ var _pending_hand := -1   ## индекс обычного Разбора, жд�
 var _pending_named := -1  ## индекс ИМЕННОЙ карты руки, ждущей выбора цели (-1 — нет)
 var _opp_style := OPP_STYLE  ## стиль оппонента текущего матча (из Profile.settings)
 var hint_text := ""      ## подсказка для view (читается на board_changed)
-var _gate_told := {}     ## какие уровни зал-гейта уже объяснены голосом зала (1 раз за матч)
+var _wobble_told := {}   ## какие уровни эмоционального шатания уже объяснены (1 раз за матч)
 var _judge_told := {}    ## последний озвученный «счёт судьи» по сторонам (наррация тиков TKO)
 ## Момент (сек, Time.get_ticks_msec), когда текущая катсцена реплики/исхода ДОИГРАЕТ
 ## (ReadingPace.scene_time — единые часы с reaction_scene). _say и _wait_pace держат этот
@@ -368,8 +367,8 @@ func active_theme_id() -> String:
 	return ThemeLibrary.active_theme_id
 
 
-## Read-only снимок накопительного напряжения для view. Само значение strain не входит в
-## счёт; только случившаяся реакция может стать отдельным событием AudienceCore по профилю.
+## Read-only снимок накопительного напряжения для view. Strain не входит в счёт и не двигает
+## зал; его единственное боевое следствие — reach будущего захвата рамок этой стороны.
 func emotion_state(side: String) -> Dictionary:
 	return emotion.state(side) if emotion != null else {}
 
@@ -406,7 +405,7 @@ func frame_threat(owner: String, index: int) -> Dictionary:
 	var reach := int(model.frame_capture_reach(owner))
 	var thickness := int(line.get("theses", 0))
 	var reserve := int(model.reserve_count(owner))
-	var audience_snapshot := audience_state()
+	var strain_state := emotion_state(owner)
 	var capturable: bool = int(model.capture_mode) > 0 and thickness <= reach \
 		and not bool(line.get("braced", false)) and not model.is_fortified(line)
 	# Комбо §12: «на рамке читается схема верхнего Тезиса» — только eligible-объект;
@@ -427,10 +426,10 @@ func frame_threat(owner: String, index: int) -> Dictionary:
 	return {
 		"owner": owner, "raider": raider, "reach": reach, "thickness": thickness,
 		"capturable": capturable, "top_scheme": top_scheme, "combo_bait": combo_bait,
-		# A one-thesis frame is baseline-exposed; SHAKY is the extra crowd-opened risk.
+		# Однотезисная рамка открыта базово; SHAKY — дополнительный риск от strain владельца.
 		"shaky": capturable and thickness > 1,
-		"lean": int(audience_snapshot.get("lean", model.zal())),
-		"owner_favor": int(model.audience_favor_for(owner)),
+		"strain": int(strain_state.get("strain", model.emotional_instability(owner))),
+		"strain_max": int(strain_state.get("max", EmotionCore.MAX_STRAIN)),
 		"reserve": reserve, "last_frame": lines.size() == 1,
 		"lethal": bool(model.board_ko_enabled) and lines.size() == 1 and reserve == 0,
 	}
@@ -474,8 +473,8 @@ func select_outcome_profile(profile_id: String) -> void:
 	start_match()
 
 
-## Три смысловые рамки для opening-фазы. Первый выбор — активная База, второй —
-## публичный резерв внутри H5. Оба выбора бесплатны и используют один исходный набор трёх.
+## Три смысловые рамки для opening-фазы. Игрок выбирает только активную Базу; смысл
+## публичного резерва внутри H5 случайно назначается из двух оставшихся вариантов.
 func opening_stage() -> String:
 	return _opening_stage if _mode == "opening" else ""
 
@@ -486,9 +485,6 @@ func opening_options() -> Array:
 	var out: Array = []
 	for raw in _opening_choices:
 		var option: Dictionary = raw
-		if _opening_stage == "reserve" and String(option.get("id", "")) == \
-				String(_opening_active.get("id", "")):
-			continue
 		out.append(option.duplicate(true))
 	return out
 
@@ -523,8 +519,8 @@ func start_match() -> void:
 	var audience_config: Dictionary = _outcome_profile.get("audience", {})
 	_first_side = SIDE_YOU if randf() < 0.5 else SIDE_OPP
 	model.reset(_first_side, DECK_U, DECK_T, DECK_R, HAND, BASE_THESES, KOMI, STEAL_CARDS,
-		FORTIFY, CLINCH, CLINCH_FREEZE, CAPTURE, int(links.get("gate_x", 0)),
-		int(links.get("gate_y", 0)), 0, CAPTURE_LOOT, int(links.get("crowd_ko", 0)),
+		FORTIFY, CLINCH, CLINCH_FREEZE, CAPTURE, int(links.get("wobble_x", 0)),
+		int(links.get("wobble_y", 0)), 0, CAPTURE_LOOT, int(links.get("crowd_ko", 0)),
 		int(links.get("crowd_hold", 1)), bool(terminal.get("board_ko", true)))
 	audience.reset(audience_config)
 	var independent_audience := String(audience_config.get("mode", "derived")) == "pendulum"
@@ -550,7 +546,7 @@ func start_match() -> void:
 	model.seed_starting_theses(SIDE_OPP)
 	DeckLib.prepare_opening_reserve(model.sides[SIDE_YOU], HAND)
 	DeckLib.prepare_opening_reserve(model.sides[SIDE_OPP], HAND)
-	_gate_told = {}
+	_wobble_told = {}
 	_judge_told = {}
 	_opp_style = _profile_opp_style()
 	ai.set_style(SIDE_OPP, _opp_style)
@@ -558,6 +554,7 @@ func start_match() -> void:
 	_log.match_id = match_id
 	nar.start(_theme_data, match_id, {"you": "contra", "opp": "pro"})
 	emotion.start(DefaultReactions.data(), match_id ^ 0x5EED, [SIDE_YOU, SIDE_OPP])
+	_sync_emotional_instability()
 	status_state = StatusRules.new_state()
 	_debug_seed_statuses()
 	ZalStatusBridge.apply_to_model(status_state, model, SIDE_YOU, SIDE_OPP)
@@ -565,7 +562,7 @@ func start_match() -> void:
 	_mode = "opening"
 	_opening_stage = "active"
 	_opening_choices = nar.headline_options(SIDE_YOU, 3)
-	hint_text = "Выберите активную рамку — затем оставьте одну из двух других в публичном резерве"
+	hint_text = "Выберите активную рамку · смысл публичного резерва определится из двух оставшихся"
 	EventBus.match_started.emit({
 		"theme": nar.theme.id,
 		"first": "you" if _first_side == SIDE_YOU else "opp",
@@ -579,7 +576,7 @@ func start_match() -> void:
 	_emit({
 		"ev": "start", "ts": match_id,
 		"first": "you" if _first_side == SIDE_YOU else "opp",
-		"ruleset": {"base": BASE_THESES, "steal_cards": int(d.steals), "deck": "U%d T%d R%d" % [int(d.u), int(d.t), int(d.r)], "named": ", ".join(d.get("named", [])), "opp_deck": "U%d T%d R%d" % [int(opp_d.u), int(opp_d.t), int(opp_d.r)], "opp_named": ", ".join(opp_d.get("named", [])), "opp_style": _opp_style, "freeze": CLINCH_FREEZE, "gate": "%d/%d" % [int(links.get("gate_x", 0)), int(links.get("gate_y", 0))], "loot": CAPTURE_LOOT, "zal_ko": "%d/%d" % [int(links.get("crowd_ko", 0)), int(links.get("crowd_hold", 1))], "outcome_profile": active_outcome_profile_id()},
+		"ruleset": {"base": BASE_THESES, "steal_cards": int(d.steals), "deck": "U%d T%d R%d" % [int(d.u), int(d.t), int(d.r)], "named": ", ".join(d.get("named", [])), "opp_deck": "U%d T%d R%d" % [int(opp_d.u), int(opp_d.t), int(opp_d.r)], "opp_named": ", ".join(opp_d.get("named", [])), "opp_style": _opp_style, "freeze": CLINCH_FREEZE, "wobble": "%d/%d" % [int(links.get("wobble_x", 0)), int(links.get("wobble_y", 0))], "loot": CAPTURE_LOOT, "zal_ko": "%d/%d" % [int(links.get("crowd_ko", 0)), int(links.get("crowd_hold", 1))], "outcome_profile": active_outcome_profile_id()},
 		"theme": nar.theme.id,
 	})
 	_tx_header(_first_side)
@@ -710,8 +707,8 @@ func _run_until_player() -> void:
 
 # --- интенты игрока (зовёт view) ---
 
-## Первый клик выбирает смысл бесплатной стартовой Базы. Матч ещё не запускается:
-## второй клик должен осознанно закрепить одну из двух других рамок за резервной U в H5.
+## Единственный клик выбирает смысл бесплатной стартовой Базы. Одна из двух оставшихся
+## рамок случайно закрепляется за резервной U в H5, после чего матч сразу начинается.
 func choose_opening(headline_id: String) -> void:
 	if _mode != "opening" or _opening_stage != "active":
 		return
@@ -733,31 +730,23 @@ func choose_opening(headline_id: String) -> void:
 	_opening_opp_active = theirs
 	_bind_claim(model.sides[SIDE_YOU].lines[0], yours)
 	_bind_claim(model.sides[SIDE_OPP].lines[0], theirs)
-	_opening_stage = "reserve"
-	hint_text = "Теперь выберите запасную рамку: она останется видимой в H5 и спасёт от нокаута"
-	_changed()
-
-
-func choose_opening_reserve(headline_id: String) -> void:
-	if _mode != "opening" or _opening_stage != "reserve" or \
-			headline_id == String(_opening_active.get("id", "")):
+	var reserve_candidates: Array = []
+	for option in _opening_choices:
+		if String((option as Dictionary).get("id", "")) != headline_id:
+			reserve_candidates.append(option)
+	if reserve_candidates.is_empty():
 		return
-	var offered := false
-	for option in opening_options():
-		if String(option.get("id", "")) == headline_id:
-			offered = true
-			break
-	if not offered:
-		return
-	var yours: Dictionary = nar.select_headline(SIDE_YOU, headline_id)
-	var opp_appeal := String(OPENING_APPEAL_BY_STYLE.get(_opp_style, ""))
-	var theirs: Dictionary = nar.auto_headline(SIDE_OPP, opp_appeal)
+	var reserve_option: Dictionary = reserve_candidates[randi() % reserve_candidates.size()]
+	var reserve_id := String(reserve_option.get("id", ""))
+	var reserve_yours: Dictionary = nar.select_headline(SIDE_YOU, reserve_id)
+	var reserve_theirs: Dictionary = nar.auto_headline(SIDE_OPP, opp_appeal)
 	var your_card := _opening_reserve_card(SIDE_YOU)
 	var opp_card := _opening_reserve_card(SIDE_OPP)
-	if yours.is_empty() or theirs.is_empty() or your_card.is_empty() or opp_card.is_empty():
+	if reserve_yours.is_empty() or reserve_theirs.is_empty() or \
+			your_card.is_empty() or opp_card.is_empty():
 		return
-	_bind_claim(your_card, yours)
-	_bind_claim(opp_card, theirs)
+	_bind_claim(your_card, reserve_yours)
+	_bind_claim(opp_card, reserve_theirs)
 	_opening_stage = ""
 	_mode = "locked"
 	hint_text = ""
@@ -956,7 +945,7 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	if idx < 0 or idx >= model.sides[defender].lines.size():
 		return
 	_begin_audience_scene()
-	# RulesCore freezes the public audience reach inside begin_clinch.
+	# RulesCore фиксирует текущий strain-based reach внутри begin_clinch.
 	var ctx: Dictionary = model.begin_clinch(attacker, defender, idx, prefer_steal, named_index)
 	if ctx.is_empty():
 		return
@@ -1166,7 +1155,7 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 		"capture_blocked": info.get("capture_blocked", false),
 		"capture_block_reason": info.get("capture_block_reason", ""),
 		"capture_reach": info.get("capture_reach", 1),
-		"capture_audience_favor": info.get("capture_audience_favor", 0),
+		"capture_owner_strain": info.get("capture_owner_strain", 0),
 		"captured_thesis_ids": info.get("captured_thesis_ids", []),
 		"captured_thickness": info.get("captured_thickness", 0),
 		"opening_thickness": info.get("opening_thickness", 0),
@@ -1395,7 +1384,8 @@ func _narrate(text: String, tag: String = "") -> void:
 
 
 ## Один stimulus → рост шкалы → возможно, одна непроизвольная реплика и ограниченный ответ
-## второй шкалы. Внутри цепочки model не мутируется; после всей сцены контроллер одним
+## второй шкалы. Внутри цепочки доска/рука/ход model не мутируются; синхронизируется только
+## публичный strain-read-model для будущего шатания. После всей сцены контроллер одним
 ## коммитом может передать её публичную валентность независимому AudienceCore.
 func _emotion_event(side: String, stimulus: String, intensity: int,
 	context: Dictionary = {}) -> Dictionary:
@@ -1408,10 +1398,22 @@ func _emotion_event(side: String, stimulus: String, intensity: int,
 	return result
 
 
+## EmotionCore остаётся авторитетом шкал; RulesCore получает только их текущий публичный
+## read-model для формулы шатания. Можно синхронизировать одну сторону либо обе после reset.
+func _sync_emotional_instability(side: String = "") -> void:
+	if model == null or emotion == null:
+		return
+	var sides_to_sync := [SIDE_YOU, SIDE_OPP] if side == "" else [side]
+	for current_side in sides_to_sync:
+		model.set_emotional_strain(String(current_side),
+			int(emotion.state(String(current_side)).get("strain", 0)))
+
+
 func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_depth: int,
 	source_side: String, link_kind: String) -> void:
 	var my_epoch := _epoch
 	var side := String(result.side)
+	_sync_emotional_instability(side)
 	var stimulus := String(result.stimulus)
 	var reaction: Dictionary = result.get("reaction", {})
 	var conduct := {"relative": 0, "signed": 0}
@@ -1577,7 +1579,7 @@ func _changed() -> void:
 	# Накал для нарратива (§14.5/14.7): крен зала + фаза (израсходованный добор = таймер).
 	if model != null and nar != null and not nar.theme.is_empty():
 		nar.update_heat(model.zal(), 1.0 - float(_draw_left()) / float(_draw0))
-	_maybe_narrate_gate()
+	_maybe_narrate_wobble()
 	EventBus.board_changed.emit()
 
 
@@ -1608,30 +1610,26 @@ func _narrate_judge_count() -> void:
 		_judge_told[side] = n
 
 
-## Обучение зал-гейту голосом зала: ПЕРВЫЙ раз за матч, когда крен открывает стороне
-## уровень захвата 2/3/4, — объясняем правило ремаркой. Постоянная индикация — на доске
-## (шатающиеся рамки) и на баре (риски порогов); это только событие-телеграф.
-func _maybe_narrate_gate() -> void:
+## Первый раз за матч, когда strain владельца открывает его рамки для reach 2/3/4,
+## объясняем причинную связь. Постоянная индикация живёт на шкале эмоции и рамке.
+func _maybe_narrate_wobble() -> void:
 	if model == null or model.gate_x <= 0 or model.game_over:
 		return
-	for side in [SIDE_YOU, SIDE_OPP]:
-		var lvl: int = model.capture_threshold(side)   # сила захвата side (он — отстающий)
+	for owner in [SIDE_YOU, SIDE_OPP]:
+		var lvl: int = model.frame_capture_reach(owner)
 		if lvl < 2:
 			continue
-		var key := "%s%d" % [side, lvl]
-		if _gate_told.has(key):
+		var key := "%s%d" % [owner, lvl]
+		if _wobble_told.has(key):
 			continue
-		_gate_told[key] = true
+		_wobble_told[key] = true
+		var strain := int(model.emotional_instability(owner))
 		var txt: String
-		if side == SIDE_YOU:
-			txt = ("Зал закормлен успехом оппонента — его рамки с %d тезисами и тоньше ШАТАЮТСЯ: ваша Кража заберёт такую целиком." % lvl) \
-				if lvl == 2 else \
-				("Зал жаждет поимки фаворита — даже рамки оппонента с %d тезисами шатаются под вашей Кражей!" % lvl)
+		if owner == SIDE_OPP:
+			txt = "Оппонент теряет самообладание (%d/6): его рамки с %d тезисами и тоньше ШАТАЮТСЯ под вашей Кражей." % [strain, lvl]
 		else:
-			txt = ("Вы — фаворит зала, а фаворит под прицелом: ваши рамки с %d тезисами и тоньше ШАТАЮТСЯ — Кража оппонента может забрать их целиком." % lvl) \
-				if lvl == 2 else \
-				("Зал пресыщен вами — шатаются уже и ваши рамки с %d тезисами. Толпа любит поимку!" % lvl)
-		_narrate("⚖ " + txt, "gate %s→%d" % [side, lvl])
+			txt = "Вы теряете самообладание (%d/6): ваши рамки с %d тезисами и тоньше ШАТАЮТСЯ — Кража оппонента может забрать их целиком." % [strain, lvl]
+		_narrate("⚠ " + txt, "wobble %s→%d" % [owner, lvl])
 
 
 ## Ход без клинча (Тезис на свою рамку / Установка). Зовётся для обеих сторон.

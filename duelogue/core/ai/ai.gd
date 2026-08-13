@@ -123,8 +123,9 @@ func _pick_smart(r: RefCounted, side: String) -> Dictionary:
 		if cap_t >= 0:
 			return {"type": TYPE_RAZBOR, "target": cap_t}
 
-	# 4. Защита от захвата: довести активную рамку выше порога захвата оппонента (при
-	# зал-гейте порог плавает с креном — лидеру надо держать рамки толще).
+	# 4. Защита от захвата: довести активную рамку выше текущей досягаемости оппонента.
+	# Досягаемость растёт от strain владельца рамки, поэтому AI читает ту же публичную
+	# эмоциональную уязвимость, что и игрок.
 	if r.capture_mode > 0 and legal.has(TYPE_TEZIS):
 		var active: Dictionary = my_lines[-1]
 		if not active.closed and int(active.theses) <= r.capture_threshold(opp):

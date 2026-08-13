@@ -1,7 +1,7 @@
 extends "res://duelogue/app/battle_controller.gd"
 
-## Интеграционный smoke: BattleController действительно проводит реакционную реплику,
-## но эмоциональное ядро v0.2 ни на байт не меняет rules_core.
+## Интеграционный smoke: BattleController проводит реакционную реплику и синхронизирует
+## в RulesCore только публичный strain-read-model для шатания, не мутируя доску/руку/ход.
 
 class ScriptedClinchAi:
 	extends RefCounted
@@ -64,6 +64,9 @@ func _run_smoke() -> void:
 		"спокойная парировка не тратит шкалу или реакционную карту")
 	_check(int(emotion_state(SIDE_YOU).reactions) == 1,
 		"контроллер читает состояние эмоционального ядра")
+	_check(int(model.emotional_instability(SIDE_YOU)) ==
+		int(emotion_state(SIDE_YOU).strain),
+		"контроллер синхронизирует итоговый strain в формулу шатания RulesCore")
 	_check(JSON.stringify(model.sides) == model_before and model.turn_count == turn_before and
 		model.zal() == zal_before,
 		"реакция не меняет доску, руку, ход или зал")
@@ -79,8 +82,10 @@ func _run_smoke() -> void:
 		"сторона на 5/6 отвечает собственной реакционной картой")
 	_check(int(emotion_state(SIDE_OPP).reactions) == 1,
 		"чужой срыв связал вторую шкалу с субколодой")
-	_check(JSON.stringify(model.sides) == chain_model_before,
-		"цепная эмоциональная реакция не меняет rules_core")
+	_check(JSON.stringify(model.sides) == chain_model_before and
+		int(model.emotional_instability(SIDE_YOU)) == int(emotion_state(SIDE_YOU).strain) and
+		int(model.emotional_instability(SIDE_OPP)) == int(emotion_state(SIDE_OPP).strain),
+		"цепная реакция не мутирует доску и синхронизирует strain обеих сторон")
 
 	start_match()
 	spoken.clear()

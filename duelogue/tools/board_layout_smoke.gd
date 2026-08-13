@@ -55,9 +55,6 @@ func _ready() -> void:
 		{"theses": 3, "stolen": 1}))
 	failures += _check(legacy_flags == [false, false, true],
 		"legacy scalar state retains its deterministic last-N fallback")
-	failures += _check(DebateScreen.wobble_tick_levels(2, 4) == [-4, -3, -2, 2, 3, 4],
-		"audience bar exposes every exact wobble threshold for reach 2/3/4")
-
 	var counts := [8, 8, 8, 8]
 	var pads := [16.0, 46.0, 16.0, 16.0]
 	var fit: Dictionary = DebateScreen.fit_board_row(counts, pads, 584.0, 12.0)
@@ -82,6 +79,24 @@ func _ready() -> void:
 	failures += _check(opp_frame_x > opp_thesis_x and
 		is_equal_approx(opp_frame_x - (opp_thesis_x + 42.0), 4.0),
 		"карты оппонента зеркально растут от рамки справа налево")
+	var long_tag_width := 132.0
+	var you_tag := DebateScreen.frame_tag_rect(0.0, false, long_tag_width)
+	var opp_tag := DebateScreen.frame_tag_rect(opp_frame_x, true, long_tag_width)
+	failures += _check(is_zero_approx(you_tag.position.x) and
+		is_equal_approx(opp_tag.position.x + opp_tag.size.x, opp_frame_x + 42.0) and
+		opp_tag.size.x > long_tag_width and opp_tag.position.x < opp_frame_x,
+		"полная подпись рамки оппонента закреплена правым краем и раскрывается влево")
+	var combo_bait_tag := Label.new()
+	combo_bait_tag.text = "⚡ КОМБО-СХЕМА С ДЛИННЫМ НАЗВАНИЕМ"
+	combo_bait_tag.add_theme_font_size_override("font_size", 10)
+	add_child(combo_bait_tag)
+	view._layout_frame_tag(combo_bait_tag, opp_frame_x, true)
+	failures += _check(combo_bait_tag.horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT and
+		is_equal_approx(combo_bait_tag.position.x + combo_bait_tag.size.x,
+			opp_frame_x + DebateScreen.CARD_W) and
+		combo_bait_tag.size.x >= combo_bait_tag.get_combined_minimum_size().x,
+		"сигнал вероятности комбо с ⚡ целиком раскрывается влево от рамки оппонента")
+	combo_bait_tag.queue_free()
 
 	# Второй проход работает по фактическим rect нод, а не по ожидаемой формуле.
 	var actual_row := Control.new()

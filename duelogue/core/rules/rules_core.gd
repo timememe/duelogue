@@ -51,11 +51,16 @@ var clinch_freeze := true
 ## снова открывает исходную Кражу по рамке.
 ## 0 — выкл; 1 — приходит ЗАКРЫТЫМ трофеем; 2 — приходит АКТИВНОЙ (закрывает прежнюю активную).
 var capture_mode := 0
-## Audience wobble band. A one-thesis frame is always exposed. If public Lean favours
-## the frame owner, every point in [gate_x..gate_y] raises direct Theft reach by one:
-## defaults 2->2, 3->3, 4+->4. gate_x=0 disables only the extra crowd reach.
+## Полоса эмоционального шатания. Однотезисная рамка всегда открыта. Напряжение владельца
+## в [gate_x..gate_y] поднимает прямой reach Кражи по одному: 2->2, 3->3, 4+->4.
+## Имена gate_x/gate_y сохранены в низкоуровневом API ради совместимости старых симов;
+## зал в эту формулу больше не входит. gate_x=0 выключает добавочную досягаемость.
 var gate_x := 0
 var gate_y := 0
+## Read-model двух уже существующих эмоциональных шкал. Авторитетом остаётся EmotionCore;
+## контроллер синхронизирует сюда только текущее strain, чтобы правила захвата и AI читали
+## один публичный reach без зависимости RulesCore → EmotionCore.
+var emotional_strain := {}
 ## Второе дыхание (топливо финала): когда у стороны пусты И рука, И добор, она вытягивает
 ## 1 СЛУЧАЙНУЮ карту из СВОЕГО сброса (стопка публична — шансы читаемы). 0 — выкл;
 ## N > 0 — не больше N вытяжек за партию; -1 — без лимита (пока сброс не пуст).
@@ -136,6 +141,7 @@ func reset(
 	capture_mode = p_capture
 	gate_x = p_gate_x
 	gate_y = p_gate_y
+	emotional_strain = {SIDE_YOU: 0, SIDE_OPP: 0}
 	second_wind = p_second_wind
 	capture_loot = p_capture_loot
 	zal_ko = p_zal_ko
@@ -435,16 +441,20 @@ func is_fortified(line: Dictionary) -> bool:
 	return fortify_threshold > 0 and line_strength(line) >= fortify_threshold
 
 
-## Public crowd pressure on a frame owner. Positive means the audience currently
-## favours that owner and therefore wants to see the favourite challenged.
-func audience_favor_for(owner: String) -> int:
-	return zal() if owner == SIDE_YOU else -zal()
+## Синхронизировать текущую эмоциональную нестабильность стороны. RulesCore не знает
+## вероятностей реакций, cooldown или субколоду — ему нужен только уже видимый strain.
+func set_emotional_strain(side: String, strain: int) -> void:
+	if side in [SIDE_YOU, SIDE_OPP]:
+		emotional_strain[side] = maxi(0, strain)
 
 
-## Maximum frame thickness an ordinary direct Theft can capture from this owner.
-## One-thesis frames are always in reach. With the default public band 2..4 every
-## further point of audience favour opens one further thickness: 2->2, 3->3, 4+->4.
-## Heat, emotion strain and board score deliberately do not alter this public number.
+func emotional_instability(owner: String) -> int:
+	return int(emotional_strain.get(owner, 0))
+
+
+## Максимальная толщина рамки владельца, которую может целиком забрать обычная Кража.
+## Однотезисные рамки всегда в reach. При полосе 2..4 текущее strain владельца даёт
+## 2->2, 3->3, 4+->4. Зал, Heat и счёт доски эту величину не меняют.
 func frame_capture_reach(owner: String) -> int:
 	if capture_mode == 0:
 		return 0
@@ -452,8 +462,8 @@ func frame_capture_reach(owner: String) -> int:
 	if gate_x <= 0:
 		return reach
 	var band_end := maxi(gate_x, gate_y)
-	var owner_favor := maxi(0, audience_favor_for(owner))
-	return reach + clampi(owner_favor - gate_x + 1, 0, band_end - gate_x + 1)
+	var instability := emotional_instability(owner)
+	return reach + clampi(instability - gate_x + 1, 0, band_end - gate_x + 1)
 
 
 ## Compatibility API for callers that reason from the raider's side.
@@ -740,7 +750,7 @@ func _resolve_single_razbor(attacker: String, defender: String, target: int, inf
 		info["bounced"] = true
 	info["target_name"] = line.name
 	info["target_frame_id"] = _ensure_frame_id(line)
-	# Захват (базовый порог 1 = рамка на последнем тезисе; зал-гейт поднимает до 2/3).
+	# Захват (базовый порог 1 = последний тезис; strain владельца поднимает до 2/3/4).
 	# braced — именной «Перенос бремени»: рамка временно не захватывается (тезис снять можно).
 	if will_steal and int(line.theses) <= capture_threshold(attacker) and not line.get("braced", false):
 		info["affected_kind"] = "frame"
@@ -968,8 +978,8 @@ func clinch_finalize(attacker: String, defender: String, line_index: int, t_adde
 	info["protected_thickness"] = protected_thickness
 	info["pre_effect_thickness"] = protected_thickness
 	info["capture_reach"] = capture_reach
-	info["capture_audience_favor"] = int(info.get("capture_audience_favor",
-		audience_favor_for(defender)))
+	info["capture_owner_strain"] = int(info.get("capture_owner_strain",
+		emotional_instability(defender)))
 	info["landing_attack_name"] = String(landing_card.get("name", ""))
 	info["landing_attack_steals"] = landing_steals
 	info["landing_target_kind"] = landing_target_kind if attack_landed else ""
@@ -1131,7 +1141,7 @@ func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bo
 	var frame_id := _ensure_frame_id(lines[idx])
 	var init_steals: bool = initc.get("steals", false)
 	var capture_reach := frame_capture_reach(defender)
-	var capture_audience_favor := audience_favor_for(defender)
+	var capture_owner_strain := emotional_instability(defender)
 	var opening_thickness := int(lines[idx].theses)
 	var opening_capture_eligible: bool = init_steals and capture_reach > 0 \
 		and opening_thickness <= capture_reach and not lines[idx].get("braced", false) \
@@ -1183,7 +1193,7 @@ func begin_clinch(attacker: String, defender: String, idx: int, prefer_steal: bo
 		"t_added": 0, "r_count": 1,
 		"init_steals": init_steals, "phase": "await_defend",
 		"capture_reach": capture_reach,
-		"capture_audience_favor": capture_audience_favor,
+		"capture_owner_strain": capture_owner_strain,
 		"opening_thickness": opening_thickness,
 		"opening_capture_eligible": opening_capture_eligible,
 		"named": String(initc.get("named", "")),
@@ -1355,7 +1365,7 @@ func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = ""
 	var sequence: Array = clinch.get("sequence", []).duplicate(true)
 	var relations: Array = clinch.get("relations", []).duplicate(true)
 	var reach: int = int(clinch.get("capture_reach", 1))
-	var capture_audience_favor: int = int(clinch.get("capture_audience_favor", 0))
+	var capture_owner_strain: int = int(clinch.get("capture_owner_strain", 0))
 	var opening_thickness: int = int(clinch.get("opening_thickness", 0))
 	var opening_capture_eligible: bool = bool(clinch.get("opening_capture_eligible", false))
 	var peak_thickness: int = opening_thickness + t_added
@@ -1389,7 +1399,7 @@ func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = ""
 		else (r_count > t_added)
 	var info := {"side": attacker, "type": TYPE_RAZBOR,
 		"action_id": action_id, "target_frame_id": target_frame_id,
-		"capture_reach": reach, "capture_audience_favor": capture_audience_favor,
+		"capture_reach": reach, "capture_owner_strain": capture_owner_strain,
 		"opening_thickness": opening_thickness,
 		"peak_thickness": peak_thickness, "protected_thickness": peak_thickness,
 		"landing_step": -1, "landing_target_kind": "", "landing_target_step": -1,
@@ -1424,7 +1434,7 @@ func _finish_clinch(stop_reason: String = "voluntary", stopped_side: String = ""
 			if idx >= 0 and idx < sides[defender].lines.size():
 				current_thickness = int(sides[defender].lines[idx].theses)
 			var step_info := {"side": attacker, "type": TYPE_RAZBOR,
-				"capture_reach": reach, "capture_audience_favor": capture_audience_favor,
+				"capture_reach": reach, "capture_owner_strain": capture_owner_strain,
 				"opening_thickness": opening_thickness,
 				"protected_thickness": current_thickness,
 				"landing_step": i, "landing_target_kind": target_kind,

@@ -11,7 +11,8 @@ extends Node
 ## Независимый зал в тесте:
 ##   +1 победителю каждого завершённого клинча, с публичным капом;
 ##   обычная выкладка карт его НЕ двигает — её уже считает доска;
-##   зал-гейт читает эту независимую шкалу;
+##   исторические конфиги могут включать старый зал-гейт для сравнения;
+##   production-профиль читает шатание от strain, независимо от этой шкалы;
 ##   захват не получает отдельного бонуса зала сверх победы в клинче.
 ##
 ## В FormulaRules отключены самостоятельные KO/TKO. Ноль рамок — P=0, но сторона может
@@ -197,6 +198,8 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 			return
 		emotion = EmotionCore.new()
 		emotion.start(DefaultReactions.data(), seed_value, [SIDE_YOU, SIDE_OPP])
+		set_emotional_strain(SIDE_YOU, 0)
+		set_emotional_strain(SIDE_OPP, 0)
 
 	## Диагностический шов agency-actions: перед КАЖДЫМ решением обе RNG-ветки получают
 	## seed, вычисленный только из initial seed и ordinal решения. Это не меняет ruleset:
@@ -471,6 +474,7 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 		if emotion == null or side == "":
 			return
 		var result: Dictionary = emotion.observe(side, stimulus, intensity, {})
+		set_emotional_strain(side, int(result.get("after", 0)))
 		_consume_reaction(result, 0)
 
 	func _consume_reaction(result: Dictionary, depth: int) -> void:
@@ -496,6 +500,8 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 			return
 		var responder := other(reactor)
 		var answer: Dictionary = emotion.answer_reaction(responder, {})
+		set_emotional_strain(responder,
+			int(emotion.state(responder).get("strain", 0)))
 		match String(answer.get("kind", "none")):
 			"parry":
 				parries += 1
@@ -594,7 +600,7 @@ class FormulaRules extends "res://duelogue/core/rules/rules_core.gd":
 		return ""
 
 
-## Измерительный адаптер production-контракта KO / резерва / audience-only wobble.
+## Измерительный адаптер production-контракта KO / резерва / emotional wobble.
 ##
 ## 1. В стартовой H5 можно гарантировать ровно одну Установку: это публичный резерв,
 ##    занимающий обычный слот руки. Остальные Установки возвращаются в добор.
@@ -1887,7 +1893,7 @@ func _production_crowd_config(profile_id: String = "") -> Dictionary:
 		"opening_heat": int(audience_config.get("opening_heat", 0)),
 		"reaction_values": (audience_config.get("reaction_values", {}) as Dictionary).duplicate(true),
 		"parry_value": int(audience_config.get("parry_value", 1)),
-		"gate_x": int(links.get("gate_x", 0)), "gate_y": int(links.get("gate_y", 0)),
+		"gate_x": int(links.get("wobble_x", 0)), "gate_y": int(links.get("wobble_y", 0)),
 	}
 
 
@@ -2087,8 +2093,8 @@ func _ko_wobble_suite() -> void:
 
 	print("Контракт: H5 = 1 гарантированная Установка + 4 боевые карты; резерв можно сыграть.")
 	print("Последняя рамка: snapshot руки до refill → U = redeploy всем следующим ходом, иначе KO.")
-	print("Шатание snapshot начала клинча: Lean к владельцу 0–1/2/3/4+ → reach 1/2/3/4.")
-	print("Heat, strain и положение по доске reach не меняют; ответный T гасит opener.\n")
+	print("Шатание snapshot начала клинча: strain владельца 0–1/2/3/4+ → reach 1/2/3/4.")
+	print("Strain владельца задаёт reach 1/2/3/4; зал, Heat и доска его не меняют; ответный T гасит opener.\n")
 
 	var rows := [
 		{"label": "без KO, random H5", "config": _candidate_config("reference", false, false, false),

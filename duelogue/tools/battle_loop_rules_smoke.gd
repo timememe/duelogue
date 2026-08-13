@@ -278,33 +278,35 @@ func _check_forced_redeploy() -> void:
 func _check_wobble_reach() -> void:
 	var model := _fresh(true)
 	var you_reach: Array = []
-	for lean in [0, -1, -2, -3, -4, -5]:
-		model.set_external_zal(lean, true)
+	for strain in [0, 1, 2, 3, 4, 5]:
+		model.set_emotional_strain(RulesCore.SIDE_OPP, strain)
 		you_reach.append(model.capture_threshold(RulesCore.SIDE_YOU))
 	_check(you_reach == [1, 1, 2, 3, 4, 4],
-		"public Lean toward the frame owner maps 0–1/2/3/4+ to reach 1/2/3/4")
+		"owner strain maps 0–1/2/3/4+ to reach 1/2/3/4")
 
 	var opp_reach: Array = []
-	for lean in [0, 1, 2, 3, 4, 5]:
-		model.set_external_zal(lean, true)
+	for strain in [0, 1, 2, 3, 4, 5]:
+		model.set_emotional_strain(RulesCore.SIDE_YOU, strain)
 		opp_reach.append(model.capture_threshold(RulesCore.SIDE_OPP))
 	_check(opp_reach == you_reach,
-		"audience-only wobble is exactly symmetric for both frame owners")
+		"emotional wobble is exactly symmetric for both frame owners")
 
 	model.sides[RulesCore.SIDE_YOU].lines = [_line(1), _line(1), _line(1)]
 	model.sides[RulesCore.SIDE_OPP].lines = [_line(4)]
-	model.set_external_zal(-3, true)
+	model.set_emotional_strain(RulesCore.SIDE_OPP, 3)
 	var leader_reach := int(model.capture_threshold(RulesCore.SIDE_YOU))
 	model.zal_bias = -1
 	var biased_reach := int(model.capture_threshold(RulesCore.SIDE_YOU))
-	_check(leader_reach == 3 and biased_reach == 4,
-		"board lead does not hide public reach; visible zal_bias participates in the same Lean")
+	model.set_external_zal(-5, true)
+	var hall_reach := int(model.capture_threshold(RulesCore.SIDE_YOU))
+	_check(leader_reach == 3 and biased_reach == 3 and hall_reach == 3,
+		"board, zal_bias and public Lean cannot change strain-based reach")
 
 
 func _prime_reach_four(model: RefCounted) -> void:
 	model.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Андердог")]
 	model.sides[RulesCore.SIDE_OPP].lines = [_line(4, "Фаворит")]
-	model.set_external_zal(-4, true)
+	model.set_emotional_strain(RulesCore.SIDE_OPP, 4)
 
 
 func _check_wobble_capture_matrix() -> void:
@@ -315,7 +317,7 @@ func _check_wobble_capture_matrix() -> void:
 		var expected_ids := _stack_ids(target)
 		model.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Original active")]
 		model.sides[RulesCore.SIDE_OPP].lines = [target]
-		model.set_external_zal(-thickness, true)
+		model.set_emotional_strain(RulesCore.SIDE_OPP, thickness)
 		model.sides[RulesCore.SIDE_YOU].hand = [
 			_card(RulesCore.TYPE_RAZBOR, "Direct K%d" % thickness, true)]
 		model.sides[RulesCore.SIDE_YOU].draw = []
@@ -346,7 +348,7 @@ func _check_wobble_capture_matrix() -> void:
 			(trophy.get("statements", []) as Array).is_empty() and
 			not discard_has_captured_id and model.captures == 1 and
 			model.capture_theses == thickness,
-			"direct K at audience reach %d moves the whole ordered object frame with %d theses" % [
+			"direct K at strain reach %d moves the whole ordered object frame with %d theses" % [
 				thickness, thickness])
 
 
@@ -357,7 +359,7 @@ func _check_thick_defense_paths() -> void:
 		var base_ids := _stack_ids(ktr_target)
 		ktr.sides[RulesCore.SIDE_YOU].lines = [_object_line(1, "Attacker", "ktr_active")]
 		ktr.sides[RulesCore.SIDE_OPP].lines = [ktr_target]
-		ktr.set_external_zal(-thickness, true)
+		ktr.set_emotional_strain(RulesCore.SIDE_OPP, thickness)
 		ktr.sides[RulesCore.SIDE_YOU].hand = [
 			_card(RulesCore.TYPE_RAZBOR, "K0", true),
 			_card(RulesCore.TYPE_RAZBOR, "R2")]
@@ -395,7 +397,7 @@ func _check_thick_defense_paths() -> void:
 	var held_base_ids := _stack_ids(held_target)
 	held.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Attacker")]
 	held.sides[RulesCore.SIDE_OPP].lines = [held_target]
-	held.set_external_zal(-3, true)
+	held.set_emotional_strain(RulesCore.SIDE_OPP, 3)
 	held.sides[RulesCore.SIDE_YOU].hand = [
 		_card(RulesCore.TYPE_RAZBOR, "K0", true)]
 	held.sides[RulesCore.SIDE_YOU].draw = []
@@ -425,7 +427,7 @@ func _check_capture_active_invariant() -> void:
 	model.sides[RulesCore.SIDE_OPP].lines = [
 		target, _object_line(1, "Defender reserve", "def_reserve"),
 		_object_line(1, "Defender active", "def_active")]
-	model.set_external_zal(-2, true)
+	model.set_emotional_strain(RulesCore.SIDE_OPP, 2)
 	model.sides[RulesCore.SIDE_YOU].hand = [
 		_card(RulesCore.TYPE_RAZBOR, "Capture K", true)]
 	model.sides[RulesCore.SIDE_YOU].draw = []
@@ -664,7 +666,7 @@ func _check_protected_thickness_and_full_loot() -> void:
 	var in_reach := _fresh(true)
 	in_reach.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Андердог")]
 	in_reach.sides[RulesCore.SIDE_OPP].lines = [_line(1, "Шатается"), _line(1, "Тыл")]
-	in_reach.set_external_zal(-4, true)
+	in_reach.set_emotional_strain(RulesCore.SIDE_OPP, 4)
 	in_reach.sides[RulesCore.SIDE_YOU].hand = [
 		_card(RulesCore.TYPE_RAZBOR, "K0", true),
 		_card(RulesCore.TYPE_RAZBOR, "K2", true),
@@ -741,7 +743,7 @@ func _check_named_capture_object_fields() -> void:
 	model.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Original active")]
 	model.sides[RulesCore.SIDE_OPP].lines = [
 		_object_line(3, "Strawman target", "straw_target")]
-	model.set_external_zal(-2, true) # ordinary reach 2; this card object adds exactly 1
+	model.set_emotional_strain(RulesCore.SIDE_OPP, 2) # ordinary reach 2; card adds exactly 1
 	model.sides[RulesCore.SIDE_YOU].hand = [NamedCards.make("strawman")]
 	model.sides[RulesCore.SIDE_YOU].draw = []
 	model.sides[RulesCore.SIDE_OPP].hand = [
@@ -988,31 +990,31 @@ func _check_clinch_context_snapshot() -> void:
 	var turn_before := int(model.turn_count)
 	var started: Dictionary = model.begin_clinch(
 		RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, true, 0)
-	# После открытия сцены условия исчезли; этот клинч обязан дочитать старый снимок reach=4.
-	model.set_external_zal(0, true)
+	# После открытия сцены напряжение спало; клинч обязан дочитать старый снимок reach=4.
+	model.set_emotional_strain(RulesCore.SIDE_OPP, 0)
 	var result: Dictionary = model.clinch_submit("pass")
 	var info: Dictionary = result.get("info", {})
 	_check(not started.is_empty() and bool(info.get("captured", false)) and
 		int(info.get("capture_reach", 0)) == 4,
-		"public audience reach фиксируется при открытии клинча и не меняется ретроактивно")
+		"strain-based reach фиксируется при открытии клинча и не меняется ретроактивно")
 	var late := _fresh(true)
 	late.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Attacker")]
 	late.sides[RulesCore.SIDE_OPP].lines = [_object_line(4, "Late wobble", "late")]
-	late.set_external_zal(0, true)
+	late.set_emotional_strain(RulesCore.SIDE_OPP, 0)
 	late.sides[RulesCore.SIDE_YOU].hand = [
 		_card(RulesCore.TYPE_RAZBOR, "Early stable K", true)]
 	late.sides[RulesCore.SIDE_YOU].draw = []
 	late.sides[RulesCore.SIDE_OPP].hand = []
 	late.sides[RulesCore.SIDE_OPP].draw = []
 	late.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, true, 0)
-	late.set_external_zal(-4, true)
+	late.set_emotional_strain(RulesCore.SIDE_OPP, 4)
 	var late_info: Dictionary = late.clinch_submit("pass").get("info", {})
 	_check(int(late_info.get("capture_reach", 0)) == 1 and
 		not bool(late_info.get("captured", false)) and
 		bool(late_info.get("capture_blocked", false)) and
 		String(late_info.get("capture_block_reason", "")) == "out_of_reach" and
 		int(late.sides[RulesCore.SIDE_OPP].lines[0].theses) == 3,
-		"audience shift after opening cannot retroactively turn a stable target into full capture")
+		"strain gain after opening cannot retroactively turn a stable target into full capture")
 	_check(model.turn_count == turn_before + 1,
 		"полный клинч считается одним действием независимо от длины внутреннего ралли")
 

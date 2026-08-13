@@ -255,7 +255,7 @@ func battle_config() -> Dictionary:
 			"hand": BattleController.HAND,
 		},
 		"tumblers": {
-			"gate_x": BattleController.GATE_X, "gate_y": BattleController.GATE_Y,
+			"wobble_x": BattleController.WOBBLE_X, "wobble_y": BattleController.WOBBLE_Y,
 			"capture_loot": BattleController.CAPTURE_LOOT,
 			"zal_ko": BattleController.ZAL_KO, "zal_hold": BattleController.ZAL_HOLD,
 		},

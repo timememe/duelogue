@@ -11,7 +11,7 @@ func _ready() -> void:
 	ReadingPace.CUTSCENES = false
 	start_match()
 	_check(input_mode() == "opening" and opening_stage() == "active",
-		"контроллер начинает двухэтапный opening с выбора активной рамки")
+		"контроллер начинает одноэтапный opening с выбора активной рамки")
 	var options := opening_options()
 	_check(options.size() == 3, "active-этап отдаёт три варианта")
 	if options.is_empty():
@@ -26,28 +26,15 @@ func _ready() -> void:
 		if String(option.id) != active_id:
 			expected_reserve_ids.append(String(option.id))
 	expected_reserve_ids.sort()
-	# Первый клик только фиксирует Базу: матч ещё не стартует и предлагает две оставшиеся
-	# смысловые рамки для публичной страховки в H5.
+	# Единственный клик фиксирует Базу и случайно назначает резерв из двух оставшихся.
 	_first_side = SIDE_YOU
 	model.current = SIDE_YOU
 	choose_opening(active_id)
-	var reserve_options := opening_options()
-	var active_was_removed := reserve_options.size() == 2
-	var actual_reserve_ids: Array = []
-	for option in reserve_options:
-		active_was_removed = active_was_removed and String(option.id) != active_id
-		actual_reserve_ids.append(String(option.id))
-	actual_reserve_ids.sort()
-	_check(input_mode() == "opening" and opening_stage() == "reserve" and active_was_removed and
-		actual_reserve_ids == expected_reserve_ids,
-		"reserve-этап оставляет именно два headline исходного offer, не подмешивает четвёртый")
-	if reserve_options.is_empty():
-		_finish_smoke()
-		return
-	var reserve_id := String(reserve_options[0].id)
-	choose_opening_reserve(reserve_id)
+	var reserve_id := String(_reserve_card(SIDE_YOU).get("claim_id", ""))
 	_check(input_mode() == "locked", "повторный ввод закрыт на время вступлений")
-	_check(opening_stage() == "", "после второго выбора opening-транзакция закрыта")
+	_check(opening_stage() == "", "после единственного выбора opening-транзакция закрыта")
+	_check(reserve_id in expected_reserve_ids and reserve_id != active_id,
+		"резерв случайно выбран ровно из двух неактивных headline исходного offer")
 	_check(model.turn_count == 0, "opening не расходует ход")
 	_check(model.score(SIDE_YOU) == 1 and model.score(SIDE_OPP) == 1,
 		"opening сохраняет симметричную Базу 1:1")
@@ -201,15 +188,16 @@ func _check_frame_threat_contract() -> void:
 	audience.heat = 0
 	model.set_external_zal(-4, true)
 	var calm: Dictionary = frame_threat(SIDE_OPP, 0)
-	# Heat and strain remain visible in their own systems but cannot secretly change reach.
+	# Lean и Heat больше не меняют reach; авторитетен только текущий strain владельца.
 	audience.heat = 3
 	emotion.observe(SIDE_OPP, "argument_lost", 6, {}, 1.0)
+	_sync_emotional_instability(SIDE_OPP)
 	var lethal: Dictionary = frame_threat(SIDE_OPP, 0)
-	_check(int(calm.get("reach", 0)) == 4 and int(lethal.get("reach", 0)) == 4 and
-		int(lethal.get("owner_favor", 0)) == 4 and bool(lethal.get("shaky", false)) and
-		not lethal.has("heat") and not lethal.has("strain") and
+	_check(int(calm.get("reach", 0)) == 1 and not bool(calm.get("shaky", true)) and
+		int(lethal.get("reach", 0)) == 4 and int(lethal.get("strain", 0)) == 6 and
+		bool(lethal.get("shaky", false)) and not lethal.has("heat") and not lethal.has("lean") and
 		bool(lethal.get("last_frame", false)) and bool(lethal.get("lethal", false)),
-		"frame_threat телеграфирует reach 4 только из Lean и отдельно показывает угрозу KO")
+		"frame_threat телеграфирует reach 4 только из strain и отдельно показывает угрозу KO")
 	model.sides[SIDE_OPP].hand.append({"type": TYPE_USTANOVKA, "name": "Публичный резерв",
 		"opening_reserve": true})
 	var insured: Dictionary = frame_threat(SIDE_OPP, 0)

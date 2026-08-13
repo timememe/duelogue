@@ -92,7 +92,6 @@ var _menu_overlay: Control
 ## значение всё сильнее — компрессия накапливалась бы, а не считалась от истинного дефолта).
 var _opp_sep0 := 0.0
 var _you_sep0 := 0.0
-var _gate_ticks: Array = []  ## риски порогов зал-гейта на баре ({node, level}), создаются лениво
 var _bubble_owner: Control
 var _cutscene_active := false
 var _audience_history: Array[String] = []
@@ -243,10 +242,7 @@ func _on_clinch_pass() -> void:
 
 
 func _on_opening_pressed(headline_id: String) -> void:
-	if String(controller.opening_stage()) == "reserve":
-		controller.choose_opening_reserve(headline_id)
-	else:
-		controller.choose_opening(headline_id)
+	controller.choose_opening(headline_id)
 
 
 func _new_match() -> void:
@@ -778,27 +774,20 @@ func _refresh() -> void:
 		int(model.reserve_count(C.SIDE_OPP)), int(model.reserve_count(C.SIDE_YOU))]
 	var audience: Dictionary = controller.audience_state()
 	var z: int = int(audience.get("lean", model.zal()))
-	# Зал-гейт: фаворит зала — под прицелом (его тонкие рамки захватываемы целиком).
-	var my_reach: int = model.capture_threshold(C.SIDE_YOU)   # моя сила захвата
-	var opp_reach: int = model.capture_threshold(C.SIDE_OPP)  # его сила захвата
-	var gate_note := ""
-	if opp_reach >= 2:
-		gate_note = "  ·  вы фаворит: ваши рамки ≤%d ШАТАЮТСЯ" % opp_reach
-	elif my_reach >= 2:
-		gate_note = "  ·  фаворит — оппонент: его рамки ≤%d ШАТАЮТСЯ" % my_reach
-	# «Счёт судьи» зал-нокаута перекрывает гейт-заметку: у черты это главный факт на столе.
+	var crowd_note := ""
+	# «Счёт судьи» нужен только профилям с явным Crowd TKO; шатание теперь живёт на strain.
 	if int(model.zal_ko) > 0:
 		var sy := int(model.crowd_streak.get(C.SIDE_YOU, 0))
 		var so := int(model.crowd_streak.get(C.SIDE_OPP, 0))
 		if sy > 0:
-			gate_note = "  ·  ЗАЛ СКАНДИРУЕТ ЗА ВАС: %d/%d" % [sy, int(model.zal_hold)]
+			crowd_note = "  ·  ЗАЛ СКАНДИРУЕТ ЗА ВАС: %d/%d" % [sy, int(model.zal_hold)]
 		elif so > 0:
-			gate_note = "  ·  ЗАЛ СКАНДИРУЕТ: %d/%d — ВЕРНИТЕ ЗАЛ!" % [so, int(model.zal_hold)]
+			crowd_note = "  ·  ЗАЛ СКАНДИРУЕТ: %d/%d — ВЕРНИТЕ ЗАЛ!" % [so, int(model.zal_hold)]
 	if String(audience.get("mode", "derived")) == "derived":
-		_zal_label.text = "ЗАЛ: КРЕН %+d  (legacy: рамки + сила)%s" % [z, gate_note]
+		_zal_label.text = "ЗАЛ: КРЕН %+d  (legacy: рамки + сила)%s" % [z, crowd_note]
 	else:
 		_zal_label.text = "ЗАЛ: КРЕН %+d  ·  АЗАРТ %d/%d%s" % [z,
-			int(audience.get("heat", 0)), int(audience.get("heat_max", 0)), gate_note]
+			int(audience.get("heat", 0)), int(audience.get("heat_max", 0)), crowd_note]
 	_update_bar(z)
 	_update_emotion_hud()
 	_update_status_hud()
@@ -821,16 +810,16 @@ static func board_lines_for_mode(lines: Array, input_mode: String) -> Array:
 func _update_emotion_hud() -> void:
 	var player_state: Dictionary = controller.emotion_state(C.SIDE_YOU)
 	_render_strain(player_state, _you_strain_bg,
-		_you_strain_fill, _you_strain_label, "ВЫ")
+		_you_strain_fill, _you_strain_label, "ВЫ", C.SIDE_YOU)
 	var opponent_state: Dictionary = controller.emotion_state(C.SIDE_OPP)
 	_render_strain(opponent_state, _opp_strain_bg,
-		_opp_strain_fill, _opp_strain_label, "ОПП")
+		_opp_strain_fill, _opp_strain_label, "ОПП", C.SIDE_OPP)
 	if _emotion_log_side != "":
 		_update_emotion_summary(_emotion_log_side)
 
 
 func _render_strain(state: Dictionary, bg: ColorRect, fill: ColorRect, label: Label,
-	who: String) -> void:
+	who: String, side: String) -> void:
 	var maximum := maxi(1, int(state.get("max", 6)))
 	var strain := clampi(int(state.get("strain", 0)), 0, maximum)
 	var t := float(strain) / float(maximum)
@@ -843,6 +832,9 @@ func _render_strain(state: Dictionary, bg: ColorRect, fill: ColorRect, label: La
 		status = "ПУСТО"
 	elif int(state.get("cooldown", 0)) > 0:
 		status = "РАЗРЯДКА"
+	var reach := int(model.frame_capture_reach(side))
+	if reach >= 2:
+		status += " · ШАТ.≤%d" % reach
 	label.text = "%s\n%d/%d\n%s" % [who, strain, maximum, status]
 
 
@@ -945,7 +937,6 @@ func _update_bar(z: int) -> void:
 	var t := clampf(float(z) / float(zmax), -1.0, 1.0)
 	var center := bar_x + bar_w / 2.0
 	var mx := center + t * (bar_w / 2.0)
-	_update_gate_ticks(center, bar_w, bar_y, bar_h, zmax)
 	_marker.position = Vector2(mx - 3.5, bar_y - 4.0)
 	if z >= 0:
 		_fill.position = Vector2(center, bar_y)
@@ -955,50 +946,6 @@ func _update_bar(z: int) -> void:
 		_fill.position = Vector2(mx, bar_y)
 		_fill.size = Vector2(center - mx, bar_h)
 		_fill.color = Color.html("#" + COL_OPP)
-
-
-## Every public crowd threshold in the wobble band gets a tick: with 2..4 these
-## are ±2, ±3 and ±4, matching capture reach 2, 3 and 4.
-static func wobble_tick_levels(gate_start: int, gate_end: int) -> Array:
-	if gate_start <= 0:
-		return []
-	var levels: Array = []
-	var band_end := maxi(gate_start, gate_end)
-	for lv in range(band_end, gate_start - 1, -1):
-		levels.append(-lv)
-	for lv in range(gate_start, band_end + 1):
-		levels.append(lv)
-	return levels
-
-
-func _update_gate_ticks(center: float, bar_w: float, bar_y: float, bar_h: float, zmax: int) -> void:
-	if model.gate_x <= 0:
-		for old_tick in _gate_ticks:
-			(old_tick.node as ColorRect).queue_free()
-		_gate_ticks.clear()
-		return
-	var levels := wobble_tick_levels(int(model.gate_x), int(model.gate_y))
-	var current_levels: Array = _gate_ticks.map(func(gt): return int(gt.level))
-	if current_levels != levels:
-		for old_tick in _gate_ticks:
-			(old_tick.node as ColorRect).queue_free()
-		_gate_ticks.clear()
-	if _gate_ticks.is_empty():
-		for lv in levels:
-			if lv == 0:
-				continue
-			var tick := ColorRect.new()
-			tick.color = Color.html("#" + COL_RAZBOR)
-			tick.color.a = 0.55
-			tick.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			_bar_bg.get_parent().add_child(tick)
-			_gate_ticks.append({"node": tick, "level": lv})
-		# Риски под маркером/заливкой по z-порядку не мешают — они узкие и тусклее.
-	for gt in _gate_ticks:
-		var node: ColorRect = gt.node
-		var frac := clampf(float(gt.level) / float(zmax), -1.0, 1.0)
-		node.position = Vector2(center + frac * (bar_w / 2.0) - 1.0, bar_y - 3.0)
-		node.size = Vector2(2.0, bar_h + 6.0)
 
 
 ## Ширина зоны доски ФИКСИРОВАНА (row.size.x — внутренняя область видимой рамки Board). Если
@@ -1241,6 +1188,29 @@ static func board_card_position_x(ltr_x: float, content_width: float,
 	return outer_pad + content_width - CARD_W - ltr_x if reverse else ltr_x
 
 
+## Однострочная подпись над рамкой раскрывается внутрь доски: у игрока вправо от левого
+## края рамки, у зеркального ряда оппонента — влево от её правого края. Полная ширина
+## текста намеренно не ограничена шириной группы: иначе исправленное обрезание просто
+## превратилось бы в многоточие.
+static func frame_tag_rect(frame_x: float, reverse: bool, text_width: float) -> Rect2:
+	var width := maxf(ceilf(text_width) + 4.0, CARD_W)
+	var x := frame_x + CARD_W - width if reverse else frame_x
+	return Rect2(x, 0.0, width, 18.0)
+
+
+func _layout_frame_tag(label: Label, frame_x: float, reverse: bool) -> void:
+	var font := label.get_theme_font("font")
+	var font_size := label.get_theme_font_size("font_size")
+	# combined_minimum_size учитывает fallback-глифы — в том числе ⚡ у combo_bait.
+	var text_width := maxf(label.get_combined_minimum_size().x,
+		font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x)
+	var rect := frame_tag_rect(frame_x, reverse, text_width)
+	label.position = Vector2(rect.position.x, 8.0)
+	label.size = rect.size
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT if reverse \
+		else HORIZONTAL_ALIGNMENT_LEFT
+
+
 ## The board reads the object stack when it exists. Defensive theses added by the
 ## active clinch live at its top but render in the clinch overlay, so the base frame
 ## gets only the prefix below them. Scalars are a fallback for legacy state only.
@@ -1281,7 +1251,7 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 		int(cl.get("t_added", 0)) if contested else 0)
 	var theses := thesis_tokens.size()
 	var targetable: bool = String(controller.input_mode()) == "target" and not is_you
-	# View reads the exact object thickness and the single public audience-only reach.
+	# View reads exact object thickness and reach from the owner's emotional strain.
 	# Temporary/permanent frame protection remains a separate eligibility flag.
 	var owner := C.SIDE_YOU if is_you else C.SIDE_OPP
 	var threat: Dictionary = controller.frame_threat(owner, idx)
@@ -1311,28 +1281,29 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 		if combo_bait:
 			frame_info += "\n\n⚡ В РУКЕ ЕСТЬ ОТКРЫВАЮЩИЙ ПРИЁМ"
 	if shaky:
-		frame_info += "\n\n⚠ ШАТАЕТСЯ · КРАЖА ДО %d\nКрен к владельцу %+d · толщина %d" % [
-			int(threat.get("reach", 1)), int(threat.get("owner_favor", 0)),
+		frame_info += "\n\n⚠ ШАТАЕТСЯ · КРАЖА ДО %d\nНапряжение владельца %d/%d · толщина %d" % [
+			int(threat.get("reach", 1)), int(threat.get("strain", 0)),
+			int(threat.get("strain_max", 6)),
 			int(threat.get("thickness", theses))]
 		var warn := Label.new()
 		warn.text = "ШАТАЕТСЯ · КРАЖА ДО %d" % int(threat.get("reach", 1))
-		warn.position = Vector2(uc.position.x - 2.0, y0 - 18.0)
 		warn.add_theme_font_size_override("font_size", 10)
 		warn.add_theme_color_override("font_color", Color.html("#" + COL_RAZBOR))
 		warn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		root.add_child(warn)
+		_layout_frame_tag(warn, uc.position.x - 2.0, reverse)
 	elif top_scheme != "":
 		# Комбо §12: схема верхнего Тезиса читается прямо на рамке (шаткость приоритетнее —
 		# оба лейбла делят одну строку над рамкой). combo_bait — та же золотая подсветка,
 		# что и у правильного ответа в клинче (combo_answer_glow), для симметрии подсказки.
 		var scheme_tag := Label.new()
 		scheme_tag.text = ("⚡ " + top_scheme.to_upper()) if combo_bait else top_scheme.to_upper()
-		scheme_tag.position = Vector2(uc.position.x - 2.0, y0 - 18.0)
 		scheme_tag.add_theme_font_size_override("font_size", 10)
 		scheme_tag.add_theme_color_override("font_color",
 			Color.html("#" + (COL_GOLD if combo_bait else COL_TEZIS)))
 		scheme_tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		root.add_child(scheme_tag)
+		_layout_frame_tag(scheme_tag, uc.position.x - 2.0, reverse)
 	if bool(threat.get("last_frame", false)) and bool(model.board_ko_enabled):
 		frame_info += "\n\nЕсли рамка падёт: %s · резерв %d" % [
 			("НОКАУТ" if bool(threat.get("lethal", false)) else "восстановление следующим ходом"),
@@ -1523,23 +1494,21 @@ func _rebuild_hand() -> void:
 ## На нулевом ходе смысловые варианты выглядят как обычные карты-Установки в руке.
 ## Это presentation-only: контроллер по-прежнему не списывает U-карту и не двигает ход.
 func _rebuild_opening_hand() -> void:
-	var reserve_stage := String(controller.opening_stage()) == "reserve"
 	for option in controller.opening_options():
 		var axes: Array = nar.axis_tags(option.get("preferred_axes", []))
 		var focus := "" if axes.is_empty() else "Фокус: %s" % " · ".join(axes)
 		var card := {"type": C.TYPE_USTANOVKA,
-			"name": ("Резерв" if reserve_stage else "Активная рамка"), "steals": false}
+			"name": "Активная рамка", "steals": false}
 		var body := "«%s»" % String(option.get("text", ""))
 		if focus != "":
 			body += "\n\n" + focus
 		var btn: Button = CardScene.instantiate()
 		_hand_row.add_child(btn)
-		btn.setup(card, "Резерв" if reserve_stage else "Активная рамка", body, true)
-		var rule := "Останется видимой в H5, займёт обычный слот и спасёт от KO. Восстановление потратит весь ход." \
-			if reserve_stage else "Не расходует карту или ход. Сила Базы остаётся 1. После выбора закрепите резерв."
+		btn.setup(card, "Активная рамка", body, true)
+		var rule := "Не расходует карту или ход. Сила Базы остаётся 1. Одна из двух других рамок случайно станет публичным резервом."
 		var bubble_body := "%s\n\n%s\n\n%s" % [
 			"«%s»" % String(option.get("text", "")), focus, rule]
-		_attach_card_bubble(btn, "Резервная рамка" if reserve_stage else "Активная рамка", bubble_body, card)
+		_attach_card_bubble(btn, "Активная рамка", bubble_body, card)
 		_attach_hand_motion(btn)
 		btn.pressed.connect(_on_opening_pressed.bind(String(option.get("id", ""))))
 

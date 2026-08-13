@@ -19,11 +19,11 @@ func _run() -> void:
 		String(OutcomeProfiles.get_profile("missing_profile").id) == "combat_cohesion",
 		"новый связный боевой профиль выбран production-default и fallback")
 	_check(bool((production.terminal as Dictionary).board_ko) and
-		int((production.links as Dictionary).gate_x) == 2 and
-		int((production.links as Dictionary).gate_y) == 4 and
+		int((production.links as Dictionary).wobble_x) == 2 and
+		int((production.links as Dictionary).wobble_y) == 4 and
 		not (production.links as Dictionary).has("composure_gate") and
 		String((production.victory as Dictionary).mode) == "board",
-		"production-профиль включает KO и публичное audience-only шатание 2/3/4")
+		"production-профиль включает KO и эмоциональное шатание 2/3/4")
 	var vector := OutcomeProfiles.get_profile("vector_conduct")
 	_check(String((vector.victory as Dictionary).mode) == "board" and
 		String((vector.audience as Dictionary).valence_mode) == "content_plus_conduct" and
@@ -138,8 +138,11 @@ func _run() -> void:
 	model.gate_x = 2
 	model.gate_y = 4
 	model.set_external_zal(-4, true)
-	_check(model.zal() == -4 and model.capture_threshold(RulesCore.SIDE_YOU) == 4,
-		"RulesCore читает независимый публичный Lean как reach 1/2/3/4")
+	var hall_only_reach := int(model.capture_threshold(RulesCore.SIDE_YOU))
+	model.set_emotional_strain(RulesCore.SIDE_OPP, 4)
+	_check(model.zal() == -4 and hall_only_reach == 1 and
+		model.capture_threshold(RulesCore.SIDE_YOU) == 4,
+		"RulesCore игнорирует Lean в reach и читает strain владельца как 1/2/3/4")
 
 	# Без board-KO сторона без рамки может продолжить Разбором и дождаться общего вердикта.
 	model.game_over = false
