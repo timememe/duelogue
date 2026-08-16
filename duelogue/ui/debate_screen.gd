@@ -13,6 +13,9 @@ const CardArt := preload("res://duelogue/core/cards/card_art.gd")
 const CharacterCore := preload("res://duelogue/core/characters/character_core.gd")  ## ядро персонажей (актёры на сцену)
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")  ## настройка скорости печати (меню)
 const StatusIcon := preload("res://duelogue/ui/status_icon.gd")  ## перк-иконка с кастомным тултипом-у-курсора
+## Тот же Sofia Sans Condensed Black wght=900, что у имени приёма в реакции (reaction_scene)
+## и в баннере комбо (combo_name_banner.gd) — держим тот же вес и для тег-лейблов рамки.
+const TAG_FONT := preload("res://duelogue/assets/fonts/SofiaSansCondensed-Black.tres")
 
 const COL_TEZIS := "43c59e"
 const COL_RAZBOR := "e45b5b"
@@ -1287,6 +1290,7 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 			int(threat.get("thickness", theses))]
 		var warn := Label.new()
 		warn.text = "ШАТАЕТСЯ · КРАЖА ДО %d" % int(threat.get("reach", 1))
+		warn.add_theme_font_override("font", TAG_FONT)
 		warn.add_theme_font_size_override("font_size", 10)
 		warn.add_theme_color_override("font_color", Color.html("#" + COL_RAZBOR))
 		warn.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1298,6 +1302,7 @@ func _make_frame_group(line: Dictionary, is_you: bool, idx: int, gap: float,
 		# что и у правильного ответа в клинче (combo_answer_glow), для симметрии подсказки.
 		var scheme_tag := Label.new()
 		scheme_tag.text = ("⚡ " + top_scheme.to_upper()) if combo_bait else top_scheme.to_upper()
+		scheme_tag.add_theme_font_override("font", TAG_FONT)
 		scheme_tag.add_theme_font_size_override("font_size", 10)
 		scheme_tag.add_theme_color_override("font_color",
 			Color.html("#" + (COL_GOLD if combo_bait else COL_TEZIS)))

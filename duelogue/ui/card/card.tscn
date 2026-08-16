@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" uid="uid://cd2ehqvjenrgm" path="res://duelogue/ui/card/card.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://v3latncxeffa" path="res://duelogue/assets/cards/card_clean_v1.png" id="2_template"]
+[ext_resource type="FontVariation" path="res://duelogue/assets/fonts/SofiaSansCondensed-Black.tres" id="3_title_black"]
 
 [sub_resource type="StyleBoxFlat" id="sb_normal"]
 bg_color = Color(0, 0, 0, 0)
@@ -121,6 +122,7 @@ offset_right = -10.0
 offset_bottom = 23.0
 grow_horizontal = 2
 theme_override_colors/font_color = Color(0.0784, 0.0941, 0.1255, 1)
+theme_override_fonts/font = ExtResource("3_title_black")
 theme_override_font_sizes/font_size = 10
 text = "Название"
 horizontal_alignment = 1
