@@ -121,6 +121,9 @@ var _drag_start_global := Vector2.ZERO
 var _drag_hand_size := Vector2.ZERO
 var _drag_ghost: Control
 var _drag_marked_frame: Button   ## текущая рамка-цель под автонаведением (targeted-драг)
+## После отпускания targeted-карты коротко блокируем второй выбор цели: сначала призрак
+## физически садится на выбранную рамку, и только затем контроллер открывает клинч.
+var _target_land_pending := false
 
 @onready var _stage: Control = $Stage
 @onready var _score_label: Label = %ScoreLabel
@@ -233,10 +236,14 @@ func _on_hand_pressed(index: int) -> void:
 
 
 func _on_target_pressed(index: int) -> void:
+	if _target_land_pending:
+		return
 	controller.choose_target(index)
 
 
 func _cancel_targeting() -> void:
+	if _target_land_pending:
+		return
 	controller.cancel_targeting()
 
 
@@ -1715,7 +1722,7 @@ func _end_drag(release_global: Vector2) -> void:
 			controller.cancel_targeting()
 			_return_ghost_to_hand(ghost, index)
 		else:
-			_resolve_targeted_land(ghost, int(hit.idx))
+			_resolve_targeted_land(ghost, int(hit.idx), hit.rect)
 	else:
 		# "committed" — ход уже отыгран при старте драга; довести призрак до точки отпускания
 		# и погасить, откатывать нечего.
@@ -1723,46 +1730,19 @@ func _end_drag(release_global: Vector2) -> void:
 		_land_ghost(ghost, target)
 
 
-## choose_target тянет за собой _run_clinch — реальная развязка может занять секунды на
-## нарративную презентацию (реплики хода, катсцены реакций поверх ВСЕГО экрана, z_index выше
-## нашего призрака). Ждём её ПОЛНОСТЬЮ, только потом ищем фактическое место новой карты на уже
-## перестроенной доске — не гадаем заранее, где она окажется (клинч-стек, полный захват и т.п.
-## дают разную геометрию, известную только постфактум). Призрак на время ожидания прячем —
-## иначе он бы застыл поверх катсцены реакции и выглядел как случайно зависшая карта; новый
-## драг за это время не начать: _mode остаётся "locked" до конца резолва, руки рисуются
-## disabled (см. _rebuild_hand).
-## ВАЖНО: await choose_target() САМ ПО СЕБЕ не гарантирует «презентация полностью на экране
-## доиграла» — _run_clinch решает клинч и может вернуться, пока хвостовая катсцена (вспышка
-## исхода/баннер комбо/финальная эмоц.реакция) ещё идёт: он не обязан её флешить для каждого
-## внешнего вызова, это его собственный контракт с _say/_wait_pace. Раньше здесь этого шага не
-## было — из-за этого призрак иногда садился на доску, ещё скрытый под незавершённой катсценой,
-## и «всплывал» из-под неё недоигранным огрызком анимации. Досиживаем остаток явно.
-func _resolve_targeted_land(ghost: Control, idx: int) -> void:
-	if is_instance_valid(ghost):
-		ghost.visible = false
+## choose_target тянет за собой весь _run_clinch. Поэтому призрак targeted-карты обязан
+## закончить посадку ДО вызова контроллера: если хранить его до полного settlement, он снова
+## появится только при возврате на общий план и визуально повторит уже сыгранную карту.
+## Точный финальный состав рамки заранее неизвестен, зато выбранный rect известен в момент
+## отпускания — туда и садится opener. Пока tween идёт, локальные клик/отмена цели заблокированы,
+## чтобы тот же выбор нельзя было отправить контроллеру вторым путём.
+func _resolve_targeted_land(ghost: Control, idx: int, target_rect: Rect2) -> void:
+	_target_land_pending = true
+	var landing := _land_ghost(ghost, target_rect)
+	if landing != null:
+		await landing.finished
+	_target_land_pending = false
 	await controller.choose_target(idx)
-	if not is_instance_valid(ghost):
-		return
-	var tail: float = controller.remaining_pace()
-	if tail > 0.0:
-		await get_tree().create_timer(tail).timeout
-	if not is_instance_valid(ghost):
-		return
-	var spot := _newest_landing_rect(idx)
-	ghost.visible = true
-	if spot.is_empty():
-		_fade_ghost(ghost)
-	else:
-		_land_ghost(ghost, spot.rect)
-
-
-func _fade_ghost(ghost: Control) -> void:
-	if not is_instance_valid(ghost):
-		return
-	var tw := ghost.create_tween()
-	tw.tween_property(ghost, "modulate:a", 0.0, 0.2)
-	tw.tween_callback(ghost.queue_free)
-
 
 func _is_drop_over_hand(global_point: Vector2) -> bool:
 	return _hand_row.get_global_rect().grow(24.0).has_point(global_point)
@@ -1789,43 +1769,9 @@ func _nearest_targetable_frame(global_point: Vector2) -> Dictionary:
 				best = {"idx": int(b.get_meta("frame_idx")), "rect": rect, "node": b}
 	return best
 
-
-## Группа рамки по idx могла пересобраться (choose_target = новый _refresh) — ищем заново по
-## frame_idx-мете, не по кэшированной ссылке или позиции в дереве (которая могла сдвинуться,
-## если соседняя рамка пропала).
-func _frame_group_for_idx(idx: int) -> Node:
-	for group in _opp_row.get_children():
-		for child in (group as Node).get_children():
-			if child is Button and int(child.get_meta("frame_idx", -1)) == idx:
-				return group
-	return null
-
-
-## Самая свежая карта в клинч-стеке рамки — наибольший clinch_order (см. _make_frame_group: k
-## растёт с каждой новой картой хронологически, k=0 — самая старая). Рамка вне клинча (полный
-## захват и т.п. дали другой исход, оверлеев нет вовсе) — садимся на саму рамку как фолбэк.
-func _newest_landing_rect(idx: int) -> Dictionary:
-	var group := _frame_group_for_idx(idx)
-	if group == null:
-		return {}
-	var best: Button = null
-	var best_order := -1
-	for child in group.get_children():
-		if child is Button and String(child.get_meta("board_role", "")) == "overlay":
-			var order := int(child.get_meta("clinch_order", -1))
-			if order > best_order:
-				best_order = order
-				best = child
-	if best != null:
-		return {"rect": best.get_global_rect()}
-	if group.get_child_count() > 0 and group.get_child(0) is Button:
-		return {"rect": (group.get_child(0) as Button).get_global_rect()}
-	return {}
-
-
-func _land_ghost(ghost: Control, target_rect: Rect2) -> void:
+func _land_ghost(ghost: Control, target_rect: Rect2) -> Tween:
 	if not is_instance_valid(ghost):
-		return
+		return null
 	var target_scale := Vector2(
 		target_rect.size.x / maxf(1.0, _drag_hand_size.x),
 		target_rect.size.y / maxf(1.0, _drag_hand_size.y))
@@ -1836,7 +1782,8 @@ func _land_ghost(ghost: Control, target_rect: Rect2) -> void:
 	tw.tween_property(ghost, "scale", target_scale, DRAG_GHOST_LAND_TIME)
 	tw.set_parallel(false)
 	tw.tween_property(ghost, "modulate:a", 0.0, 0.1)
-	tw.tween_callback(ghost.queue_free)
+	tw.finished.connect(ghost.queue_free)
+	return tw
 
 
 ## index может указывать на уже перестроенную руку (play_hand на старте targeted-драга уже

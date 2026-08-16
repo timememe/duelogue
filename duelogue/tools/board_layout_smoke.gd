@@ -6,6 +6,16 @@ extends Node
 const DebateScreen := preload("res://duelogue/ui/debate_screen.gd")
 
 
+class TargetProbe extends Node:
+	var calls := 0
+	var last_index := -1
+
+
+	func choose_target(index: int) -> void:
+		calls += 1
+		last_index = index
+
+
 func _ready() -> void:
 	var failures := 0
 	var hidden_opening := DebateScreen.board_lines_for_mode([{"theses": 1}], "opening")
@@ -147,6 +157,30 @@ func _ready() -> void:
 	failures += _check(measured_left >= 11.99 and protected_reverse,
 		"зеркальное сжатие держит левую границу линии оппонента")
 	reverse_row.queue_free()
+
+	# Targeted-драг сначала завершает визуальную посадку в уже известный rect рамки и только
+	# потом запускает choose_target (а вместе с ним весь клинч). Так призрак opener'а не может
+	# пережить ралли и повторно уменьшиться при возврате с крупного плана.
+	var target_probe := TargetProbe.new()
+	add_child(target_probe)
+	view.controller = target_probe
+	view._drag_hand_size = Vector2(168.0, 224.0)
+	var landing_ghost := Control.new()
+	landing_ghost.size = view._drag_hand_size
+	add_child(landing_ghost)
+	view._resolve_targeted_land(landing_ghost, 3,
+		Rect2(Vector2(120.0, 80.0), Vector2(DebateScreen.CARD_W, DebateScreen.CARD_H)))
+	# Пока карта летит, click-click и отмена не должны отправить второй выбор цели.
+	view._on_target_pressed(1)
+	view._cancel_targeting()
+	failures += _check(target_probe.calls == 0 and view._target_land_pending,
+		"targeted-драг не открывает клинч до завершения посадки карты")
+	await get_tree().create_timer(DebateScreen.DRAG_GHOST_LAND_TIME + 0.2).timeout
+	await get_tree().process_frame
+	failures += _check(target_probe.calls == 1 and target_probe.last_index == 3 and
+		not view._target_land_pending and not is_instance_valid(landing_ghost),
+		"после посадки цель отправляется один раз, а призрак не доживает до конца клинча")
+	target_probe.queue_free()
 	view.free()
 	print("=== BOARD LAYOUT: %s ===" % ("OK" if failures == 0 else "FAIL (%d)" % failures))
 	get_tree().quit(0 if failures == 0 else 1)
