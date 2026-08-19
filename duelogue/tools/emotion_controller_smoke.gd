@@ -295,6 +295,28 @@ func _run_smoke() -> void:
 		String((emotion_event_calls[0] as Dictionary).stimulus) == "attack_stalled",
 		"вынужденное исчерпание атаки даёт ровно одну проверку attack_stalled")
 
+	# Кнопка «Сорваться» через контроллер (situational_cards_v0.1 §2, §6 шаг 1): полный шов
+	# emotion.snap → rules_core.apply_snap_vulnerability → _resolve_emotion_result.
+	start_match()
+	spoken.clear()
+	emotion.observe(SIDE_YOU, "argument_lost", EmotionCore.SNAP_THRESHOLD, {}, 0.99)
+	_check(emotion.can_snap(SIDE_YOU), "тестовая подготовка: шкала на пороге кнопки")
+	var active_line: Dictionary = model.sides[SIDE_YOU].lines[-1]
+	await _apply_snap(SIDE_YOU)
+	_check(int(emotion_state(SIDE_YOU).strain) == 0,
+		"снап через контроллер полностью сбрасывает шкалу")
+	_check(bool(active_line.get("no_defend_temp", false)),
+		"снап через контроллер метит активную рамку временной беззащитностью")
+	_check(not emotion.can_snap(SIDE_YOU),
+		"снап через контроллер выставляет тот же cooldown, что обычная реакция")
+	# 2 реплики, не 1: спокойный оппонент (strain 0) автоматически парирует любую реакцию
+	# через ту же цепочку _answer_emotional_reaction — снап её не обходит, что и требовалось
+	# («поверх существующего пути», §2 спеки), см. идентичную форму в первом блоке выше.
+	_check(spoken.size() == 2 and String((spoken[0] as Dictionary).side) == SIDE_YOU and
+		bool((spoken[0] as Dictionary).meta.get("reaction", false)) and
+		String((spoken[1] as Dictionary).meta.get("reaction_kind", "")) == "parry",
+		"снап через контроллер произносит реплику и цепляет ту же цепочку, что обычная реакция")
+
 	start_match()
 	_check(int(emotion_state(SIDE_YOU).strain) == 0 and
 		int(emotion_state(SIDE_OPP).strain) == 0,

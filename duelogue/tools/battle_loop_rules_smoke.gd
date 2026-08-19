@@ -40,6 +40,7 @@ func _run() -> void:
 	_check_ai_target_awareness()
 	_check_clinch_context_snapshot()
 	_check_stall_reasons()
+	_check_snap_vulnerability()
 	print("=== BATTLE LOOP RULES: %s ===\n" % ("OK" if failures == 0 else "FAIL (%d)" % failures))
 	get_tree().call_deferred("quit", 0 if failures == 0 else 1)
 
@@ -1046,6 +1047,30 @@ func _check_stall_reasons() -> void:
 	_check(not bool(exhausted.get("landed", true)) and
 		String(exhausted.get("stop_reason", "")) == "exhausted",
 		"отсутствие следующей атаки помечается отдельным stop_reason=exhausted")
+
+
+## situational_cards_v0.1 §2/§6 шаг 1: снап метит только верхнюю (активную) рамку, очистка
+## живёт РОВНО до начала следующего хода владельца и не трогает постоянный no_defend
+## (Аксиома) — раздельные ключи no_defend_temp/no_defend гарантируют эту границу.
+func _check_snap_vulnerability() -> void:
+	var model := _fresh()
+	var side := RulesCore.SIDE_YOU
+	model.sides[side].lines.append(_line(2, "Аксиома-подобная"))
+	var permanent_index: int = model.sides[side].lines.size() - 1
+	model.sides[side].lines[permanent_index]["no_defend"] = true
+	model.sides[side].lines.append(_line(2, "Активная рамка"))
+
+	model.apply_snap_vulnerability(side)
+	var active: Dictionary = model.sides[side].lines[-1]
+	_check(bool(active.get("no_defend", false)) and bool(active.get("no_defend_temp", false)),
+		"снап помечает активную (верхнюю) рамку временно беззащитной")
+
+	model.begin_turn(side)
+	_check(not bool(model.sides[side].lines[-1].get("no_defend", false)) and
+		not bool(model.sides[side].lines[-1].get("no_defend_temp", false)),
+		"беззащитность снимается к началу следующего хода владельца")
+	_check(bool(model.sides[side].lines[permanent_index].get("no_defend", false)),
+		"постоянный no_defend (Аксиома) очисткой не трогается — снимается только no_defend_temp")
 
 
 func _check(ok: bool, label: String) -> void:

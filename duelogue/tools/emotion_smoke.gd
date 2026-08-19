@@ -17,6 +17,7 @@ func _init() -> void:
 	_test_state_and_reaction()
 	_test_reaction_relation()
 	_test_finite_independent_decks()
+	_test_snap()
 	print("=== ИТОГ: %s ===" % ("OK" if failures == 0 else "FAIL (%d)" % failures))
 	quit(0 if failures == 0 else 1)
 
@@ -147,6 +148,40 @@ func _test_finite_independent_decks() -> void:
 		"субколода конечна: карта ушла из добора")
 	_check(int(core.state("opp").draw_left) == before_opp,
 		"у сторон независимые копии субколоды")
+
+
+func _test_snap() -> void:
+	var core := EmotionCore.new()
+	core.start(DefaultDeck.data(), 456, ["you", "opp"])
+	_check(not core.can_snap("you"), "кнопка недоступна на пустой шкале")
+
+	core.observe("you", "argument_lost", 4, {}, 0.99)
+	_check(not core.can_snap("you"), "кнопка недоступна ниже порога (4/6)")
+
+	core.observe("you", "argument_lost", 1, {}, 0.99)
+	_check(int(core.state("you").strain) == EmotionCore.SNAP_THRESHOLD,
+		"шкала дошла ровно до порога кнопки")
+	_check(core.can_snap("you"), "кнопка доступна на пороге (5/6)")
+	_check(bool(core.state("you").can_snap), "state() отражает доступность кнопки")
+
+	var empty_snap: Dictionary = EmotionCore.new().snap("you")
+	_check(empty_snap.is_empty(), "snap() без предварительного start()/can_snap возвращает {}")
+
+	var result: Dictionary = core.snap("you", {"target": "проверочная рамка"})
+	_check(int(result.before) == EmotionCore.SNAP_THRESHOLD and int(result.after) == 0,
+		"снап гарантированно и полностью сбрасывает шкалу")
+	_check(float(result.chance) == 1.0 and float(result.roll) == 0.0,
+		"снап возвращает форму observe() для переиспользования _resolve_emotion_result")
+	var reaction: Dictionary = result.reaction
+	_check(not reaction.is_empty() and int(reaction.vent) == EmotionCore.SNAP_THRESHOLD,
+		"снап венти всю накопленную шкалу, а не частично как обычная карта")
+	_check(String(reaction.text).find("{target}") < 0, "контекстный слот заполнен")
+	_check(int(core.state("you").snaps) == 1, "счётчик снапов обновлён")
+	_check(not core.can_snap("you"),
+		"сразу после снапа кнопка недоступна — тот же cooldown, что у обычной реакции")
+
+	var again: Dictionary = core.snap("you")
+	_check(again.is_empty(), "повторный снап во время cooldown нелегален и возвращает {}")
 
 
 func _check(ok: bool, label: String) -> void:

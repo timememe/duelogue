@@ -157,6 +157,7 @@ var _target_land_pending := false
 @onready var _opp_strain_fill: ColorRect = %OppStrainFill
 @onready var _opp_strain_label: Label = %OppStrainLabel
 @onready var _opp_strain: Control = $EmotionHud/OppStrain
+@onready var _snap_button: Button = %SnapButton
 @onready var _emotion_log_panel: PanelContainer = %OpponentEmotionLogPanel
 @onready var _emotion_log_rt: RichTextLabel = %OpponentEmotionLog
 @onready var _emotion_summary: Label = %OpponentEmotionSummary
@@ -216,6 +217,7 @@ func _ready() -> void:
 	_emotion_log_panel.visible = false
 	_you_strain.gui_input.connect(_on_strain_gui_input.bind(C.SIDE_YOU))
 	_opp_strain.gui_input.connect(_on_strain_gui_input.bind(C.SIDE_OPP))
+	_snap_button.pressed.connect(_on_snap_pressed)
 	_emotion_log_close.pressed.connect(_close_emotion_log)
 	# Подписка на шину партии.
 	EventBus.match_started.connect(_on_match_started)
@@ -496,6 +498,10 @@ func _on_strain_gui_input(event: InputEvent, side: String) -> void:
 	else:
 		_open_emotion_log(side)
 	accept_event()
+
+
+func _on_snap_pressed() -> void:
+	controller.press_snap()
 
 
 func _on_emotion_observed(side: String, result: Dictionary) -> void:
@@ -826,6 +832,9 @@ func _update_emotion_hud() -> void:
 		_opp_strain_fill, _opp_strain_label, "ОПП", C.SIDE_OPP)
 	if _emotion_log_side != "":
 		_update_emotion_summary(_emotion_log_side)
+	# Агентная кнопка (situational_cards_v0.1 §2, §6 шаг 1): видна только пока легальна —
+	# controller.can_snap уже учитывает порог strain и cooldown, дублировать условие не нужно.
+	_snap_button.visible = controller.can_snap(C.SIDE_YOU)
 
 
 func _render_strain(state: Dictionary, bg: ColorRect, fill: ColorRect, label: Label,

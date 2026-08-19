@@ -151,6 +151,17 @@ func _pick_smart(r: RefCounted, side: String) -> Dictionary:
 
 # --------------------------------------------------------------- воля клинча ---
 
+## Эмоц. агентность (situational_cards_v0.1 §2): жать ли «Сорваться», когда уже доступно —
+## вызывающий код сам проверяет EmotionCore.can_snap раньше, здесь только решение, не
+## легальность. Smart считает риск/выгоду по счёту доски: если уже ведёт, не рискует
+## беззащитностью следующего хода ради ещё большего отрыва. Прочие стили — монетка, чтобы
+## ваниль не жгла новый мощный рычаг вслепую на каждом же делении.
+func will_snap(r: RefCounted, side: String) -> bool:
+	if String(style_of.get(side, "")) != "smart":
+		return randf() < 0.5
+	return r.score(side) <= r.score(r.other(side))
+
+
 func def_will_clinch(r: RefCounted, defender: String, line: Dictionary) -> bool:
 	if String(style_of.get(defender, "")) == "smart":
 		return _smart_def_will_clinch(r, defender, line)

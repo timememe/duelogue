@@ -448,6 +448,20 @@ func set_emotional_strain(side: String, strain: int) -> void:
 		emotional_strain[side] = maxi(0, strain)
 
 
+## Уязвимость после эмоционального срыва (situational_cards_v0.1 §2): активная рамка стороны
+## теряет защиту в клинче до начала её следующего хода (снимается в begin_turn). Отдельный
+## no_defend_temp — чтобы не путать с постоянным no_defend именной «Аксиомы» (тот не
+## снимается никогда, см. play_named и clinch_can_act). RulesCore не знает, ПОЧЕМУ рамка
+## беззащитна — вызывающий код (эмоц. слой) сам решает, когда это применить.
+func apply_snap_vulnerability(side: String) -> void:
+	var lines: Array = sides[side].lines
+	if lines.is_empty():
+		return
+	var line: Dictionary = lines[-1]
+	line.no_defend = true
+	line.no_defend_temp = true
+
+
 func emotional_instability(owner: String) -> int:
 	return int(emotional_strain.get(owner, 0))
 
@@ -650,6 +664,11 @@ func begin_turn(side: String) -> String:
 	for ln in s.lines:
 		if ln.get("braced", false):
 			ln.braced = false
+		# Эмоц. срыв (situational_cards_v0.1 §2): временная беззащитность живёт РОВНО до
+		# начала следующего хода той же стороны — тот же ритм, что у braced выше.
+		if ln.get("no_defend_temp", false):
+			ln.no_defend_temp = false
+			ln.no_defend = false
 	# Нокаут уже решён снимком в момент потери рамки; здесь — обязательный ход восстановления.
 	if s.lines.is_empty():
 		if bool(s.get("recovery_pending", false)) and not recovery_indices(side).is_empty():

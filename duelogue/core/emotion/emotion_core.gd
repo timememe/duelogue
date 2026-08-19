@@ -15,6 +15,10 @@ const MAX_STRAIN := 6
 const CHANCE_BY_STRAIN := [0.0, 0.0, 0.05, 0.15, 0.30, 0.55, 1.0]
 const CALM_PARRY_MAX := 1
 const HOT_TRIGGER_MIN := 4
+## Порог агентной кнопки «Сорваться» (situational_cards_v0.1 §2/§7.2): на 6 CHANCE_BY_STRAIN
+## уже 100% — авто-срыв неизбежен, кнопка на этом делении не добавляла бы решения, только
+## дублировала неизбежное. 5 — единственное деление, где явный выбор игрока меняет исход.
+const SNAP_THRESHOLD := 5
 
 var deck_id := ""
 var deck_label := ""
@@ -46,6 +50,7 @@ func start(deck_data: Dictionary, seed_value: int, sides: Array = ["you", "opp"]
 			"parries": 0,
 			"parry_draw": parry_draw,
 			"parry_discard": [],
+			"snaps": 0,
 		}
 
 
@@ -61,6 +66,7 @@ func state(side: String) -> Dictionary:
 			"linked_reactions": 0, "parries": 0,
 			"parries_left": 0,
 			"deck_id": deck_id, "deck_label": deck_label,
+			"can_snap": false, "snaps": 0,
 		}
 	var s: Dictionary = _states[side]
 	return {
@@ -76,6 +82,8 @@ func state(side: String) -> Dictionary:
 		"parries_left": (s.parry_draw as Array).size(),
 		"deck_id": deck_id,
 		"deck_label": deck_label,
+		"can_snap": can_snap(side),
+		"snaps": int(s.get("snaps", 0)),
 	}
 
 
@@ -111,6 +119,51 @@ func answer_reaction(side: String, context: Dictionary = {},
 		else "absorb"
 	result["parry"] = {}
 	return result
+
+
+## Доступна ли агентная кнопка «Сорваться» (situational_cards_v0.1 §2): порог strain и не
+## во время cooldown — та же защита от частокола, что у авто-реакции в observe().
+func can_snap(side: String) -> bool:
+	if not _states.has(side):
+		return false
+	var s: Dictionary = _states[side]
+	return int(s.strain) >= SNAP_THRESHOLD and int(s.cooldown) == 0
+
+
+## Гарантированный эмоциональный супер-удар по требованию игрока — сильнее любой карты
+## обычной реакционной субколоды (полный сброс шкалы, не частичный vent как у обычной
+## карты). Не решает «остаться без защиты» — тот эффект живёт в rules_core
+## (apply_snap_vulnerability), это ядро про рамки/клинч ничего не знает. {} если
+## can_snap(side) ложно (вызывающий код обязан проверить сам — гонка условий не лечится).
+## Форма возврата совпадает с observe(), чтобы драйвер мог прогнать её через тот же
+## _resolve_emotion_result без специального ветвления.
+func snap(side: String, context: Dictionary = {}) -> Dictionary:
+	if not can_snap(side):
+		return {}
+	var s: Dictionary = _states[side]
+	var before := int(s.strain)
+	s.strain = 0
+	s.cooldown = 1
+	s.snaps = int(s.get("snaps", 0)) + 1
+	var target := String(context.get("target", "эта позиция")).strip_edges()
+	if target == "":
+		target = "эта позиция"
+	var pool := [
+		"Всё. Хватит. {target} — довольно.",
+		"Да пошло оно. {target} меня больше не держит.",
+		"Сорвался. {target} — сейчас будет иначе.",
+	]
+	var text := String(pool[_rng.randi_range(0, pool.size() - 1)]).replace("{target}", target)
+	return {
+		"side": side, "stimulus": "snap",
+		"before": before, "peak": before, "after": 0, "delta": 0,
+		"chance": 1.0, "roll": 0.0,
+		"reaction": {
+			"id": "player_snap", "title": "Сорвался", "text": text, "mood": "snap",
+			"vent": before, "stimulus": "snap",
+		},
+		"cooldown": 1, "exhausted": false, "draw_left": (s.draw as Array).size(),
+	}
 
 
 ## Зарегистрировать эмоциональный стимул. roll_override ∈ [0,1] позволяет симулятору

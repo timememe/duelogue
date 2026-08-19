@@ -361,6 +361,12 @@ func emotion_state(side: String) -> Dictionary:
 	return emotion.state(side) if emotion != null else {}
 
 
+## Read-only: доступна ли агентная кнопка «Сорваться» стороне прямо сейчас
+## (situational_cards_v0.1 §2, §6 шаг 1). UI дергает это на каждый _update_emotion_hud.
+func can_snap(side: String) -> bool:
+	return emotion.can_snap(side) if emotion != null else false
+
+
 ## UI читает статусы стороны только отсюда — {id, label, polarity, durability, source,
 ## remaining_turns} на запись, см. status_rules.list_active().
 func status_list(side: String) -> Array:
@@ -662,6 +668,12 @@ func _run_until_player() -> void:
 			return
 		if model.game_over:
 			continue
+		# Эмоц. агентность (situational_cards_v0.1 §2, §6 шаг 1): проверяется РАЗ в начале
+		# хода оппонента, до обычного действия — add-on решение, не отдельный ход.
+		if emotion != null and emotion.can_snap(SIDE_OPP) and ai.will_snap(model, SIDE_OPP):
+			await _apply_snap(SIDE_OPP)
+			if my_epoch != _epoch:
+				return
 		var act: Dictionary = ai.pick(model, SIDE_OPP, _opp_style)
 		if act.is_empty():
 			model.sides[SIDE_OPP].passed = true
@@ -923,6 +935,33 @@ func cancel_targeting() -> void:
 func clinch_pass() -> void:
 	if _mode == "clinch_defend" or _mode == "clinch_attack":
 		_clinch_decided.emit({"act": "pass"})
+
+
+## Интент игрока: агентная кнопка «Сорваться» (situational_cards_v0.1 §2). Доступна в любой
+## момент своего хода, не тратит его — ход всё равно доигрывается обычной картой, это
+## add-on решение, а не отдельное действие с собственной бухгалтерией темпа.
+func press_snap() -> void:
+	if _mode != "move" or model.current != SIDE_YOU:
+		return
+	await _apply_snap(SIDE_YOU)
+
+
+## Общий путь эмоц. агентности для обеих сторон (игрок через press_snap, AI — из
+## _run_until_player). Гарантированный супер-удар ценой беззащитности следующего хода:
+## line.no_defend через rules_core.apply_snap_vulnerability — RulesCore не знает, ПОЧЕМУ
+## рамка беззащитна, только что она такая.
+func _apply_snap(side: String) -> void:
+	if emotion == null or not emotion.can_snap(side):
+		return
+	var my_epoch := _epoch
+	var result: Dictionary = emotion.snap(side, {})
+	if result.is_empty():
+		return
+	model.apply_snap_vulnerability(side)
+	await _resolve_emotion_result(result, {}, 0, "", "snap")
+	if my_epoch != _epoch:
+		return
+	_changed()
 
 
 ## Интерактивная воля клинча через стейт-API ядра. attacker инициирует разбором по defender[idx].
