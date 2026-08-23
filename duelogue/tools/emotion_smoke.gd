@@ -18,6 +18,7 @@ func _init() -> void:
 	_test_reaction_relation()
 	_test_finite_independent_decks()
 	_test_snap()
+	_test_relieve()
 	_test_extended_range_and_breakdown()
 	print("=== ИТОГ: %s ===" % ("OK" if failures == 0 else "FAIL (%d)" % failures))
 	quit(0 if failures == 0 else 1)
@@ -191,6 +192,43 @@ func _test_snap() -> void:
 
 	var again: Dictionary = core.snap("you")
 	_check(again.is_empty(), "повторный снап во время cooldown нелегален и возвращает {}")
+
+
+## emotion_reactions.md v0.5 §7 «Трение и исход»: relieve() — sibling snap() в другую сторону,
+## явное облегчение без карты/шанса/броска. Проверяет только контракт ядра; кто и почему зовёт
+## relieve() (клинч, победа) решает battle_controller, не тестируется здесь.
+func _test_relieve() -> void:
+	var empty_relief: Dictionary = EmotionCore.new().relieve("you", 3)
+	_check(empty_relief.is_empty(), "relieve() без предварительного start() возвращает {}")
+
+	var core := EmotionCore.new()
+	core.start(DefaultDeck.data(), 789, ["you", "opp"])
+	var raised: Dictionary = core.observe("you", "argument_lost", 5, {}, 0.99)
+	_check(int(raised.after) == 5 and (raised.reaction as Dictionary).is_empty(),
+		"подготовка: шкала поднята без карты (высокий roll)")
+
+	var result: Dictionary = core.relieve("you", 2)
+	_check(int(result.before) == 5 and int(result.after) == 3 and int(result.delta) == -2,
+		"relieve() снижает strain ровно на amount")
+	_check(String(result.stimulus) == "relief",
+		"relieve() без явного stimulus подписывается как relief")
+	_check((result.reaction as Dictionary).is_empty() and float(result.chance) == 0.0 and
+		float(result.roll) == -1.0, "relieve() никогда не бросает и не тянет карту")
+	_check(int(core.state("you").strain) == 3, "state() видит облегчённую шкалу")
+
+	var draw_before := int(core.state("you").draw_left)
+	var labeled: Dictionary = core.relieve("you", 1, "clinch_won")
+	_check(String(labeled.stimulus) == "clinch_won",
+		"relieve() принимает произвольный stimulus-лейбл")
+	_check(int(core.state("you").draw_left) == draw_before,
+		"relieve() не трогает реакционную колоду")
+
+	var floored: Dictionary = core.relieve("you", 999)
+	_check(int(floored.after) == 0, "relieve() не уводит strain ниже нуля")
+
+	var zero: Dictionary = core.relieve("opp", 5)
+	_check(int(zero.before) == 0 and int(zero.after) == 0,
+		"relieve() на нулевой шкале — безопасный no-op")
 
 
 ## situational_cards_v0.1 §8: шкала растянута на две зоны (самообладание/раздражение),

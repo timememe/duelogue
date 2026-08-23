@@ -184,6 +184,28 @@ func snap(side: String, context: Dictionary = {}) -> Dictionary:
 	}
 
 
+## Симметричный ответ на observe() в другую сторону: явное облегчение шкалы вместо её роста
+## (emotion_reactions.md v0.5 §7 «Трение и исход»). НЕ идёт через карту/шанс/бросок — снижение
+## чужого давления не должно уметь спровоцировать его же непроизвольный срыв, поэтому это не
+## «observe с отрицательной intensity», а отдельный примитив без риска задеть шанс/cooldown,
+## по образцу snap(). Ядро само не решает, ПОЧЕМУ сторона заслужила облегчение (клинч, приём,
+## что угодно ещё) — это знает только вызывающий код.
+func relieve(side: String, amount: int, stimulus: String = "relief") -> Dictionary:
+	if not _states.has(side):
+		return {}
+	var s: Dictionary = _states[side]
+	var before := int(s.strain)
+	var delta := clampi(amount, 0, MAX_STRAIN)
+	s.strain = maxi(0, before - delta)
+	return {
+		"side": side, "stimulus": stimulus,
+		"before": before, "peak": before, "after": int(s.strain), "delta": -delta,
+		"chance": 0.0, "roll": -1.0, "reaction": {},
+		"cooldown": int(s.cooldown), "exhausted": (s.draw as Array).is_empty(),
+		"draw_left": (s.draw as Array).size(), "breakdown": false,
+	}
+
+
 ## Зарегистрировать эмоциональный стимул. roll_override ∈ [0,1] позволяет симулятору
 ## воспроизводимо проверять политику вероятности; отрицательное значение использует RNG.
 ## Возвращает:

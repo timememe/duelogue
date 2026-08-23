@@ -1192,6 +1192,7 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 		"removed": info.get("removed", false), "stolen": info.get("stolen", false),
 		"stolen_count": info.get("stolen_count", 0),
 		"captured": info.get("captured", false),
+		"frame_redeemed": info.get("frame_redeemed", false),
 		"full_capture": info.get("full_capture", false),
 		"capture_blocked": info.get("capture_blocked", false),
 		"capture_block_reason": info.get("capture_block_reason", ""),
@@ -1257,16 +1258,44 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	_changed()
 	# Эмоция читает уже ЗАКРЫТЫЙ исход клинча и не вмешивается в его автомат. Реагирует
 	# проигравшая сторона: защитник после пробития или атакующий после неудачного дожима.
+	# v0.5 (emotion_reactions.md §7): исход больше не единственный сигнал. Победитель получает
+	# симметричное облегчение (_apply_relief), а клинч ещё и трётся по ОБЕИМ шкалам одним и
+	# тем же clinch_pressure — оба уже раздражены самим фактом клинча, даже когда один из них
+	# в итоге выигрывает.
 	var strained_side := defender if landed else attacker
+	var relieved_side := String(model.other(strained_side))
+	# Ставка трения (по запросу игрока, 2026-08-23): не бинарный «был повтор или нет», а
+	# каждые две карты клинча от самого начала (r_count считает и открывающую атаку, t_added —
+	# все успешные защиты) — один полный обмен репликами — поднимают ставку на 1. Чем дольше
+	# клинч, тем сильнее ощущаются его последствия для ОБЕИХ сторон, а не просто «затянулся».
+	# Целочисленное деление намеренно: неполный, только начатый обмен ставку ещё не поднимает.
+	var clinch_length := r_count + t_added
+	var stake := clinch_length / 2
 	var stimulus := "attack_stalled"
 	if landed:
 		stimulus = "captured" if info.get("captured", false) else \
 			("frame_lost" if info.get("removed", false) else "argument_lost")
-	var intensity := 1 + (1 if pressure_rounds > 0 else 0)
+	var relief_stimulus := "clinch_held"
+	if landed:
+		relief_stimulus = "clinch_won_capture" if info.get("captured", false) else \
+			("clinch_won_frame" if info.get("removed", false) else "clinch_won")
+	var intensity := 1
+	var relief := 1
 	if info.get("removed", false):
 		intensity += 1
+		relief += 1
 	if info.get("captured", false):
 		intensity += 1
+		relief += 1
+	# Комбо и «вернул своё» — независимые бонусные сигналы поверх обычного исхода (§7 того же
+	# духа): confirmed-тройка И instant-вердикт комбо-регистра ОБА уже определяют attacker_won
+	# до того, как этот код вообще видит landed (rules_core._finish_clinch), поэтому
+	# combo_owner здесь заведомо совпадает с relieved_side — отдельная сверка не нужна.
+	var combo_landed := String(info.get("combo_result", "none")) == "confirmed" or \
+		stop_reason == "combo_verdict"
+	# «Вернул своё»: frame_id/home_side переживают захват (rules_core._capture_frame) — редкое,
+	# сюжетно значимое событие, а не рядовая кража, поэтому усиление сильнее комбо.
+	var frame_redeemed := bool(info.get("frame_redeemed", false))
 	var cause_action := String(info.get("landing_attack_name", "")) if landed else ""
 	if cause_action == "":
 		var cause_role := "attack" if landed else "defense"
@@ -1283,17 +1312,47 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 		"outcome": stimulus,
 		"landed": landed,
 	}
-	# Осознанное «хватит» — стратегическая остановка, а не потеря самообладания. Вынужденное
-	# истощение без следующей атаки по-прежнему даёт attack_stalled.
-	if landed or stop_reason != "voluntary":
-		await _emotion_event(strained_side, stimulus, mini(3, intensity), {
-			"target": target_claim,
-			"cause_side": String(scene_cause.actor),
-			"cause_name": cause_action,
-			"cause_kind": "clinch",
-		})
+	var clinch_ctx := {
+		"target": target_claim,
+		"cause_side": String(scene_cause.actor),
+		"cause_name": cause_action,
+		"cause_kind": "clinch",
+	}
+	# Трение — про сам факт долгого клинча, не про то, кто и как его закончил, поэтому живёт
+	# ВНЕ гейта «voluntary» ниже (баг 2026-08-23: раньше трение стояло ВНУТРИ него — атакующий,
+	# добровольно остановившийся после длинного обмена, гасил трение обеим сторонам целиком,
+	# хотя карты уже были разыграны и усталость уже накопилась). Масштабируется со ставкой,
+	# allow_followups=false (цепная реакция/ситуативная карта сюда сознательно не подключены,
+	# §7), без mini(3,...) — очень долгий клинч должен быть в состоянии перевесить весь
+	# остальной сигнал сцены, не упираться в тот же потолок, что обычный хит.
+	if stake > 0:
+		await _emotion_event(strained_side, "clinch_pressure", stake, clinch_ctx, false)
 		if my_epoch != _epoch:
 			return
+		await _emotion_event(relieved_side, "clinch_pressure", stake, clinch_ctx, false)
+		if my_epoch != _epoch:
+			return
+	# Осознанное «хватит» — стратегическая остановка, а не потеря самообладания. Вынужденное
+	# истощение без следующей атаки по-прежнему даёт attack_stalled. Исход/relief/комбо/redeem
+	# — про конкретную победу-поражение ЭТОЙ атаки, поэтому здесь (в отличие от трения выше)
+	# voluntary всё ещё исключение: добровольная остановка не назначает победителя сцены.
+	if landed or stop_reason != "voluntary":
+		await _emotion_event(strained_side, stimulus, mini(3, intensity), clinch_ctx)
+		if my_epoch != _epoch:
+			return
+		_apply_relief(relieved_side, mini(3, relief), relief_stimulus)
+		if combo_landed:
+			# Риторическое комбо — не рядовой хит: применение мастерства заслуживает
+			# отдельного бонуса поверх обычного исхода, не съеденного его пределом mini(3,...).
+			await _emotion_event(strained_side, "combo_confirmed", 1, clinch_ctx, false)
+			if my_epoch != _epoch:
+				return
+			_apply_relief(relieved_side, 1, "combo_confirmed")
+		if frame_redeemed:
+			await _emotion_event(strained_side, "frame_redeemed", 2, clinch_ctx, false)
+			if my_epoch != _epoch:
+				return
+			_apply_relief(relieved_side, 2, "frame_redeemed")
 	# Содержание получает голос только у видимого исхода: падения/захвата рамки либо
 	# затяжного клинча. Одна реакция без такого исхода не назначает победителя сцены.
 	var content_visible := bool(info.get("removed", false)) \
@@ -1428,14 +1487,46 @@ func _narrate(text: String, tag: String = "") -> void:
 ## второй шкалы. Внутри цепочки доска/рука/ход model не мутируются; синхронизируется только
 ## публичный strain-read-model для будущего шатания. После всей сцены контроллер одним
 ## коммитом может передать её публичную валентность независимому AudienceCore.
+## allow_followups=false отключает цепную реакцию второй шкалы и добор ситуативной карты —
+## использует трение клинча (emotion_reactions.md v0.5 §7), которое пока обязано остаться
+## простым числовым сигналом и не открывать эти две соседние подсистемы заново.
 func _emotion_event(side: String, stimulus: String, intensity: int,
-	context: Dictionary = {}) -> Dictionary:
+	context: Dictionary = {}, allow_followups: bool = true) -> Dictionary:
 	if emotion == null:
 		return {}
 	var result: Dictionary = emotion.observe(side, stimulus, intensity, context)
 	if result.is_empty():
 		return result
-	await _resolve_emotion_result(result, context, 0, "", "event")
+	await _resolve_emotion_result(result, context, 0, "", "event", allow_followups)
+	return result
+
+
+## Sibling _emotion_event(), но в другую сторону (emotion_reactions.md v0.5 §7 «Трение и
+## исход»): явное облегчение вместо роста. Не идёт через observe()/_resolve_emotion_result —
+## relieve() не производит карту, поэтому здесь нет ни цепной реакции, ни ситуативной карты,
+## ни текстового emotion-лога (тот заточен под растущее давление — «НАПРЯГЛИСЬ», «риск N%» —
+## и читался бы бессмысленно на падающей шкале). Видимость обеспечена самим движением бара
+## (_changed()) и аурой (emotion_changed), без словесной презентации в этом первом проходе.
+func _apply_relief(side: String, amount: int, stimulus: String) -> Dictionary:
+	if emotion == null or amount <= 0:
+		return {}
+	var result: Dictionary = emotion.relieve(side, amount, stimulus)
+	if result.is_empty():
+		return result
+	_sync_emotional_instability(side)
+	var ev := {
+		"ev": "emotion", "side": side, "stimulus": stimulus,
+		"before": int(result.before), "peak": int(result.peak), "after": int(result.after),
+		"delta": int(result.delta), "chance": 0.0, "roll": -1.0, "reaction": "",
+		"reaction_title": "", "reaction_draw_left": int(result.draw_left),
+		"conduct_relative": 0, "conduct_signed": 0,
+		"link_kind": "relief", "source_side": "", "chain_depth": 0,
+	}
+	ev.merge(_econ())
+	ev.merge(_emotion_econ())
+	_emit(ev)
+	EventBus.emotion_changed.emit(side, emotion.state(side))
+	_changed()
 	return result
 
 
@@ -1474,11 +1565,11 @@ func _maybe_draw_situational_card(side: String, peak: int, context: Dictionary) 
 
 
 func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_depth: int,
-	source_side: String, link_kind: String) -> void:
+	source_side: String, link_kind: String, allow_followups: bool = true) -> void:
 	var my_epoch := _epoch
 	var side := String(result.side)
 	_sync_emotional_instability(side)
-	if not bool(result.get("breakdown", false)):
+	if allow_followups and not bool(result.get("breakdown", false)):
 		_maybe_draw_situational_card(side, int(result.get("peak", 0)), context)
 	var stimulus := String(result.stimulus)
 	var reaction: Dictionary = result.get("reaction", {})
@@ -1509,6 +1600,7 @@ func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_dept
 		"link_kind": link_kind, "source_side": source_side, "chain_depth": chain_depth,
 	}
 	ev.merge(_econ())
+	ev.merge(_emotion_econ())
 	_emit(ev)
 	EventBus.emotion_changed.emit(side, emotion.state(side))
 	_changed()
@@ -1534,7 +1626,7 @@ func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_dept
 		model.apply_emotional_breakdown(side)
 		_changed()
 		return
-	if chain_depth < MAX_REACTION_REPLIES:
+	if allow_followups and chain_depth < MAX_REACTION_REPLIES:
 		await _answer_emotional_reaction(side, context, chain_depth + 1)
 
 
@@ -1939,4 +2031,17 @@ func _econ() -> Dictionary:
 		"zal": model.zal(),
 		"you_hand": y.hand.size(), "opp_hand": o.hand.size(),
 		"you_deck": y.draw.size(), "opp_deck": o.draw.size(),
+	}
+
+
+## Честная полная динамика (2026-08-23, по запросу игрока): каждая emotion-запись лога несёт
+## снимок ОБЕИХ шкал целиком, не только before/after той стороны, что сейчас меняется —
+## иначе состояние оппонента в конкретный момент можно понять только сшивая разрозненные
+## строки вручную. Идёт поверх _econ() (тот про счёт/руку/добор), не вместо него.
+func _emotion_econ() -> Dictionary:
+	if emotion == null:
+		return {}
+	return {
+		"you_emotion": emotion.state(SIDE_YOU),
+		"opp_emotion": emotion.state(SIDE_OPP),
 	}

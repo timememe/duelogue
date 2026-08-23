@@ -551,6 +551,10 @@ func _capture_frame(attacker: String, defender: String, idx: int,
 		return {}
 	var captured: Dictionary = dl[idx]
 	info["captured_frame_id"] = _ensure_frame_id(captured)
+	# Сюжет «вернул своё» (2026-08-23, по запросу игрока): frame_id/home_side переживают
+	# захват (см. _ensure_frame_id выше), поэтому «эта рамка когда-то была моей» проверяется
+	# без отдельной механики — просто сверкой уже существующего поля ДО переноса владения.
+	info["frame_redeemed"] = String(captured.get("home_side", "")) == attacker
 	var captured_stack := _ensure_thesis_stack(captured)
 	dl.remove_at(idx)
 	if capture_loot == 1:
@@ -776,7 +780,8 @@ func play_action(side: String, type: String, target: int = -1, hand_index: int =
 			info.name = c.get("name", "")
 			if not s.lines.is_empty():
 				s.lines[-1].closed = true
-			var new_line := {"theses": 1, "closed": false, "name": info.name, "stolen": 0}
+			var new_line := {"theses": 1, "closed": false, "name": info.name, "stolen": 0,
+				"home_side": side}
 			_copy_claim(c, new_line)
 			info["frame_id"] = _ensure_frame_id(new_line)
 			s.lines.append(new_line)
@@ -886,7 +891,7 @@ func play_named(side: String, hand_index: int, target: int = -1) -> Dictionary:
 			if not s.lines.is_empty():
 				s.lines[-1].closed = true
 			var axiom_line := {"theses": 2, "closed": false, "name": String(card.name),
-				"stolen": 0, "no_defend": true}
+				"stolen": 0, "no_defend": true, "home_side": side}
 			_copy_claim(card, axiom_line)
 			info["frame_id"] = _ensure_frame_id(axiom_line)
 			s.lines.append(axiom_line)
@@ -1742,7 +1747,7 @@ func play_redeploy(side: String, hand_index: int) -> Dictionary:
 	sides[side].hand.remove_at(hand_index)
 	sides[side]["recovery_pending"] = false
 	var line := {"theses": 1, "closed": false, "name": String(card.get("name", "Рамка")),
-		"stolen": 0}
+		"stolen": 0, "home_side": side}
 	_copy_claim(card, line)
 	sides[side].lines.append(line)
 	_seed_frame_thesis(side, line)

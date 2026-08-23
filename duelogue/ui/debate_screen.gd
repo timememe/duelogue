@@ -603,6 +603,7 @@ static func _emotion_outcome_sentence(stimulus: String, target: String) -> Strin
 		"captured": return "Рамку %s увели целиком." % quoted
 		"dirty_hit": return "Прилетел грязный приём."
 		"reaction_received": return "Чужая вспышка попала в нерв."
+		"clinch_pressure": return "Клинч вокруг %s не отпускает ни одного из вас." % quoted
 		_: return ""
 
 
@@ -614,6 +615,7 @@ static func _emotion_stimulus_label(stimulus: String) -> String:
 		"captured": return "рамка захвачена"
 		"dirty_hit": return "грязный приём"
 		"reaction_received": return "чужой эмоциональный срыв"
+		"clinch_pressure": return "клинч затянулся"
 		_: return "эмоциональный импульс" if stimulus == "" else stimulus.replace("_", " ")
 
 

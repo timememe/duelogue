@@ -22,6 +22,7 @@ class ScriptedDefenseAi:
 var failures := 0
 var spoken: Array = []
 var emotion_event_calls: Array = []
+var relief_calls: Array = []
 var clinch_decisions: Array = []
 var emitted_events: Array = []
 var observed_results: Array = []
@@ -90,9 +91,13 @@ func _run_smoke() -> void:
 	start_match()
 	spoken.clear()
 	emotion_event_calls.clear()
+	relief_calls.clear()
 	# Настоящий затяжной клинч: игрок один раз защищается, AI один раз дожимает, затем
-	# защита кончается. Даже после полной пары только проигравший получает одну проверку
-	# уже закрытого исхода; mid-rally проверки сразу сделают этот счётчик > 1.
+	# защита кончается. v0.5 (emotion_reactions.md §7): исход больше не единственный сигнал —
+	# трение (clinch_pressure) теперь бьёт по ОБЕИМ шкалам РОВНО один раз после закрытия
+	# клинча (не за каждую mid-rally пару), а победитель отдельно получает relieve(). Итого
+	# проигравший получает 2 вызова _emotion_event (трение + исход), победитель — 1 вызов
+	# _emotion_event (трение) плюс отдельный relief_calls, минующий _emotion_event целиком.
 	model.sides[SIDE_YOU].hand = [
 		{"type": TYPE_TEZIS, "name": "защита"},
 	]
@@ -105,12 +110,91 @@ func _run_smoke() -> void:
 	ai = ScriptedClinchAi.new()
 	await _run_clinch(SIDE_OPP, SIDE_YOU, 0, false)
 	ai = regular_ai
-	_check(emotion_event_calls.size() == 1 and
-		String((emotion_event_calls[0] as Dictionary).side) == SIDE_YOU,
-		"затяжной клинч проверяет один раз только проигравшего после исхода")
-	_check(String((emotion_event_calls[0] as Dictionary).stimulus) in [
-		"argument_lost", "frame_lost", "captured", "attack_stalled"],
-		"проверка получает уже разрешённый исход, а не шум ралли")
+	_check(emotion_event_calls.size() == 3,
+		"затяжной клинч: трение проигравшего + трение победителя + исход, не mid-rally шум")
+	_check(String((emotion_event_calls[0] as Dictionary).side) == SIDE_YOU and
+		String((emotion_event_calls[0] as Dictionary).stimulus) == "clinch_pressure" and
+		int((emotion_event_calls[0] as Dictionary).intensity) == 1 and
+		bool((emotion_event_calls[0] as Dictionary).allow_followups) == false,
+		"трение проигравшего идёт первым, ставка 1 (r_count2+t_added1=3 карты÷2), без цепочки")
+	_check(String((emotion_event_calls[1] as Dictionary).side) == SIDE_OPP and
+		String((emotion_event_calls[1] as Dictionary).stimulus) == "clinch_pressure" and
+		int((emotion_event_calls[1] as Dictionary).intensity) == 1 and
+		bool((emotion_event_calls[1] as Dictionary).allow_followups) == false,
+		"то же ставка 1 симметрично прилетает победителю вторым — трение теперь ЦЕЛЬНЫМ блоком")
+	_check(String((emotion_event_calls[2] as Dictionary).side) == SIDE_YOU and
+		String((emotion_event_calls[2] as Dictionary).stimulus) in [
+			"argument_lost", "frame_lost", "captured", "attack_stalled"],
+		"исход идёт последним, получает уже разрешённый результат, а не шум ралли")
+	_check(relief_calls.size() == 1 and
+		String((relief_calls[0] as Dictionary).side) == SIDE_OPP and
+		int((relief_calls[0] as Dictionary).amount) > 0,
+		"победитель получает relieve() отдельным вызовом, минуя _emotion_event")
+
+	# Ставка трения градуируется, не бинарна (правка игрока, 2026-08-23): более длинный
+	# клинч — 2 полных обмена репликами против одного выше — должен трогать шкалу СИЛЬНЕЕ, а
+	# не так же. YOU: атака1 (open) + атака2 (press, после первого hold) = r_count 2. OPP:
+	# защита1 + защита2 (оба hold, YOU остаётся без карт раньше, чем у OPP) = t_added 2.
+	# clinch_length = 2+2 = 4 → ставка 4/2 = 2 (не 1, как в предыдущем, более коротком тесте).
+	start_match()
+	spoken.clear()
+	emotion_event_calls.clear()
+	relief_calls.clear()
+	model.sides[SIDE_YOU].hand = [
+		{"type": TYPE_RAZBOR, "name": "атака1", "steals": false},
+		{"type": TYPE_RAZBOR, "name": "атака2", "steals": false},
+	]
+	model.sides[SIDE_YOU].draw = []
+	model.sides[SIDE_OPP].hand = [
+		{"type": TYPE_TEZIS, "name": "защита1"},
+		{"type": TYPE_TEZIS, "name": "защита2"},
+	]
+	model.sides[SIDE_OPP].draw = []
+	clinch_decisions = [{"act": "play", "steals": false, "hand_index": 0}]
+	regular_ai = ai
+	ai = ScriptedDefenseAi.new()
+	await _run_clinch(SIDE_YOU, SIDE_OPP, 0, false, 0)
+	ai = regular_ai
+	_check(emotion_event_calls.size() == 3 and
+		String((emotion_event_calls[0] as Dictionary).stimulus) == "clinch_pressure" and
+		int((emotion_event_calls[0] as Dictionary).intensity) == 2 and
+		String((emotion_event_calls[1] as Dictionary).stimulus) == "clinch_pressure" and
+		int((emotion_event_calls[1] as Dictionary).intensity) == 2,
+		"четырёхкарточный клинч (2 полных обмена) даёт ставку трения 2 обоим, не фиксированную 1")
+
+	# «Вернул своё» (2026-08-23): не новая механика — обычная Кража, целящаяся в рамку с уже
+	# знакомым home_side. capture_mode=1 явно (не полагаемся на дефолт reset()) + однотезисная
+	# рамка держат reach=1 всегда в reach (rules_core.frame_capture_reach: capture_mode==0 →
+	# 0 навсегда, иначе однотезисные рамки всегда покрыты, порог гадать не нужно). OPP без
+	# карт в руке — начальная атака YOU landed гарантированно, никакой AI-настройки не нужно.
+	start_match()
+	spoken.clear()
+	emotion_event_calls.clear()
+	relief_calls.clear()
+	model.capture_mode = 1
+	model.sides[SIDE_OPP].lines = [
+		{"theses": 1, "closed": false, "name": "старая ваша рамка", "stolen": 0,
+			"home_side": SIDE_YOU},
+	]
+	model.sides[SIDE_YOU].hand = [
+		{"type": TYPE_RAZBOR, "name": "кража назад", "steals": true},
+	]
+	model.sides[SIDE_YOU].draw = []
+	model.sides[SIDE_OPP].hand = []
+	model.sides[SIDE_OPP].draw = []
+	await _run_clinch(SIDE_YOU, SIDE_OPP, 0, true)
+	_check(relief_calls.size() == 2 and
+		String((relief_calls[0] as Dictionary).stimulus) == "clinch_won_capture" and
+		String((relief_calls[1] as Dictionary).side) == SIDE_YOU and
+		String((relief_calls[1] as Dictionary).stimulus) == "frame_redeemed" and
+		int((relief_calls[1] as Dictionary).amount) == 2,
+		"обычный relief захвата плюс отдельный усиленный frame_redeemed победителю")
+	_check(emotion_event_calls.size() == 2 and
+		String((emotion_event_calls[0] as Dictionary).stimulus) == "captured" and
+		String((emotion_event_calls[1] as Dictionary).side) == SIDE_OPP and
+		String((emotion_event_calls[1] as Dictionary).stimulus) == "frame_redeemed" and
+		bool((emotion_event_calls[1] as Dictionary).allow_followups) == false,
+		"тот же возврат бьёт по шкале того, кто чужое не удержал, без цепочки/карты")
 
 	# Точная регрессия плейтеста: открывающая Кража погашена T лишь временно. Обычный
 	# Разбор сносит exact T в сброс (кражу он НЕ наследует), после чего перестоявшая
@@ -255,10 +339,15 @@ func _run_smoke() -> void:
 
 	# Контролируемый отход и вынужденное исчерпание выглядят одинаково на доске (защита
 	# устояла), но различаются для самоконтроля. Сохранённая атака делает «Остановиться»
-	# осознанным решением: эмоциональной проверки быть не должно.
+	# осознанным решением: исход/relief эту сцену победителем не назначают. v0.5 (баг
+	# 2026-08-23, найден по реальной игре пользователя): трение — ДРУГОЕ дело, оно живёт вне
+	# voluntary-гейта (клинч уже разыгран, карты уже потрачены, усталость уже накопилась
+	# независимо от того, что атакующий решил не продолжать) — здесь 1 обмен (2 карты) даёт
+	# ставку 1 обеим сторонам, даже когда исход/relief не срабатывают вообще.
 	start_match()
 	spoken.clear()
 	emotion_event_calls.clear()
+	relief_calls.clear()
 	model.sides[SIDE_YOU].hand = [
 		{"type": TYPE_RAZBOR, "name": "первый нажим", "steals": false},
 		{"type": TYPE_RAZBOR, "name": "сохранённый нажим", "steals": false},
@@ -271,11 +360,21 @@ func _run_smoke() -> void:
 	ai = ScriptedDefenseAi.new()
 	await _run_clinch(SIDE_YOU, SIDE_OPP, 0, false)
 	ai = regular_ai
-	_check(emotion_event_calls.is_empty(),
-		"добровольное «Остановиться» при сохранённой атаке не повышает strain")
+	_check(emotion_event_calls.size() == 2 and
+		String((emotion_event_calls[0] as Dictionary).side) == SIDE_YOU and
+		String((emotion_event_calls[1] as Dictionary).side) == SIDE_OPP and
+		String((emotion_event_calls[0] as Dictionary).stimulus) == "clinch_pressure" and
+		String((emotion_event_calls[1] as Dictionary).stimulus) == "clinch_pressure",
+		"добровольное «Остановиться» всё равно трётся (карты уже разыграны), но не назначает победителя")
+	_check(relief_calls.is_empty(),
+		"voluntary по-прежнему не даёт relief — trение здесь не про победу, только про усталость")
 
-	# Та же защита, но после первого удара атак в руке не осталось: автомат клинча
-	# помечает exhausted, а контроллер единожды отправляет attack_stalled проигравшему.
+	# Та же защита, но после первого удара атак в руке не осталось: автомат клинча помечает
+	# exhausted, контроллер отправляет attack_stalled проигравшему. v0.5 (правка игрока,
+	# градуированное трение): 1 атака + 1 успешная защита — ровно один полный обмен репликами,
+	# r_count(1)+t_added(1)=2 карты → ставка 1 — уже пересекает порог, трение больше не нулевое
+	# на этом сценарии, в отличие от прежней pressure_rounds-версии (там нужен был ПОВТОРНЫЙ
+	# нажим, а тут клинч кончается после первого же обмена).
 	start_match()
 	spoken.clear()
 	emotion_event_calls.clear()
@@ -290,10 +389,15 @@ func _run_smoke() -> void:
 	ai = ScriptedDefenseAi.new()
 	await _run_clinch(SIDE_YOU, SIDE_OPP, 0, false)
 	ai = regular_ai
-	_check(emotion_event_calls.size() == 1 and
+	_check(emotion_event_calls.size() == 3 and
 		String((emotion_event_calls[0] as Dictionary).side) == SIDE_YOU and
-		String((emotion_event_calls[0] as Dictionary).stimulus) == "attack_stalled",
-		"вынужденное исчерпание атаки даёт ровно одну проверку attack_stalled")
+		String((emotion_event_calls[0] as Dictionary).stimulus) == "clinch_pressure" and
+		int((emotion_event_calls[0] as Dictionary).intensity) == 1 and
+		String((emotion_event_calls[1] as Dictionary).side) == SIDE_OPP and
+		String((emotion_event_calls[1] as Dictionary).stimulus) == "clinch_pressure" and
+		String((emotion_event_calls[2] as Dictionary).side) == SIDE_YOU and
+		String((emotion_event_calls[2] as Dictionary).stimulus) == "attack_stalled",
+		"один обмен (2 карты) даёт ставку трения 1 обеим сторонам первым блоком, потом attack_stalled")
 
 	# Кнопка «Сорваться» через контроллер (situational_cards_v0.1 §2, §6 шаг 1): полный шов
 	# emotion.snap → rules_core.apply_snap_vulnerability → _resolve_emotion_result.
@@ -373,9 +477,15 @@ func _say(side: String, text: String, tag: String = "", card_type: String = "",
 
 
 func _emotion_event(side: String, stimulus: String, intensity: int,
-	context: Dictionary = {}) -> Dictionary:
-	emotion_event_calls.append({"side": side, "stimulus": stimulus, "intensity": intensity})
-	return await super._emotion_event(side, stimulus, intensity, context)
+	context: Dictionary = {}, allow_followups: bool = true) -> Dictionary:
+	emotion_event_calls.append({"side": side, "stimulus": stimulus, "intensity": intensity,
+		"allow_followups": allow_followups})
+	return await super._emotion_event(side, stimulus, intensity, context, allow_followups)
+
+
+func _apply_relief(side: String, amount: int, stimulus: String) -> Dictionary:
+	relief_calls.append({"side": side, "amount": amount, "stimulus": stimulus})
+	return super._apply_relief(side, amount, stimulus)
 
 
 func _ask_clinch(_mode_name: String) -> Dictionary:
