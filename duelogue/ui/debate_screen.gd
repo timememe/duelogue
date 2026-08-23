@@ -839,13 +839,27 @@ func _update_emotion_hud() -> void:
 
 func _render_strain(state: Dictionary, bg: ColorRect, fill: ColorRect, label: Label,
 	who: String, side: String) -> void:
-	var maximum := maxi(1, int(state.get("max", 6)))
+	var maximum := maxi(1, int(state.get("max", 12)))
 	var strain := clampi(int(state.get("strain", 0)), 0, maximum)
-	var t := float(strain) / float(maximum)
-	var height := bg.size.y * t
+	# ХП-бар, не счётчик урона: полный при strain=0 (полное самообладание), пустой при
+	# strain=maximum (эмоц. КО). Раньше столб рос ВМЕСТЕ со strain — визуально читалось как
+	# «чем спокойнее, тем меньше видно», обратное тому, как любой health-бар работает в
+	# любой игре. Заливка/высота и цвет ниже читают одно и то же hp.
+	var hp := float(maximum - strain) / float(maximum)
+	var height := bg.size.y * hp
 	fill.size = Vector2(bg.size.x, height)
 	fill.position = Vector2(bg.position.x, bg.position.y + bg.size.y - height)
-	fill.color = Color.html("#d8b04a").lerp(Color.html("#ef4b4b"), t)
+	var zone_width := maxi(1, maximum / 2)
+	# Классический ХП-градиент зелёный→жёлтый→красный по hp (не по сырому strain — тогда
+	# жёлтая середина сама совпадает со швом самообладание/раздражение на hp=0.5, отдельно
+	# размечать шов цветом не нужно).
+	var col_green := Color.html("#4caf50")
+	var col_yellow := Color.html("#f2c94c")
+	var col_red := Color.html("#ef4b4b")
+	if hp >= 0.5:
+		fill.color = col_yellow.lerp(col_green, (hp - 0.5) * 2.0)
+	else:
+		fill.color = col_red.lerp(col_yellow, hp * 2.0)
 	var status := "СРЫВ %d%%" % roundi(float(state.get("chance", 0.0)) * 100.0)
 	if int(state.get("draw_left", 0)) <= 0:
 		status = "ПУСТО"
@@ -854,7 +868,10 @@ func _render_strain(state: Dictionary, bg: ColorRect, fill: ColorRect, label: La
 	var reach := int(model.frame_capture_reach(side))
 	if reach >= 2:
 		status += " · ШАТ.≤%d" % reach
-	label.text = "%s\n%d/%d\n%s" % [who, strain, maximum, status]
+	var irritation := int(state.get("irritation", 0))
+	var zone_line := "РАЗДРАЖЕНИЕ %d/%d" % [irritation, zone_width] if irritation > 0 else \
+		"САМООБЛАДАНИЕ %d/%d" % [int(state.get("composure", zone_width)), zone_width]
+	label.text = "%s\n%s\n%s" % [who, zone_line, status]
 
 
 func _update_status_hud() -> void:

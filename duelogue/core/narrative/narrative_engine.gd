@@ -847,10 +847,13 @@ func resolve_text(landed: bool, removed: bool, claim: String, stolen: int, def_h
 	return s
 
 
-func verdict_text(winner_side: String, reason: String, you_label: String, opp_label: String) -> String:
+func verdict_text(winner_side: String, reason: String, you_label: String, opp_label: String,
+	cause: String = "") -> String:
 	var tail := ""
 	match reason:
-		"knockout": tail = "нокаут — оппоненту нечем крыть"
+		"knockout":
+			tail = "эмоциональный срыв — не выдержал и покинул дебаты" if cause == "emotional" \
+				else "нокаут — оппоненту нечем крыть"
 		"crowd": tail = "зал уведён — овация, проигравшего уже не слушают"
 		"decision": tail = "решение по залу"
 		"draw": tail = "зал замер ровно"

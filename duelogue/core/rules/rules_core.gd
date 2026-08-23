@@ -30,6 +30,10 @@ var current := SIDE_YOU
 var game_over := false
 var winner := ""           ## SIDE_YOU | SIDE_OPP | "" (ничья)
 var end_reason := ""       ## "knockout" | "decision" | "draw"
+## Уточняет причину "knockout" только для текста вердикта (situational_cards_v0.1 §8 п.5) —
+## "board" — обычный нокаут доски, "emotional" — эмоц. КО переиспользует тот же end_reason
+## без счётной/скоринговой разницы. Не читается ни зачем, кроме verdict_text().
+var ko_cause := ""
 var turn_count := 0
 var hand_size := DEFAULT_HAND
 ## Лекарство 1 (card advantage): Кража — отдельная карта-атака. Забирает снятый тезис в
@@ -166,6 +170,7 @@ func reset(
 	game_over = false
 	winner = ""
 	end_reason = ""
+	ko_cause = ""
 	turn_count = 0
 	current = first_side
 	sides = {
@@ -462,6 +467,29 @@ func apply_snap_vulnerability(side: String) -> void:
 	line.no_defend_temp = true
 
 
+## Эмоц. КО (situational_cards_v0.1 §8): раздражение владельца дошло до потолка шкалы →
+## сторона покидает дебаты. Переиспользует канал нокаута доски (end_reason="knockout",
+## §8 п.5 — самый дешёвый первый проход, не отдельная 5-я категория исхода) — score/verdict
+## код не меняется, ko_cause различает причину только для текста вердикта. side — та
+## сторона, что сорвалась (проигравшая); победитель — вторая сторона.
+func apply_emotional_breakdown(side: String) -> void:
+	if game_over:
+		return
+	ko_cause = "emotional"
+	_finish(other(side), "knockout")
+
+
+## Эмоц. карта из отдельного пула (situational_cards.gd, situational_cards_v0.1 §2) — эта
+## функция ничего не знает о триггере/содержании, только кладёт уже готовую карту в руку.
+## Вызывающий код (battle_controller) обязан сам проверить SituationalCards.is_holding()
+## и непустоту card ДО вызова — гонка условий не лечится здесь, тот же контракт, что у
+## can_snap()/snap() выше.
+func insert_situational_card(side: String, card: Dictionary) -> void:
+	if card.is_empty():
+		return
+	sides[side].hand.append(card)
+
+
 func emotional_instability(owner: String) -> int:
 	return int(emotional_strain.get(owner, 0))
 
@@ -590,6 +618,7 @@ func _snapshot_last_frame_loss(side: String, info: Dictionary) -> void:
 		return
 	if ready <= 0:
 		info["knockout"] = true
+		ko_cause = "board"
 		_finish(other(side), "knockout")
 		return
 	for card in sides[side].hand:
@@ -669,6 +698,20 @@ func begin_turn(side: String) -> String:
 		if ln.get("no_defend_temp", false):
 			ln.no_defend_temp = false
 			ln.no_defend = false
+	# Эмоц. карта в руке (situational_cards_v0.1 §2): живёт минимум один полный begin_turn
+	# владельца, потом тает, если не разыграна. Двухступенчато (не как braced/no_defend_temp
+	# выше) — карту может положить стимул НА ХОДУ ОППОНЕНТА, поэтому одноступенчатый сброс
+	# на "следующем begin_turn владельца" стёр бы её раньше, чем владелец вообще увидел свой
+	# ход. fresh=true → false на первом begin_turn после появления (карта остаётся на весь
+	# этот ход); fresh уже false → удаляется (пережила один полный ход и не была сыграна).
+	for i in range(s.hand.size() - 1, -1, -1):
+		var card: Dictionary = s.hand[i]
+		if not bool(card.get("situational_emotion", false)):
+			continue
+		if bool(card.get("situational_fresh", false)):
+			card.situational_fresh = false
+		else:
+			s.hand.remove_at(i)
 	# Нокаут уже решён снимком в момент потери рамки; здесь — обязательный ход восстановления.
 	if s.lines.is_empty():
 		if bool(s.get("recovery_pending", false)) and not recovery_indices(side).is_empty():

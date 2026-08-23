@@ -88,6 +88,7 @@ func evaluate(model: RefCounted, audience: Dictionary, emotions: Dictionary,
 		},
 		"winner": winner,
 		"reason": reason,
+		"ko_cause": String(model.ko_cause),
 		"decisive_source": decisive_source,
 		"mode": mode,
 		"formula": formula,
@@ -110,6 +111,9 @@ func verdict_text(report: Dictionary, you_label: String, opp_label: String) -> S
 	var winner := String(report.get("winner", "draw"))
 	if String(report.get("reason", "")) == "knockout" and winner != "draw":
 		var knockout_label := you_label if winner == SIDE_YOU else opp_label
+		if String(report.get("ko_cause", "")) == "emotional":
+			return "Эмоциональный срыв. Побеждает «%s»: у соперника кончилось самообладание — дебаты покинуты." % [
+				knockout_label]
 		var fallen_side := "последняя рамка оппонента" if winner == SIDE_YOU else \
 			"ваша последняя рамка"
 		return "Нокаут. Побеждает «%s»: %s выбита, а запасной рамки в руке не оказалось." % [

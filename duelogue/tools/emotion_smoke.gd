@@ -18,6 +18,7 @@ func _init() -> void:
 	_test_reaction_relation()
 	_test_finite_independent_decks()
 	_test_snap()
+	_test_extended_range_and_breakdown()
 	print("=== ИТОГ: %s ===" % ("OK" if failures == 0 else "FAIL (%d)" % failures))
 	quit(0 if failures == 0 else 1)
 
@@ -80,15 +81,23 @@ func _test_state_and_reaction() -> void:
 	_check(String(reaction.text).find("{target}") < 0, "контекстный слот заполнен")
 	_check(int(core.state("you").reactions) == 1, "счётчик реакций обновлён")
 
-	var cooled: Dictionary = core.observe("you", "argument_lost", 3, {}, 0.0)
+	# Большая intensity гарантированно упирается в cooldown-потолок (MAX_STRAIN-1) независимо
+	# от того, сколько именно vent снял предыдущий вытянутый card — тот же приём, что раньше
+	# работал на масштабе 0..6, просто пересчитан под расширенный диапазон (§8).
+	var cooled: Dictionary = core.observe("you", "argument_lost", EmotionCore.MAX_STRAIN, {}, 0.0)
 	_check((cooled.reaction as Dictionary).is_empty(),
 		"cooldown защищает от частокола реакций даже при roll=0")
 	_check(int(cooled.peak) < EmotionCore.MAX_STRAIN,
-		"во время cooldown шкала не показывает ложные 6/6")
-	var after_cooldown: Dictionary = core.observe("you", "clinch_pressure", 1, {}, 0.0)
-	_check(int(after_cooldown.peak) == EmotionCore.MAX_STRAIN and
-		not (after_cooldown.reaction as Dictionary).is_empty(),
-		"после разрядки достижение 6/6 снова гарантирует реакцию")
+		"во время cooldown шкала не показывает ложный потолок")
+	_check(int(cooled.peak) == EmotionCore.MAX_STRAIN - 1,
+		"cooldown-потолок держит строго на MAX_STRAIN-1")
+	# intensity=0: чистая проверка «шанс уже гарантирован» без риска зацепить breakdown
+	# (potolok+1 читался бы как КО, а не как обычная гарантированная реакция).
+	var after_cooldown: Dictionary = core.observe("you", "clinch_pressure", 0, {}, 0.0)
+	_check(int(after_cooldown.peak) == EmotionCore.MAX_STRAIN - 1 and
+		not (after_cooldown.reaction as Dictionary).is_empty() and
+		not bool(after_cooldown.breakdown),
+		"после разрядки достижение горячей зоны снова гарантирует обычную реакцию, не КО")
 
 
 func _test_reaction_relation() -> void:
@@ -182,6 +191,56 @@ func _test_snap() -> void:
 
 	var again: Dictionary = core.snap("you")
 	_check(again.is_empty(), "повторный снап во время cooldown нелегален и возвращает {}")
+
+
+## situational_cards_v0.1 §8: шкала растянута на две зоны (самообладание/раздражение),
+## КО на потолке. Проверяет расширенный диапазон, шов-без-стены и терминальный breakdown.
+func _test_extended_range_and_breakdown() -> void:
+	_check(EmotionCore.MAX_STRAIN == 12 and EmotionCore.ZONE_WIDTH == 6,
+		"шкала растянута на 12 при ширине зоны 6")
+	var curve := EmotionCore.new()
+	for strain in range(EmotionCore.ZONE_WIDTH, EmotionCore.MAX_STRAIN + 1):
+		_check(curve.chance_for(strain) == 1.0,
+			"раздражение держит гарантированный триггер на strain %d" % strain)
+
+	var core := EmotionCore.new()
+	core.start(DefaultDeck.data(), 2026, ["you", "opp"])
+	var mid: Dictionary = core.observe("you", "argument_lost", 4, {}, 1.0)
+	_check(int(mid.peak) == 4 and not bool(mid.breakdown), "на 4/12 срыва ещё нет")
+	var mid_state := core.state("you")
+	_check(int(mid_state.composure) == 2 and int(mid_state.irritation) == 0,
+		"4/12 читается как самообладание 2/6")
+
+	var spill: Dictionary = core.observe("you", "argument_lost", 5, {}, 1.0)
+	_check(int(spill.peak) == 9 and not bool(spill.breakdown),
+		"один стимул перепрыгивает шов из самообладания в раздражение за шаг")
+	var spill_state := core.state("you")
+	_check(int(spill_state.composure) == 0 and int(spill_state.irritation) == 3,
+		"9/12 читается как раздражение 3/6")
+
+	var relief: Dictionary = core.observe("you", "reaction_received", 0, {}, 0.0)
+	_check(not (relief.reaction as Dictionary).is_empty() and int(relief.after) < int(relief.peak),
+		"гарантированная реакция вентит раздражение так же, как самообладание")
+	var relief_state := core.state("you")
+	if int(relief_state.strain) <= EmotionCore.ZONE_WIDTH:
+		_check(int(relief_state.irritation) == 0,
+			"вент увёл достаточно глубоко — раздражение снова 0")
+	else:
+		_check(int(relief_state.irritation) < 3, "вент хотя бы частично отступил из раздражения")
+
+	var brink := EmotionCore.new()
+	brink.start(DefaultDeck.data(), 2027, ["you", "opp"])
+	brink.observe("you", "argument_lost", 6, {}, 1.0)
+	brink.observe("you", "argument_lost", 5, {}, 1.0)
+	var ko: Dictionary = brink.observe("you", "argument_lost", 1, {}, 1.0)
+	_check(bool(ko.breakdown) and int(ko.peak) == EmotionCore.MAX_STRAIN,
+		"12/12 раздражения — гарантированный эмоц. КО")
+	_check(int(ko.after) == EmotionCore.MAX_STRAIN,
+		"на КО шкала остаётся на потолке — вентить уже нечего")
+	_check(not (ko.reaction as Dictionary).is_empty() and
+		String((ko.reaction as Dictionary).mood) == "breakdown",
+		"КО возвращает терминальную реплику, а не обычную карту")
+	_check(bool(brink.state("you").breakdown), "state() тоже видит breakdown=true")
 
 
 func _check(ok: bool, label: String) -> void:

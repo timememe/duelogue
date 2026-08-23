@@ -20,6 +20,7 @@ const NarEngine := preload("res://duelogue/core/narrative/narrative_engine.gd")
 const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 const EmotionCore := preload("res://duelogue/core/emotion/emotion_core.gd")
 const DefaultReactions := preload("res://duelogue/core/emotion/reaction_decks/volatile_default.gd")
+const SituationalCards := preload("res://duelogue/core/cards/situational_cards.gd")
 const StatusRules := preload("res://duelogue/core/status/status_rules.gd")
 const ZalStatusBridge := preload("res://duelogue/core/status/zal_status_bridge.gd")
 const AudienceCore := preload("res://duelogue/core/audience/audience_core.gd")
@@ -79,6 +80,7 @@ var model: RefCounted
 var nar: RefCounted
 var ai: RefCounted
 var emotion: RefCounted
+var situational: RefCounted  ## эмоц. карты в руку (situational_cards_v0.1 §2, второй абзац)
 ## Пилот статусов/перков (core/status/, брейншторм-сессия): {side: [record, ...]}, только
 ## зал подключён как коннектор пока. Читается только через status_list() ниже — UI не трогает
 ## StatusRules напрямую.
@@ -130,6 +132,7 @@ func _ready() -> void:
 	nar = NarEngine.new()
 	ai = Ai.new()
 	emotion = EmotionCore.new()
+	situational = SituationalCards.new()
 	audience = AudienceCore.new()
 	outcome = OutcomeEvaluator.new()
 	_theme_data = ThemeLibrary.get_active_theme_data()
@@ -361,10 +364,19 @@ func emotion_state(side: String) -> Dictionary:
 	return emotion.state(side) if emotion != null else {}
 
 
+## Кнопка временно спрятана из игры (2026-08-20, situational_cards_v0.1 §8 п.4): механика
+## (emotion_core.can_snap/snap, apply_snap_vulnerability, ai.will_snap, _apply_snap)
+## остаётся целой и протестированной — просто не запускается автономно (кнопка, AI-ветка),
+## пока не решена её роль рядом с новой шкалой самообладание/раздражение. Один тумблер
+## вместо разбора кода, если решение будет «вернуть как есть». _apply_snap() САМ не
+## гейтится — emotion_controller_smoke.gd продолжает бить по механике напрямую.
+const SNAP_FEATURE_ENABLED := false
+
+
 ## Read-only: доступна ли агентная кнопка «Сорваться» стороне прямо сейчас
 ## (situational_cards_v0.1 §2, §6 шаг 1). UI дергает это на каждый _update_emotion_hud.
 func can_snap(side: String) -> bool:
-	return emotion.can_snap(side) if emotion != null else false
+	return SNAP_FEATURE_ENABLED and emotion != null and emotion.can_snap(side)
 
 
 ## UI читает статусы стороны только отсюда — {id, label, polarity, durability, source,
@@ -548,6 +560,7 @@ func start_match() -> void:
 	_log.match_id = match_id
 	nar.start(_theme_data, match_id, {"you": "contra", "opp": "pro"})
 	emotion.start(DefaultReactions.data(), match_id ^ 0x5EED, [SIDE_YOU, SIDE_OPP])
+	situational.start(match_id ^ 0x51DE, [SIDE_YOU, SIDE_OPP])
 	_sync_emotional_instability()
 	status_state = StatusRules.new_state()
 	_debug_seed_statuses()
@@ -670,7 +683,8 @@ func _run_until_player() -> void:
 			continue
 		# Эмоц. агентность (situational_cards_v0.1 §2, §6 шаг 1): проверяется РАЗ в начале
 		# хода оппонента, до обычного действия — add-on решение, не отдельный ход.
-		if emotion != null and emotion.can_snap(SIDE_OPP) and ai.will_snap(model, SIDE_OPP):
+		if SNAP_FEATURE_ENABLED and emotion != null and emotion.can_snap(SIDE_OPP) \
+				and ai.will_snap(model, SIDE_OPP):
 			await _apply_snap(SIDE_OPP)
 			if my_epoch != _epoch:
 				return
@@ -941,7 +955,7 @@ func clinch_pass() -> void:
 ## момент своего хода, не тратит его — ход всё равно доигрывается обычной картой, это
 ## add-on решение, а не отдельное действие с собственной бухгалтерией темпа.
 func press_snap() -> void:
-	if _mode != "move" or model.current != SIDE_YOU:
+	if not SNAP_FEATURE_ENABLED or _mode != "move" or model.current != SIDE_YOU:
 		return
 	await _apply_snap(SIDE_YOU)
 
@@ -1338,7 +1352,7 @@ func _show_end() -> void:
 	if String(report.get("mode", "")) == "legacy":
 		verdict = nar.verdict_text(
 			("you" if model.winner == SIDE_YOU else ("opp" if model.winner == SIDE_OPP else "")),
-			reason, nar.stance_label(SIDE_YOU), nar.stance_label(SIDE_OPP))
+			reason, nar.stance_label(SIDE_YOU), nar.stance_label(SIDE_OPP), String(model.ko_cause))
 	else:
 		verdict = outcome.verdict_text(report, nar.stance_label(SIDE_YOU),
 			nar.stance_label(SIDE_OPP))
@@ -1436,11 +1450,36 @@ func _sync_emotional_instability(side: String = "") -> void:
 			int(emotion.state(String(current_side)).get("strain", 0)))
 
 
+## Эмоц. карта в руку (situational_cards_v0.1 §2, второй абзац): по значению шкалы, не по
+## броску — детерминированно, в отличие от неконтролируемых авто-реакций (observe()). Читает
+## peak САМОГО этого события, не текущий (уже возможно провентленный тем же вызовом) strain —
+## иначе сторона, чей всплеск тут же погасила собственная авто-реакция, никогда не получила
+## бы карту, хотя формально "дошла" до горячей зоны. HOT_TRIGGER_MIN — та же граница, что уже
+## маркирует "горячую" зону для ответных срывов (emotion_core.answer_reaction) — не изобретаю
+## новое число. Не более одной неразыгранной карты в руке одновременно (SituationalCards.
+## HOLD_LIMIT).
+func _maybe_draw_situational_card(side: String, peak: int, context: Dictionary) -> void:
+	if situational == null or emotion == null or model == null:
+		return
+	if peak < EmotionCore.HOT_TRIGGER_MIN:
+		return
+	if SituationalCards.is_holding(model.sides[side].hand):
+		return
+	var card: Dictionary = situational.draw(side, String(context.get("target", "")))
+	if card.is_empty():
+		return
+	model.insert_situational_card(side, card)
+	EventBus.emotion_changed.emit(side, emotion.state(side))
+	_changed()
+
+
 func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_depth: int,
 	source_side: String, link_kind: String) -> void:
 	var my_epoch := _epoch
 	var side := String(result.side)
 	_sync_emotional_instability(side)
+	if not bool(result.get("breakdown", false)):
+		_maybe_draw_situational_card(side, int(result.get("peak", 0)), context)
 	var stimulus := String(result.stimulus)
 	var reaction: Dictionary = result.get("reaction", {})
 	var conduct := {"relative": 0, "signed": 0}
@@ -1490,6 +1529,10 @@ func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_dept
 			"conduct_signed": int(conduct.signed),
 		})
 	if my_epoch != _epoch:
+		return
+	if bool(result.get("breakdown", false)):
+		model.apply_emotional_breakdown(side)
+		_changed()
 		return
 	if chain_depth < MAX_REACTION_REPLIES:
 		await _answer_emotional_reaction(side, context, chain_depth + 1)

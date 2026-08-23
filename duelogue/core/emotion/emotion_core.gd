@@ -1,6 +1,6 @@
 extends RefCounted
 
-## DUELOGUE — ЧИСТОЕ ЯДРО ЭМОЦИОНАЛЬНОГО НАПРЯЖЕНИЯ v0.2.
+## DUELOGUE — ЧИСТОЕ ЯДРО ЭМОЦИОНАЛЬНОГО НАПРЯЖЕНИЯ v0.3.
 ##
 ## Вход: уже разрешённый боевой stimulus + интенсивность. Выход: новое состояние шкалы и,
 ## возможно, одна карта из конечной субколоды реакций. Ядро НЕ знает о теме, картах основной
@@ -10,9 +10,20 @@ extends RefCounted
 ## У каждой стороны своя шкала и своя копия одной data-колоды. Срыв вероятностный, но
 ## телеграфируемый шкалой; после реакции напряжение разряжается, карта уходит в сброс,
 ## следующая эмоциональная проверка защищена cooldown — частокол реплик не возникает.
+##
+## v0.3 (situational_cards_v0.1 §8): шкала растянута на две зоны шириной ZONE_WIDTH —
+## самообладание (0..ZONE_WIDTH, падает к нулю) и раздражение (ZONE_WIDTH..MAX_STRAIN,
+## растёт к КО). Шов не стена: один стимул/вент пересекает его за шаг (см. state().composure/
+## irritation). observe() на peak>=MAX_STRAIN возвращает breakdown=true вместо обычной
+## реакции — сторона выходит из боя, внешний код (rules_core/battle_controller) читает флаг
+## и завершает партию; ядро по-прежнему только репортит факт, не применяет последствие само.
 
-const MAX_STRAIN := 6
-const CHANCE_BY_STRAIN := [0.0, 0.0, 0.05, 0.15, 0.30, 0.55, 1.0]
+const ZONE_WIDTH := 6
+const MAX_STRAIN := ZONE_WIDTH * 2
+## Первые 7 значений (0..ZONE_WIDTH) — исходная кривая до v0.3. 7..MAX_STRAIN (раздражение)
+## держатся плоско на 100% (§8 п.1: отдельная кривая внутри раздражения — сложность без
+## явной цели, править по плейтесту).
+const CHANCE_BY_STRAIN := [0.0, 0.0, 0.05, 0.15, 0.30, 0.55, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 const CALM_PARRY_MAX := 1
 const HOT_TRIGGER_MIN := 4
 ## Порог агентной кнопки «Сорваться» (situational_cards_v0.1 §2/§7.2): на 6 CHANCE_BY_STRAIN
@@ -67,6 +78,7 @@ func state(side: String) -> Dictionary:
 			"parries_left": 0,
 			"deck_id": deck_id, "deck_label": deck_label,
 			"can_snap": false, "snaps": 0,
+			"composure": ZONE_WIDTH, "irritation": 0, "breakdown": false,
 		}
 	var s: Dictionary = _states[side]
 	return {
@@ -84,6 +96,9 @@ func state(side: String) -> Dictionary:
 		"deck_label": deck_label,
 		"can_snap": can_snap(side),
 		"snaps": int(s.get("snaps", 0)),
+		"composure": maxi(0, ZONE_WIDTH - int(s.strain)),
+		"irritation": maxi(0, int(s.strain) - ZONE_WIDTH),
+		"breakdown": int(s.strain) >= MAX_STRAIN,
 	}
 
 
@@ -106,6 +121,7 @@ func answer_reaction(side: String, context: Dictionary = {},
 			"before": strain, "peak": strain, "after": strain, "delta": 0,
 			"chance": 0.0, "roll": -1.0, "reaction": {}, "parry": parry,
 			"cooldown": int(s.cooldown), "draw_left": (s.draw as Array).size(),
+			"breakdown": false,
 		}
 	if strain < HOT_TRIGGER_MIN or int(s.cooldown) > 0:
 		return {
@@ -113,6 +129,7 @@ func answer_reaction(side: String, context: Dictionary = {},
 			"before": strain, "peak": strain, "after": strain, "delta": 0,
 			"chance": 0.0, "roll": -1.0, "reaction": {}, "parry": {},
 			"cooldown": int(s.cooldown), "draw_left": (s.draw as Array).size(),
+			"breakdown": false,
 		}
 	var result := observe(side, "reaction_received", 1, context, roll_override)
 	result["kind"] = "trigger" if not (result.get("reaction", {}) as Dictionary).is_empty() \
@@ -163,6 +180,7 @@ func snap(side: String, context: Dictionary = {}) -> Dictionary:
 			"vent": before, "stimulus": "snap",
 		},
 		"cooldown": 1, "exhausted": false, "draw_left": (s.draw as Array).size(),
+		"breakdown": false,
 	}
 
 
@@ -184,6 +202,8 @@ func observe(side: String, stimulus: String, intensity: int = 1,
 	var cap := MAX_STRAIN - 1 if was_cooling else MAX_STRAIN
 	s.strain = clampi(before + delta, 0, cap)
 	var peak := int(s.strain)
+	if peak >= MAX_STRAIN:
+		return _breakdown_result(s, side, stimulus, before, peak, context)
 	var chance := 0.0 if was_cooling else chance_for(peak)
 	if was_cooling:
 		s.cooldown = int(s.cooldown) - 1
@@ -215,6 +235,36 @@ func observe(side: String, stimulus: String, intensity: int = 1,
 		"cooldown": int(s.cooldown),
 		"exhausted": (s.draw as Array).is_empty(),
 		"draw_left": (s.draw as Array).size(),
+		"breakdown": false,
+	}
+
+
+## Раздражение достигло потолка (situational_cards_v0.1 §8): вместо обычной карты из
+## `_deck_cards` — терминальная реплика ухода, шкала остаётся на MAX_STRAIN (нечего вентить,
+## партия заканчивается), roll/chance выставлены в 1.0/0.0 по образцу snap() — тоже
+## гарантированный, не вероятностный исход. Внешний код читает breakdown=true и завершает
+## партию сам (rules_core.apply_emotional_breakdown) — это ядро только репортит факт.
+func _breakdown_result(s: Dictionary, side: String, stimulus: String, before: int, peak: int,
+	context: Dictionary) -> Dictionary:
+	var target := String(context.get("target", "эта позиция")).strip_edges()
+	if target == "":
+		target = "эта позиция"
+	var pool := [
+		"Не могу больше. {target} — с меня хватит, я ухожу.",
+		"Всё, дальше без меня. {target} пусть остаётся как есть.",
+		"Это конец. {target} я больше не тяну.",
+	]
+	var text := String(pool[_rng.randi_range(0, pool.size() - 1)]).replace("{target}", target)
+	return {
+		"side": side, "stimulus": stimulus,
+		"before": before, "peak": peak, "after": peak, "delta": peak - before,
+		"chance": 1.0, "roll": 0.0,
+		"reaction": {
+			"id": "emotional_breakdown", "title": "Психанул", "text": text, "mood": "breakdown",
+			"vent": 0, "stimulus": stimulus,
+		},
+		"cooldown": int(s.cooldown), "exhausted": (s.draw as Array).is_empty(),
+		"draw_left": (s.draw as Array).size(), "breakdown": true,
 	}
 
 
