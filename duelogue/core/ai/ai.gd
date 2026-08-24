@@ -276,6 +276,11 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 	# просто читаем то, что ядро и так возвращает, ничего в ядре не меняя.
 	var combo_log: Array = []
 	var clinches := 0
+	# Сырые факты каждого клинча для баланс-симов трения/исхода/облегчения
+	# (emotion_reactions.md v0.5 §7) — сама формула живёт в battle_controller._run_clinch,
+	# здесь только данные, которых ей достаточно, чтобы её воспроизвести пост-фактум без
+	# запуска EmotionCore/BattleController (ai.simulate() работает на голом RulesCore).
+	var clinches_info: Array = []
 	while not r.game_over and guard < max_turns:
 		guard += 1
 		var st: String = r.begin_turn(r.current)
@@ -319,8 +324,18 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 			clinches += 1
 			var clinch_result: Dictionary = _auto_resolve(r, r.current, r.other(r.current),
 				int(act.get("target", -1)), named_i)
-			combo_log.append_array(
-				(clinch_result.get("info", {}) as Dictionary).get("combo_events", []))
+			var c_info: Dictionary = clinch_result.get("info", {})
+			combo_log.append_array(c_info.get("combo_events", []))
+			clinches_info.append({
+				"t_added": int(clinch_result.get("t_added", 0)),
+				"r_count": int(clinch_result.get("r_count", 1)),
+				"landed": bool(clinch_result.get("landed", false)),
+				"stop_reason": String(clinch_result.get("stop_reason", "")),
+				"removed": bool(c_info.get("removed", false)),
+				"captured": bool(c_info.get("captured", false)),
+				"combo_result": String(c_info.get("combo_result", "none")),
+				"frame_redeemed": bool(c_info.get("frame_redeemed", false)),
+			})
 			action_kind = "clinch"
 		else:
 			var action_info: Dictionary = r.play_action(r.current, act.type, act.get("target", -1))
@@ -345,6 +360,7 @@ func simulate(r: RefCounted, style_you: String, style_opp: String, max_turns: in
 		"captures": int(r.captures),
 		"capture_theses": int(r.capture_theses),
 		"clinches": clinches,
+		"clinches_info": clinches_info,
 		"combo_events": combo_log,
 		"trajectory": trajectory,
 	}

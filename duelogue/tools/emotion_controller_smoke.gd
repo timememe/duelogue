@@ -189,11 +189,13 @@ func _run_smoke() -> void:
 		String((relief_calls[1] as Dictionary).stimulus) == "frame_redeemed" and
 		int((relief_calls[1] as Dictionary).amount) == 2,
 		"обычный relief захвата плюс отдельный усиленный frame_redeemed победителю")
-	_check(emotion_event_calls.size() == 2 and
-		String((emotion_event_calls[0] as Dictionary).stimulus) == "captured" and
-		String((emotion_event_calls[1] as Dictionary).side) == SIDE_OPP and
-		String((emotion_event_calls[1] as Dictionary).stimulus) == "frame_redeemed" and
-		bool((emotion_event_calls[1] as Dictionary).allow_followups) == false,
+	# [0]/[1] — трение обеих сторон (1-карточный клинч, пол=1 §8 гарантирует stake>=1 даже
+	# здесь), [2] — исход, [3] — redeem. Индексы сдвинуты на 2 относительно версии без пола.
+	_check(emotion_event_calls.size() == 4 and
+		String((emotion_event_calls[2] as Dictionary).stimulus) == "captured" and
+		String((emotion_event_calls[3] as Dictionary).side) == SIDE_OPP and
+		String((emotion_event_calls[3] as Dictionary).stimulus) == "frame_redeemed" and
+		bool((emotion_event_calls[3] as Dictionary).allow_followups) == false,
 		"тот же возврат бьёт по шкале того, кто чужое не удержал, без цепочки/карты")
 
 	# Точная регрессия плейтеста: открывающая Кража погашена T лишь временно. Обычный

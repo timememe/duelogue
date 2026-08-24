@@ -1626,8 +1626,14 @@ func _merge_clinch_effect(total: Dictionary, step: Dictionary) -> void:
 			"landing_effect", "final_thickness", "stolen_thesis_id"]:
 		if step.has(key):
 			total[key] = step[key]
+	# frame_redeemed (2026-08-24, найдено при перепроверке §7): _capture_frame честно считает
+	# его на step_info, но до этой правки его не было в списке — при многошаговом unwind
+	# (attacker_won-ветка выше, любой захват вообще-то всегда идёт этим путём) флаг молча
+	# терялся при слиянии в total, поэтому _run_clinch НИКОГДА не видел frame_redeemed=true,
+	# сколько бы «своих рамок» игрок ни отбивал. Тот самый баг, из-за которого redeem дал 0%
+	# в sim_emotion_swing.gd — не редкое событие, а буквально мёртвая ветка кода.
 	for flag in ["full_capture", "captured", "stolen", "removed", "last_frame_lost",
-			"knockout", "recovery_pending"]:
+			"knockout", "recovery_pending", "frame_redeemed"]:
 		if bool(step.get(flag, false)):
 			total[flag] = true
 	for key in ["captured_thesis_ids", "captured_thickness", "recovery_available"]:
