@@ -20,6 +20,12 @@ signal emotion_changed(side: String, state: Dictionary)
 signal emotion_observed(side: String, result: Dictionary)  ## полный импульс: before/peak/after/stimulus/reaction
 signal emotion_reacted(side: String, reaction: Dictionary)
 signal emotion_linked(source_side: String, responder_side: String, result: Dictionary)
+## Явное восстановление самообладания (эмоц. облегчение). Раньше было немым — двигало
+## только столб. info: {amount, stimulus, before, after, state}.
+signal emotion_relieved(side: String, info: Dictionary)
+## Сторона осознанно придержала эмоц. карту в руке — этот заряд уже не выпадет
+## непроизвольным срывом в матче. info: {name, source}.
+signal situational_drawn(side: String, info: Dictionary)
 signal audience_changed(state: Dictionary)      ## независимый снимок {lean, heat, caps, reversals}
 signal clinch_started(attacker: String, defender: String, idx: int)  ## завязка клинча
 signal clinch_resolved(result: Dictionary)      ## клинч закрыт (JSONL-подобный итог)

@@ -5,6 +5,11 @@
 [ext_resource type="PackedScene" uid="uid://dswk2icr7etk1" path="res://duelogue/core/characters/reaction_scene.tscn" id="3"]
 [ext_resource type="Script" uid="uid://b78evlg0aphf5" path="res://duelogue/ui/combo_name_banner.gd" id="4"]
 [ext_resource type="FontFile" path="res://duelogue/assets/fonts/AntonSC-Regular.ttf" id="5_logo"]
+[ext_resource type="Texture2D" uid="uid://dboy5ii0snpc5" path="res://duelogue/assets/ui/scifi/plate.png" id="6_plate"]
+[ext_resource type="Texture2D" uid="uid://c72a2koqvhycr" path="res://duelogue/assets/ui/scifi/zal_groove.png" id="7_zgrv"]
+[ext_resource type="Texture2D" uid="uid://cmf7p4bw0fwmw" path="res://duelogue/assets/ui/scifi/zal_fill.png" id="8_zfil"]
+[ext_resource type="Texture2D" uid="uid://co8wwvbvekl5y" path="res://duelogue/assets/ui/scifi/strain_groove.png" id="9_sgrv"]
+[ext_resource type="Texture2D" uid="uid://djc8y1dr28fuo" path="res://duelogue/assets/ui/scifi/strain_fill.png" id="10_sfil"]
 
 [sub_resource type="Shader" id="Shader_board_dither"]
 code = "shader_type canvas_item;
@@ -130,6 +135,7 @@ text = "DUELOGUE"
 
 [node name="ScoreLabel" type="Label" parent="Header" unique_id=264431744]
 unique_name_in_owner = true
+visible = false
 layout_mode = 1
 offset_top = 12.0
 offset_right = 1152.0
@@ -148,7 +154,21 @@ offset_bottom = 113.0
 mouse_default_cursor_shape = 2
 tooltip_text = "Показать путь реакции зала"
 
-[node name="BarBg" type="ColorRect" parent="ZalBar" unique_id=1561322587]
+[node name="BarPlate" type="NinePatchRect" parent="ZalBar" unique_id=1561322111]
+layout_mode = 1
+offset_left = 22.0
+offset_top = -3.0
+offset_right = 526.0
+offset_bottom = 35.0
+mouse_filter = 2
+texture = ExtResource("6_plate")
+patch_margin_left = 8
+patch_margin_top = 8
+patch_margin_right = 8
+patch_margin_bottom = 8
+self_modulate = Color(0.2, 0.235, 0.305, 0.97)
+
+[node name="BarBg" type="NinePatchRect" parent="ZalBar" unique_id=1561322587]
 unique_name_in_owner = true
 layout_mode = 1
 offset_left = 34.0
@@ -156,9 +176,13 @@ offset_top = 5.0
 offset_right = 514.0
 offset_bottom = 27.0
 mouse_filter = 2
-color = Color(0.1647, 0.1804, 0.2196, 1)
+texture = ExtResource("7_zgrv")
+patch_margin_left = 6
+patch_margin_top = 6
+patch_margin_right = 6
+patch_margin_bottom = 6
 
-[node name="BarFill" type="ColorRect" parent="ZalBar" unique_id=578152658]
+[node name="BarFill" type="NinePatchRect" parent="ZalBar" unique_id=578152658]
 unique_name_in_owner = true
 layout_mode = 1
 offset_left = 274.0
@@ -166,6 +190,11 @@ offset_top = 5.0
 offset_right = 274.0
 offset_bottom = 27.0
 mouse_filter = 2
+texture = ExtResource("8_zfil")
+patch_margin_left = 6
+patch_margin_top = 6
+patch_margin_right = 6
+patch_margin_bottom = 6
 
 [node name="BarTick" type="ColorRect" parent="ZalBar" unique_id=832795335]
 layout_mode = 1
@@ -184,34 +213,15 @@ offset_right = 277.0
 offset_bottom = 31.0
 mouse_filter = 2
 
-[node name="BarOppLabel" type="Label" parent="ZalBar" unique_id=762404869]
-layout_mode = 1
-offset_top = 6.0
-offset_right = 44.0
-offset_bottom = 28.0
-theme_override_colors/font_color = Color(0.851, 0.549, 0.298, 1)
-theme_override_font_sizes/font_size = 11
-text = "ОПП"
-
-[node name="BarYouLabel" type="Label" parent="ZalBar" unique_id=1160691763]
-layout_mode = 1
-offset_left = 522.0
-offset_top = 6.0
-offset_right = 564.0
-offset_bottom = 28.0
-theme_override_colors/font_color = Color(0.4353, 0.8118, 0.498, 1)
-theme_override_font_sizes/font_size = 11
-text = "ВЫ"
-
 [node name="ZalLabel" type="Label" parent="ZalBar" unique_id=1541748323]
 unique_name_in_owner = true
 layout_mode = 1
 offset_left = 34.0
-offset_top = 31.0
+offset_top = 39.0
 offset_right = 514.0
-offset_bottom = 53.0
+offset_bottom = 59.0
 theme_override_colors/font_color = Color(0.9098, 0.9098, 0.9098, 1)
-theme_override_font_sizes/font_size = 12
+theme_override_font_sizes/font_size = 11
 horizontal_alignment = 1
 
 [node name="AudienceLogPanel" type="PanelContainer" parent="ZalBar" unique_id=2100711411]
@@ -292,7 +302,21 @@ offset_bottom = 400.0
 mouse_default_cursor_shape = 2
 tooltip_text = "Открыть ваш эмоциональный лог"
 
-[node name="YouStrainBg" type="ColorRect" parent="EmotionHud/YouStrain" unique_id=428091190]
+[node name="YouStrainPlate" type="NinePatchRect" parent="EmotionHud/YouStrain" unique_id=428091111]
+layout_mode = 1
+offset_left = 21.0
+offset_top = 50.0
+offset_right = 64.0
+offset_bottom = 232.0
+mouse_filter = 2
+texture = ExtResource("6_plate")
+patch_margin_left = 8
+patch_margin_top = 8
+patch_margin_right = 8
+patch_margin_bottom = 8
+self_modulate = Color(0.2, 0.235, 0.305, 0.97)
+
+[node name="YouStrainBg" type="NinePatchRect" parent="EmotionHud/YouStrain" unique_id=428091190]
 unique_name_in_owner = true
 layout_mode = 1
 offset_left = 28.0
@@ -300,9 +324,13 @@ offset_top = 58.0
 offset_right = 57.0
 offset_bottom = 224.0
 mouse_filter = 2
-color = Color(0.3333, 0.3529, 0.3922, 0.86)
+texture = ExtResource("9_sgrv")
+patch_margin_left = 6
+patch_margin_top = 6
+patch_margin_right = 6
+patch_margin_bottom = 6
 
-[node name="YouStrainFill" type="ColorRect" parent="EmotionHud/YouStrain" unique_id=761009178]
+[node name="YouStrainFill" type="NinePatchRect" parent="EmotionHud/YouStrain" unique_id=761009178]
 unique_name_in_owner = true
 layout_mode = 1
 offset_left = 28.0
@@ -310,19 +338,22 @@ offset_top = 224.0
 offset_right = 57.0
 offset_bottom = 224.0
 mouse_filter = 2
-color = Color(0.851, 0.6902, 0.2902, 1)
+texture = ExtResource("10_sfil")
+patch_margin_left = 6
+patch_margin_top = 6
+patch_margin_right = 6
+patch_margin_bottom = 6
 
 [node name="YouStrainLabel" type="Label" parent="EmotionHud/YouStrain" unique_id=597477818]
 unique_name_in_owner = true
 layout_mode = 1
 offset_right = 85.0
-offset_bottom = 52.0
+offset_bottom = 48.0
 theme_override_colors/font_color = Color(0.9098, 0.9098, 0.9098, 1)
-theme_override_font_sizes/font_size = 10
-text = "ВЫ
-0/6
-СРЫВ 0%"
+theme_override_font_sizes/font_size = 11
+text = "СРЫВ 0%"
 horizontal_alignment = 1
+vertical_alignment = 2
 mouse_filter = 2
 
 [node name="SnapButton" type="Button" parent="EmotionHud" unique_id=-1283965200]
@@ -350,7 +381,21 @@ offset_bottom = 400.0
 mouse_default_cursor_shape = 2
 tooltip_text = "Открыть эмоциональный лог оппонента"
 
-[node name="OppStrainBg" type="ColorRect" parent="EmotionHud/OppStrain" unique_id=778280708]
+[node name="OppStrainPlate" type="NinePatchRect" parent="EmotionHud/OppStrain" unique_id=778280111]
+layout_mode = 1
+offset_left = 21.0
+offset_top = 50.0
+offset_right = 64.0
+offset_bottom = 232.0
+mouse_filter = 2
+texture = ExtResource("6_plate")
+patch_margin_left = 8
+patch_margin_top = 8
+patch_margin_right = 8
+patch_margin_bottom = 8
+self_modulate = Color(0.2, 0.235, 0.305, 0.97)
+
+[node name="OppStrainBg" type="NinePatchRect" parent="EmotionHud/OppStrain" unique_id=778280708]
 unique_name_in_owner = true
 layout_mode = 1
 offset_left = 28.0
@@ -358,9 +403,13 @@ offset_top = 58.0
 offset_right = 57.0
 offset_bottom = 224.0
 mouse_filter = 2
-color = Color(0.3333, 0.3529, 0.3922, 0.86)
+texture = ExtResource("9_sgrv")
+patch_margin_left = 6
+patch_margin_top = 6
+patch_margin_right = 6
+patch_margin_bottom = 6
 
-[node name="OppStrainFill" type="ColorRect" parent="EmotionHud/OppStrain" unique_id=194860879]
+[node name="OppStrainFill" type="NinePatchRect" parent="EmotionHud/OppStrain" unique_id=194860879]
 unique_name_in_owner = true
 layout_mode = 1
 offset_left = 28.0
@@ -368,19 +417,22 @@ offset_top = 224.0
 offset_right = 57.0
 offset_bottom = 224.0
 mouse_filter = 2
-color = Color(0.851, 0.6902, 0.2902, 1)
+texture = ExtResource("10_sfil")
+patch_margin_left = 6
+patch_margin_top = 6
+patch_margin_right = 6
+patch_margin_bottom = 6
 
 [node name="OppStrainLabel" type="Label" parent="EmotionHud/OppStrain" unique_id=931670124]
 unique_name_in_owner = true
 layout_mode = 1
 offset_right = 85.0
-offset_bottom = 52.0
+offset_bottom = 48.0
 theme_override_colors/font_color = Color(0.9098, 0.9098, 0.9098, 1)
-theme_override_font_sizes/font_size = 10
-text = "ОПП
-0/6
-СРЫВ 0%"
+theme_override_font_sizes/font_size = 11
+text = "СРЫВ 0%"
 horizontal_alignment = 1
+vertical_alignment = 2
 mouse_filter = 2
 
 [node name="OpponentEmotionLogPanel" type="PanelContainer" parent="EmotionHud" unique_id=982856511]
@@ -543,21 +595,24 @@ text = "Отмена"
 unique_name_in_owner = true
 visible = false
 layout_mode = 1
-offset_left = 476.0
-offset_top = 38.0
-offset_right = 676.0
-offset_bottom = 64.0
+offset_left = 506.0
+offset_top = 36.0
+offset_right = 646.0
+offset_bottom = 66.0
+clip_text = true
 text = "Пропустить"
 
 [node name="HintLabel" type="Label" parent="ActionBar" unique_id=1536208387]
 unique_name_in_owner = true
 layout_mode = 1
-offset_top = 68.0
-offset_right = 1152.0
-offset_bottom = 90.0
+offset_left = 176.0
+offset_top = 70.0
+offset_right = 976.0
+offset_bottom = 116.0
 theme_override_colors/font_color = Color(1, 0.8235, 0.2902, 1)
 theme_override_font_sizes/font_size = 13
 horizontal_alignment = 1
+autowrap_mode = 2
 
 [node name="HandArea" type="Control" parent="." unique_id=803681196]
 layout_mode = 1

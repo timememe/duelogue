@@ -479,8 +479,8 @@ func apply_emotional_breakdown(side: String) -> void:
 	_finish(other(side), "knockout")
 
 
-## Эмоц. карта из отдельного пула (situational_cards.gd, situational_cards_v0.1 §2) — эта
-## функция ничего не знает о триггере/содержании, только кладёт уже готовую карту в руку.
+## Эмоц. карта, материализованная из общего reaction-пула EmotionCore — эта функция ничего
+## не знает о триггере/содержании, только кладёт уже готовый адаптер-карту в основную руку.
 ## Вызывающий код (battle_controller) обязан сам проверить SituationalCards.is_holding()
 ## и непустоту card ДО вызова — гонка условий не лечится здесь, тот же контракт, что у
 ## can_snap()/snap() выше.
@@ -769,6 +769,14 @@ func play_action(side: String, type: String, target: int = -1, hand_index: int =
 		TYPE_TEZIS:
 			var c := _remove_selected_card(side, TYPE_TEZIS, hand_index)
 			info.name = c.get("name", "")
+			# Ситуативная эмоц. карта остаётся обычным Тезисом для доски, но её payload
+			# должен дожить до драйвера: там звучит точный текст и наносится эмоц. импульс.
+			if bool(c.get("situational_emotion", false)):
+				info["situational_emotion"] = true
+				info["situational_text"] = String(c.get("text", ""))
+				info["emotion_damage"] = int(c.get("emotion_damage", 0))
+				info["situational_mood"] = String(c.get("mood", "burst"))
+				info["reaction_id"] = String(c.get("reaction_id", ""))
 			var thesis_frame: Dictionary = s.lines[-1]
 			var token := _put_thesis(thesis_frame, c)
 			info["thesis_id"] = String(token.get("thesis_id", ""))

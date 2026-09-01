@@ -62,6 +62,7 @@ func start(deck_data: Dictionary, seed_value: int, sides: Array = ["you", "opp"]
 			"parry_draw": parry_draw,
 			"parry_discard": [],
 			"snaps": 0,
+			"situational_draws": 0,
 		}
 
 
@@ -77,7 +78,7 @@ func state(side: String) -> Dictionary:
 			"linked_reactions": 0, "parries": 0,
 			"parries_left": 0,
 			"deck_id": deck_id, "deck_label": deck_label,
-			"can_snap": false, "snaps": 0,
+			"can_snap": false, "snaps": 0, "situational_draws": 0,
 			"composure": ZONE_WIDTH, "irritation": 0, "breakdown": false,
 		}
 	var s: Dictionary = _states[side]
@@ -96,9 +97,46 @@ func state(side: String) -> Dictionary:
 		"deck_label": deck_label,
 		"can_snap": can_snap(side),
 		"snaps": int(s.get("snaps", 0)),
+		"situational_draws": int(s.get("situational_draws", 0)),
 		"composure": maxi(0, ZONE_WIDTH - int(s.strain)),
 		"irritation": maxi(0, int(s.strain) - ZONE_WIDTH),
 		"breakdown": int(s.strain) >= MAX_STRAIN,
+	}
+
+
+## Осознанная карта в руку и непроизвольный срыв конкурируют за ОДНУ конечную draw-стопку.
+## Берём первое после shuffle определение с hand_templates и допустимым min_strain,
+## немедленно перемещаем его в общий discard (реализованная карта дальше живёт в RulesCore).
+func draw_situational(side: String, target: String = "", peak: int = 0) -> Dictionary:
+	if not _states.has(side):
+		return {}
+	var s: Dictionary = _states[side]
+	var idx := -1
+	for i in (s.draw as Array).size():
+		var candidate: Dictionary = (s.draw as Array)[i]
+		if int(candidate.get("min_strain", 0)) > peak:
+			continue
+		if not (candidate.get("hand_templates", []) as Array).is_empty():
+			idx = i
+			break
+	if idx < 0:
+		return {}
+	var card: Dictionary = (s.draw as Array)[idx]
+	(s.draw as Array).remove_at(idx)
+	(s.discard as Array).append(card)
+	s.situational_draws = int(s.get("situational_draws", 0)) + 1
+	var pool: Array = card.get("hand_templates", [])
+	var text := String(pool[_rng.randi_range(0, pool.size() - 1)])
+	var resolved_target := String(target).strip_edges()
+	if resolved_target == "":
+		resolved_target = "эта позиция"
+	return {
+		"id": String(card.get("id", "reaction")),
+		"title": String(card.get("title", "Реакция")),
+		"text": text.replace("{target}", resolved_target),
+		"mood": String(card.get("mood", "burst")),
+		"emotion_damage": int(card.get("hand_damage", 1)),
+		"draw_left": (s.draw as Array).size(),
 	}
 
 

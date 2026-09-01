@@ -39,6 +39,29 @@ const CONDUCT_AUDIENCE := {
 	"parry_value": 1,
 }
 
+## Боевой профиль: азарт (heat/surge) выключен (2026-09-01). Механика осталась от прежних
+## итераций — логична, но непрозрачна для игрока. heat_max=0 → heat всегда 0, surge не
+## срабатывает (явный гейт heat_max>0 в audience_core._resolve_content_plus_conduct). Зал
+## двигается ровно на одну зарубку за сцену в сторону победителя (контент + поведение).
+## Диагностические профили (mandate/vector_*) азарт сохраняют — там он под замером.
+const COMBAT_AUDIENCE := {
+	"mode": "pendulum",
+	"lean_cap": 5,
+	"heat_max": 0,
+	"decision_threshold": 1,
+	"valence_mode": "content_plus_conduct",
+	"quiet_cool": 1,
+	"quiet_actions": 2,
+	"lean_friction": 0,
+	"conduct_cap": 2,
+	"surge_threshold": 3,
+	"surge_alignment_min": 2,
+	"surge_amplitude": 2,
+	"surge_reset": 1,
+	"reaction_values": CONDUCT_REACTION_VALUES,
+	"parry_value": 1,
+}
+
 const LEGACY_REACTION_AUDIENCE := {
 	"mode": "pendulum",
 	"lean_cap": 5,
@@ -60,7 +83,7 @@ const PROFILES := [
 		"label": "Бой: рамка + самообладание",
 		"description": "Доска решает вердикт; последняя рамка даёт KO без резерва, а напряжение владельца расшатывает его толстые рамки.",
 		"board": {"frame_weight": 3, "thesis_weight": 1},
-		"audience": CONDUCT_AUDIENCE,
+		"audience": COMBAT_AUDIENCE,
 		"links": {"wobble_x": 2, "wobble_y": 4,
 			"crowd_ko": 0, "crowd_hold": 1},
 		"terminal": {"board_ko": true},

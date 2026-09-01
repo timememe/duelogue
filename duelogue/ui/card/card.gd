@@ -33,6 +33,8 @@ const BODY_FIT_BOTTOM_PADDING := 2.0
 @export var col_ustanovka := Color("57a3e3")
 @export_group("Именная карта")
 @export var col_named := Color("a875e8")   ## аметистовый фон заголовка вместо отдельной ленты
+@export_group("Ситуативная эмоция")
+@export var col_situational := Color("ef7f45")  ## горячая плашка: карта не маскируется под ванильный Тезис
 
 @onready var _template: TextureRect = %CardTemplate
 @onready var _plate: ColorRect = %TitleBackground
@@ -57,7 +59,8 @@ func _ready() -> void:
 ## title/body — подготовленные владельцем строки (нарратив-превью или правило именной).
 func setup(card: Dictionary, title: String, body: String, enabled: bool, art_texture: Texture2D = null) -> void:
 	var named: bool = card.has("named")
-	var tcol := col_named if named else _type_color(card)
+	var situational := bool(card.get("situational_emotion", false))
+	var tcol := col_named if named else (col_situational if situational else _type_color(card))
 	_title.text = title
 	_body_source = body
 	_body.text = _body_source

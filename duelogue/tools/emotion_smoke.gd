@@ -14,6 +14,7 @@ func _init() -> void:
 	print("\n=== EMOTION CORE · SMOKE ===")
 	_test_curve()
 	_test_deck_contract()
+	_test_shared_situational_pool()
 	_test_state_and_reaction()
 	_test_reaction_relation()
 	_test_finite_independent_decks()
@@ -39,7 +40,7 @@ func _test_deck_contract() -> void:
 	var data := DefaultDeck.data()
 	var seen := {}
 	var stimuli := ["argument_lost", "frame_lost", "captured", "attack_stalled", "dirty_hit",
-		"clinch_pressure", "reaction_received"]
+		"clinch_pressure", "reaction_received", "situational_hit"]
 	var parry_seen := {}
 	_check(not (data.parries as Array).is_empty(), "архетип задаёт спокойные парировки")
 	for raw_parry in data.parries:
@@ -55,6 +56,11 @@ func _test_deck_contract() -> void:
 		var id := String(card.get("id", ""))
 		_check(id != "" and not seen.has(id), "у реакции уникальный id: %s" % id)
 		seen[id] = true
+		_check(not (card.get("hand_templates", []) as Array).is_empty(),
+			"%s имеет текст осознанной карты из той же темы" % id)
+		for hand_line in card.get("hand_templates", []):
+			_check(String(hand_line).length() <= 150,
+				"%s/hand помещается на карту в руке" % id)
 		var templates: Dictionary = card.get("templates", {})
 		for stimulus in stimuli:
 			_check(templates.has(stimulus) and not (templates[stimulus] as Array).is_empty(),
@@ -62,6 +68,21 @@ func _test_deck_contract() -> void:
 			for line in templates.get(stimulus, []):
 				_check(String(line).length() <= 150,
 					"%s/%s помещается в микросцену" % [id, stimulus])
+
+
+func _test_shared_situational_pool() -> void:
+	var core := EmotionCore.new()
+	core.start(DefaultDeck.data(), 20260831, ["you", "opp"])
+	var before := int(core.state("you").draw_left)
+	var card: Dictionary = core.draw_situational("you", "единая колода", 2)
+	_check(not card.is_empty() and String(card.text).find("{target}") < 0,
+		"осознанная карта реализуется из reaction-definition и получает контекст")
+	var after := core.state("you")
+	_check(int(after.draw_left) == before - 1 and int(after.discarded) == 1 and
+		int(after.situational_draws) == 1,
+		"карта руки изымается из того же конечного draw/discard, что автосрыв")
+	_check(String(card.id) in ["sarcastic_applause", "cold_laugh", "audience_check"],
+		"на раннем накале доступны только лёгкие реакции min_strain=2")
 
 
 func _test_state_and_reaction() -> void:

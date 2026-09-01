@@ -73,6 +73,14 @@ const CLINCH_STEP_DELAY := 0.45
 ## Начальная реакция + максимум два звена ответа. Cooldown почти всегда гасит второе звено,
 ## но жёсткий cap сохраняет безопасность при будущих архетипах с другой разрядкой.
 const MAX_REACTION_REPLIES := 2
+## Один затяжной клинч может материализовать защитнику не больше одной НОВОЙ эмоц. карты.
+## Первый полный обмен уже достаточен: карта приходит перед следующим defensive choice.
+const CLINCH_SITUATIONAL_ROUNDS_MIN := 1
+## Плейтест-калибровка 2026-08: все враждебные эмоциональные импульсы в настоящем бою
+## получают +40% в среднем. Остаток хранится отдельно по сторонам, поэтому малые удары 1
+## чередуются как 1/2, а не округляются навсегда обратно в 1 или всегда вверх в 2.
+const EMOTION_DAMAGE_NUM := 7
+const EMOTION_DAMAGE_DEN := 5
 
 signal _clinch_decided(decision: Dictionary)  ## внутр.: решение игрока в клинче (из play_hand/clinch_pass)
 
@@ -80,11 +88,13 @@ var model: RefCounted
 var nar: RefCounted
 var ai: RefCounted
 var emotion: RefCounted
-var situational: RefCounted  ## эмоц. карты в руку (situational_cards_v0.1 §2, второй абзац)
 ## Пилот статусов/перков (core/status/, брейншторм-сессия): {side: [record, ...]}, только
 ## зал подключён как коннектор пока. Читается только через status_list() ниже — UI не трогает
 ## StatusRules напрямую.
 var status_state := {}
+## Опциональный полигон для status HUD. В обычной партии false: сама status-система,
+## каталог, bridge и тестовые probes остаются на месте, но фикстуры больше не выдаются.
+var debug_seed_statuses := false
 var audience: RefCounted
 var outcome: RefCounted
 var match_id := 0
@@ -111,6 +121,7 @@ var _opp_style := OPP_STYLE  ## стиль оппонента текущего �
 var hint_text := ""      ## подсказка для view (читается на board_changed)
 var _wobble_told := {}   ## какие уровни эмоционального шатания уже объяснены (1 раз за матч)
 var _judge_told := {}    ## последний озвученный «счёт судьи» по сторонам (наррация тиков TKO)
+var _emotion_damage_remainder := {SIDE_YOU: 0, SIDE_OPP: 0}
 ## Момент (сек, Time.get_ticks_msec), когда текущая катсцена реплики/исхода ДОИГРАЕТ
 ## (ReadingPace.scene_time — единые часы с reaction_scene). _say и _wait_pace держат этот
 ## рубеж: следующая реплика, автоход или финал никогда не обрывают идущую сцену.
@@ -132,7 +143,6 @@ func _ready() -> void:
 	nar = NarEngine.new()
 	ai = Ai.new()
 	emotion = EmotionCore.new()
-	situational = SituationalCards.new()
 	audience = AudienceCore.new()
 	outcome = OutcomeEvaluator.new()
 	_theme_data = ThemeLibrary.get_active_theme_data()
@@ -187,6 +197,8 @@ func hand_preview(index: int) -> String:
 		return ""
 	var card: Dictionary = hand[index]
 	if card.has("named"):
+		return String(card.get("text", ""))
+	if bool(card.get("situational_emotion", false)):
 		return String(card.get("text", ""))
 	match _mode:
 		"move":
@@ -560,10 +572,11 @@ func start_match() -> void:
 	_log.match_id = match_id
 	nar.start(_theme_data, match_id, {"you": "contra", "opp": "pro"})
 	emotion.start(DefaultReactions.data(), match_id ^ 0x5EED, [SIDE_YOU, SIDE_OPP])
-	situational.start(match_id ^ 0x51DE, [SIDE_YOU, SIDE_OPP])
+	_emotion_damage_remainder = {SIDE_YOU: 0, SIDE_OPP: 0}
 	_sync_emotional_instability()
 	status_state = StatusRules.new_state()
-	_debug_seed_statuses()
+	if debug_seed_statuses:
+		_debug_seed_statuses()
 	ZalStatusBridge.apply_to_model(status_state, model, SIDE_YOU, SIDE_OPP)
 	_draw0 = maxi(1, _draw_left())
 	_mode = "opening"
@@ -615,11 +628,8 @@ func _stack_combo_drill(side: Dictionary) -> void:
 	DeckLib.refill(side, HAND)
 
 
-## ВРЕМЕННО — заглушка для проверки статус-иконок в UI (кафедры), пока в игре нет ни одного
-## реального триггера, который бы САМ присваивал перк/дебаф (получаемые статусы через события
-## combo_register/эмоций — открытый пункт, см. память duelogue-perk-status-system). Убрать/
-## заменить реальными триггерами, когда они появятся; сейчас каждая сторона стартует с одним
-## fundamental и одним temporary статусом просто чтобы иконки было на чём проверить.
+## Явно включаемая фикстура для status-HUD/probes. В обычном матче debug_seed_statuses=false,
+## поэтому этот код не влияет на бой; оставлен рядом с живой системой для будущей итерации.
 func _debug_seed_statuses() -> void:
 	StatusRules.apply(status_state, SIDE_YOU, "unbending", 0)
 	StatusRules.apply(status_state, SIDE_YOU, "ovation", 0)
@@ -1015,6 +1025,7 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	var resolved: Dictionary = {}
 	var guard := 0
 	var pressure_rounds := 0
+	var clinch_situational_drawn := false
 	while model.clinch_active() and guard < 200:
 		guard += 1
 		var side: String = model.clinch_pending_side()
@@ -1069,14 +1080,31 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 		match String(res.get("event", "")):
 			"hold":
 				var dc: Dictionary = res.card
-				var stmt: Dictionary = nar.make_statement(defender, dc, _used_axes(line), "hold", line)
+				var situational_hold := bool(dc.get("situational_emotion", false))
+				var stmt: Dictionary
+				if situational_hold:
+					stmt = {"text": String(dc.get("text", "")), "axis": "emotion",
+						"device": String(dc.get("name", "Эмоциональная реакция"))}
+				else:
+					stmt = nar.make_statement(defender, dc, _used_axes(line), "hold", line)
 				stmt["thesis_id"] = String(dc.get("thesis_id", ""))
 				stmt["clinch_step"] = int(res.get("step", -1))
 				_push_stmt(line, stmt)
 				await _say(defender, stmt.text, "    hold %s тезис[%s/%s]" % [defender, stmt.device, stmt.axis],
-					TYPE_TEZIS, false, nar.last_mood(), {"device": String(stmt.device)})
+					TYPE_TEZIS, false,
+					String(dc.get("mood", "burst")) if situational_hold else nar.last_mood(),
+					{"device": String(stmt.device), "situational_emotion": situational_hold})
 				if my_epoch != _epoch:
 					return
+				if situational_hold:
+					await _emotion_event(attacker, "situational_hit",
+						maxi(0, int(dc.get("emotion_damage", 0))), {
+							"target": target_claim, "cause_side": defender,
+							"cause_name": String(dc.get("name", "эмоциональная карта")),
+							"cause_kind": "situational_card_clinch",
+						}, false)
+					if my_epoch != _epoch or model.game_over:
+						return
 				# Комбо §4: этот hold вооружил тройку — короткая отметка ARMED. Обещание,
 				# а не награда: ставка обязана пережить весь клинч до settlement.
 				if String(model.clinch.get("combo_state", "")) == "armed" and \
@@ -1099,8 +1127,17 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 				_changed()
 				# Полная пара «защита → новый нажим» лишь отмечает затяжной клинч. Давление
 				# получает проигравший один раз после исхода — шкалы больше не стреляют
-				# реакциями посреди ещё не разрешённого ралли.
+				# числовым трением посреди ещё не разрешённого ралли. Но сам затяжной обмен
+				# теперь может материализовать защитнику одну осознанную эмоц. карту в руку.
 				pressure_rounds += 1
+				if not clinch_situational_drawn and \
+						pressure_rounds >= CLINCH_SITUATIONAL_ROUNDS_MIN:
+					clinch_situational_drawn = _maybe_draw_clinch_situational_card(
+						defender, pressure_rounds, {
+							"target": target_claim, "cause_side": attacker,
+							"cause_name": String(ac.get("name", "повторный нажим")),
+							"cause_kind": "clinch_pressure",
+						})
 			"resolved":
 				resolved = res
 				break
@@ -1328,9 +1365,9 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 	# ВНЕ гейта «voluntary» ниже (баг 2026-08-23: раньше трение стояло ВНУТРИ него — атакующий,
 	# добровольно остановившийся после длинного обмена, гасил трение обеим сторонам целиком,
 	# хотя карты уже были разыграны и усталость уже накопилась). Масштабируется со ставкой,
-	# allow_followups=false (цепная реакция/ситуативная карта сюда сознательно не подключены,
-	# §7), без mini(3,...) — очень долгий клинч должен быть в состоянии перевесить весь
-	# остальной сигнал сцены, не упираться в тот же потолок, что обычный хит.
+	# allow_followups=false (цепная реакция и повторный post-event добор не подключены;
+	# карта затяжного клинча уже могла прийти прямо в ралли), без mini(3,...) — долгий
+	# клинч должен быть в состоянии перевесить остальной сигнал сцены.
 	if stake > 0:
 		await _emotion_event(strained_side, "clinch_pressure", stake, clinch_ctx, false)
 		if my_epoch != _epoch:
@@ -1389,6 +1426,8 @@ func _ask_clinch(mode: String) -> Dictionary:
 		hint_text += " ⚡ Открыт маршрут «%s»: правильный ответ (подсвечен) вооружит комбо." % combo_name
 	elif combo_state == "armed":
 		hint_text += " ⚡ Ставка «%s» на кону: финишер должен пережить клинч." % combo_name
+	if mode == "defend" and SituationalCards.is_holding(model.sides[SIDE_YOU].hand):
+		hint_text += " ⚡ Ситуативная эмоция уже в руке: её можно сыграть ответным Тезисом."
 	_changed()
 	var d: Dictionary = await _clinch_decided
 	if my_epoch != _epoch:
@@ -1493,18 +1532,36 @@ func _narrate(text: String, tag: String = "") -> void:
 ## второй шкалы. Внутри цепочки доска/рука/ход model не мутируются; синхронизируется только
 ## публичный strain-read-model для будущего шатания. После всей сцены контроллер одним
 ## коммитом может передать её публичную валентность независимому AudienceCore.
-## allow_followups=false отключает цепную реакцию второй шкалы и добор ситуативной карты —
-## использует трение клинча (emotion_reactions.md v0.5 §7), которое пока обязано остаться
-## простым числовым сигналом и не открывать эти две соседние подсистемы заново.
+## allow_followups=false отключает цепную реакцию второй шкалы и post-event добор карты.
+## Для ралли есть отдельный _maybe_draw_clinch_situational_card: он материализует карту
+## между решениями, не выдавая её второй раз уже после settlement.
 func _emotion_event(side: String, stimulus: String, intensity: int,
 	context: Dictionary = {}, allow_followups: bool = true) -> Dictionary:
 	if emotion == null:
 		return {}
-	var result: Dictionary = emotion.observe(side, stimulus, intensity, context)
+	var applied_intensity := _scaled_emotion_intensity(side, intensity)
+	var result: Dictionary = emotion.observe(side, stimulus, applied_intensity, context)
 	if result.is_empty():
 		return result
+	# Оба числа остаются в событии/логе: баланс можно измерять без догадок, а контент
+	# продолжает задавать читаемую базовую силу 1/2/3 до общей калибровки матча.
+	result["base_intensity"] = intensity
+	result["applied_intensity"] = applied_intensity
 	await _resolve_emotion_result(result, context, 0, "", "event", allow_followups)
 	return result
+
+
+## Ошибко-распределённое округление даёт ровно 7/5 на серии событий. Например, пять
+## базовых импульсов по 1 превратятся суммарно в 7, а не останутся пятью из-за round(1.4).
+func _scaled_emotion_intensity(side: String, base_intensity: int) -> int:
+	var base := maxi(0, base_intensity)
+	if base == 0:
+		return 0
+	var remainder := int(_emotion_damage_remainder.get(side, 0))
+	var units := base * EMOTION_DAMAGE_NUM + remainder
+	var scaled := maxi(1, roundi(float(units) / float(EMOTION_DAMAGE_DEN)))
+	_emotion_damage_remainder[side] = units - scaled * EMOTION_DAMAGE_DEN
+	return scaled
 
 
 ## Sibling _emotion_event(), но в другую сторону (emotion_reactions.md v0.5 §7 «Трение и
@@ -1532,6 +1589,12 @@ func _apply_relief(side: String, amount: int, stimulus: String) -> Dictionary:
 	ev.merge(_emotion_econ())
 	_emit(ev)
 	EventBus.emotion_changed.emit(side, emotion.state(side))
+	EventBus.emotion_relieved.emit(side, {
+		"amount": maxi(0, int(result.before) - int(result.after)),
+		"stimulus": stimulus,
+		"before": int(result.before), "after": int(result.after),
+		"state": emotion.state(side),
+	})
 	_changed()
 	return result
 
@@ -1556,18 +1619,58 @@ func _sync_emotional_instability(side: String = "") -> void:
 ## новое число. Не более одной неразыгранной карты в руке одновременно (SituationalCards.
 ## HOLD_LIMIT).
 func _maybe_draw_situational_card(side: String, peak: int, context: Dictionary) -> void:
-	if situational == null or emotion == null or model == null:
+	if emotion == null or model == null:
 		return
 	if peak < EmotionCore.HOT_TRIGGER_MIN:
 		return
+	_draw_situational_card(side, peak, context, "emotion_peak")
+
+
+## В ралли не ждём общей границы 4: первый полный обмен — уже локальная ситуация.
+## effective_peak растёт с каждым новым press, поэтому более тяжёлые определения общей
+## колоды (вспышка/переход на личности/трещина) всё равно не появляются слишком рано.
+func _maybe_draw_clinch_situational_card(side: String, pressure_rounds: int,
+	context: Dictionary) -> bool:
+	if emotion == null or model == null:
+		return false
+	var local_peak := SituationalCards.CLINCH_TRIGGER_STRAIN + maxi(0, pressure_rounds - 1)
+	var effective_peak := maxi(int(emotion.state(side).get("strain", 0)), local_peak)
+	return _draw_situational_card(side, effective_peak, context, "clinch")
+
+
+## Единственный runtime-шов добора: EmotionCore изымает определение из общей реакционной
+## стопки, SituationalCards только адаптирует его к объекту основной руки.
+func _draw_situational_card(side: String, peak: int, context: Dictionary,
+	source: String) -> bool:
 	if SituationalCards.is_holding(model.sides[side].hand):
-		return
-	var card: Dictionary = situational.draw(side, String(context.get("target", "")))
+		return false
+	var reaction_card: Dictionary = emotion.draw_situational(side,
+		String(context.get("target", "")), peak)
+	var card: Dictionary = SituationalCards.make_card(reaction_card)
 	if card.is_empty():
-		return
+		return false
 	model.insert_situational_card(side, card)
+	var public_name := String(card.get("name", "")) if side == SIDE_YOU else "скрытая карта"
+	var ev := {"ev": "situational_draw", "side": side, "name": public_name,
+		"reaction_id": String(card.get("reaction_id", "")),
+		"draw_left": int(emotion.state(side).get("draw_left", 0)),
+		"trigger_peak": peak, "source": source}
+	ev.merge(_econ())
+	_emit(ev)
+	if side == SIDE_YOU:
+		var message := "⚡ Накал сцены дал вам карту «%s» — она уже в руке." % \
+			String(card.get("name", ""))
+		if source == "clinch":
+			message = "⚡ Клинч накалился: «%s» появилась прямо в руке и доступна для ответа." % \
+				String(card.get("name", ""))
+		_narrate(message, "situational_draw_%s" % source)
+	else:
+		_narrate("⚡ Накал сцены дал оппоненту ситуативную карту в руку.",
+			"situational_draw_%s_hidden" % source)
 	EventBus.emotion_changed.emit(side, emotion.state(side))
+	EventBus.situational_drawn.emit(side, {"name": public_name, "source": source})
 	_changed()
+	return true
 
 
 func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_depth: int,
@@ -1599,6 +1702,8 @@ func _resolve_emotion_result(result: Dictionary, context: Dictionary, chain_dept
 		"ev": "emotion", "side": side, "stimulus": stimulus,
 		"before": int(result.before), "peak": int(result.peak), "after": int(result.after),
 		"delta": int(result.delta), "chance": float(result.chance),
+		"base_intensity": int(result.get("base_intensity", result.get("delta", 0))),
+		"applied_intensity": int(result.get("applied_intensity", result.get("delta", 0))),
 		"roll": float(result.roll), "reaction": String(reaction.get("id", "")),
 		"reaction_title": String(reaction.get("title", "")),
 		"reaction_draw_left": int(result.draw_left),
@@ -1806,8 +1911,13 @@ func _log_action(info: Dictionary) -> void:
 	if info.is_empty():
 		return
 	var my_epoch := _epoch
+	var is_situational := bool(info.get("situational_emotion", false))
+	if is_situational:
+		_begin_audience_scene()
 	var ev := {"ev": "move", "side": info.side, "type": info.type,
-		"name": info.get("name", ""), "combo_events": info.get("combo_events", [])}
+		"name": info.get("name", ""), "combo_events": info.get("combo_events", []),
+		"situational_emotion": is_situational,
+		"emotion_damage": int(info.get("emotion_damage", 0))}
 	ev.merge(_econ())
 	_emit(ev)
 	var side: String = info.side
@@ -1816,11 +1926,18 @@ func _log_action(info: Dictionary) -> void:
 		TYPE_TEZIS:
 			var line: Dictionary = model.sides[side].lines[-1]
 			_claim_of(side, line)  # рамке нужна headline-позиция (топик)
-			var stmt: Dictionary = nar.make_statement(side, card, _used_axes(line), "assert", line)
+			var stmt: Dictionary
+			if is_situational:
+				stmt = {"text": String(info.get("situational_text", "")),
+					"axis": "emotion", "device": String(info.get("name", "Эмоция"))}
+			else:
+				stmt = nar.make_statement(side, card, _used_axes(line), "assert", line)
 			stmt["thesis_id"] = String(info.get("thesis_id", ""))
 			_push_stmt(line, stmt)
 			await _say(side, stmt.text, "t%d %s тезис[%s/%s]" % [model.turn_count, side, stmt.device, stmt.axis],
-				TYPE_TEZIS, false, nar.last_mood(), {"device": String(stmt.device)})
+				TYPE_TEZIS, false,
+				String(info.get("situational_mood", "burst")) if is_situational else nar.last_mood(),
+				{"device": String(stmt.device), "situational_emotion": is_situational})
 		TYPE_USTANOVKA:
 			var line: Dictionary = model.sides[side].lines[-1]
 			var claim := _claim_of(side, line)
@@ -1829,7 +1946,21 @@ func _log_action(info: Dictionary) -> void:
 			pass  # атаки идут через клинч
 	if my_epoch != _epoch:
 		return
-	if String(info.type) in [TYPE_TEZIS, TYPE_USTANOVKA]:
+	if is_situational:
+		var emotion_damage := maxi(0, int(info.get("emotion_damage", 0)))
+		if emotion_damage > 0:
+			await _emotion_event(model.other(side), "situational_hit", emotion_damage, {
+				"target": String(info.get("name", "эмоциональный выпад")),
+				"cause_side": side, "cause_name": String(info.get("name", "эмоциональная карта")),
+				"cause_kind": "situational_card",
+			})
+			if my_epoch != _epoch:
+				return
+		_settle_audience_scene(side, 1, true, {
+			"kind": "situational_card", "side": side,
+			"name": String(info.get("name", "")),
+		})
+	elif String(info.type) in [TYPE_TEZIS, TYPE_USTANOVKA]:
 		_audience_quiet()
 
 

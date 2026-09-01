@@ -38,6 +38,8 @@ func _ready() -> void:
 
 
 func _run_smoke() -> void:
+	_check(status_list(SIDE_YOU).is_empty() and status_list(SIDE_OPP).is_empty(),
+		"обычный матч больше не получает тестовые статусы")
 	# Подводим шкалу к гарантированному срыву контролируемым roll, затем второй stimulus
 	# идёт через настоящий интеграционный шов контроллера.
 	emotion.observe(SIDE_YOU, "argument_lost", 3, {"target": "тест"}, 0.99)
@@ -50,7 +52,9 @@ func _run_smoke() -> void:
 		"cause_name": "Источник?", "cause_kind": "clinch",
 	})
 	_check(observed_results.size() == 1 and
-		int((observed_results[0] as Dictionary).get("peak", 0)) == 6 and
+		int((observed_results[0] as Dictionary).get("peak", 0)) == 7 and
+		int((observed_results[0] as Dictionary).get("base_intensity", 0)) == 3 and
+		int((observed_results[0] as Dictionary).get("applied_intensity", 0)) == 4 and
 		String((observed_results[0] as Dictionary).get("link_kind", "")) == "event" and
 		String(((observed_results[0] as Dictionary).get("context", {}) as Dictionary) \
 			.get("cause_name", "")) == "Источник?",
@@ -217,6 +221,13 @@ func _run_smoke() -> void:
 	model.sides[SIDE_OPP].lines[0]["statements"] = [
 		{"text": "Базовая реплика", "axis": "base", "device": "sentinel"},
 	]
+	# Этот блок изолированно проверяет unwind/Kражу. Иначе scripted defender закономерно
+	# использует новую клинчевую эмоц. карту и превращает старую трёхкарточную схему в новую.
+	while true:
+		var exhausted_card: Dictionary = emotion.draw_situational(
+			SIDE_OPP, "изоляция unwind", EmotionCore.MAX_STRAIN)
+		if exhausted_card.is_empty():
+			break
 	clinch_decisions = [{"act": "play", "steals": false, "hand_index": 0}]
 	regular_ai = ai
 	ai = ScriptedDefenseAi.new()
@@ -464,6 +475,104 @@ func _run_smoke() -> void:
 	model.begin_turn(SIDE_YOU)
 	_check(not SituationalCards.is_holding(model.sides[SIDE_YOU].hand),
 		"неразыгранная эмоц. карта тает на втором begin_turn владельца")
+
+	# Рука и розыгрыш сохраняют идентичность карты: UI получает точный авторский текст,
+	# RulesCore передаёт payload драйверу, а тот создаёт отдельный эмоциональный импульс.
+	start_match()
+	var shared_before := int(emotion.state(SIDE_YOU).draw_left)
+	var played_card: Dictionary = SituationalCards.make_card(
+		emotion.draw_situational(SIDE_YOU, "проверочная позиция", 2))
+	model.insert_situational_card(SIDE_YOU, played_card)
+	_check(int(emotion.state(SIDE_YOU).draw_left) == shared_before - 1,
+		"ручная карта и автосрыв расходуют один reaction draw-pool")
+	var played_index: int = model.sides[SIDE_YOU].hand.size() - 1
+	_check(hand_preview(played_index) == String(played_card.text),
+		"ситуативная карта в руке показывает свой текст, а не ванильный preview Тезиса")
+	var situational_info: Dictionary = model.play_action(SIDE_YOU, TYPE_TEZIS, -1, played_index)
+	_check(bool(situational_info.get("situational_emotion", false)) and
+		String(situational_info.get("situational_text", "")) == String(played_card.text) and
+		int(situational_info.get("emotion_damage", 0)) == SituationalCards.BASE_EMOTION_DAMAGE,
+		"RulesCore сохраняет payload ситуативной карты после списания из руки")
+	spoken.clear()
+	emotion_event_calls.clear()
+	await _log_action(situational_info)
+	_check(not spoken.is_empty() and String((spoken[0] as Dictionary).text) ==
+		String(played_card.text) and
+		bool((spoken[0] as Dictionary).meta.get("situational_emotion", false)),
+		"розыгрыш произносит точный текст ситуативной карты и помечает сцену")
+	_check(emotion_event_calls.size() == 1 and
+		String((emotion_event_calls[0] as Dictionary).stimulus) == "situational_hit" and
+		int((emotion_event_calls[0] as Dictionary).intensity) ==
+			SituationalCards.BASE_EMOTION_DAMAGE,
+		"разыгранная ситуативная карта бьёт эмоциональную шкалу оппонента")
+
+	# Затяжной клинч: после первого полного обмена карта приходит ДО следующего решения
+	# защитника и тут же может быть сыграна вторым ответным Тезисом.
+	start_match()
+	model.sides[SIDE_YOU].hand = [{"type": TYPE_TEZIS, "name": "обычная защита"}]
+	model.sides[SIDE_OPP].hand = [
+		{"type": TYPE_RAZBOR, "name": "нажим 1", "steals": false},
+		{"type": TYPE_RAZBOR, "name": "нажим 2", "steals": false},
+		{"type": TYPE_RAZBOR, "name": "нажим 3", "steals": false},
+	]
+	clinch_decisions = [
+		{"act": "play", "steals": false, "hand_index": 0},
+		{"act": "play", "steals": false, "hand_index": 0},
+	]
+	emitted_events.clear()
+	spoken.clear()
+	emotion_event_calls.clear()
+	var clinch_pool_before := int(emotion.state(SIDE_YOU).draw_left)
+	var clinch_ai := ai
+	ai = ScriptedClinchAi.new()
+	await _run_clinch(SIDE_OPP, SIDE_YOU, 0, false)
+	ai = clinch_ai
+	var clinch_draw := {}
+	var clinch_summary := {}
+	for raw_event in emitted_events:
+		var event: Dictionary = raw_event
+		if String(event.get("ev", "")) == "situational_draw" and \
+				String(event.get("source", "")) == "clinch":
+			clinch_draw = event
+		if String(event.get("ev", "")) == "clinch":
+			clinch_summary = event
+	_check(not clinch_draw.is_empty() and int(clinch_draw.get("draw_left", -1)) ==
+		clinch_pool_before - 1,
+		"после первого re-press карта приходит прямо в клинче из общего reaction-pool")
+	var spoke_situational := false
+	for raw_spoken in spoken:
+		if bool(((raw_spoken as Dictionary).get("meta", {}) as Dictionary) \
+				.get("situational_emotion", false)):
+			spoke_situational = true
+			break
+	_check(spoke_situational and int(clinch_summary.get("t", 0)) == 2,
+		"новая карта доступна в следующем defensive choice и реально держит клинч")
+	var clinch_situational_hit := false
+	for raw_call in emotion_event_calls:
+		var call: Dictionary = raw_call
+		if String(call.get("stimulus", "")) == "situational_hit" and \
+				not bool(call.get("allow_followups", true)):
+			clinch_situational_hit = true
+			break
+	_check(clinch_situational_hit,
+		"эмоциональный ответ, сыгранный внутри ралли, сразу бьёт шкалу атакующего")
+
+	# Пять малых импульсов дают ровно +40% суммарного урона; новый матч сбрасывает остаток.
+	start_match()
+	var scaled_total := 0
+	for i in 5:
+		scaled_total += _scaled_emotion_intensity(SIDE_YOU, 1)
+	_check(scaled_total == 7, "калибровка даёт 7 урона из базовых 5 (+40%)")
+	start_match()
+	_check(_scaled_emotion_intensity(SIDE_YOU, 1) == 1,
+		"остаток баланс-калибровки не протекает между матчами")
+
+	# Опциональная фикстура всё ещё доступна инструментам, хотя production-default пуст.
+	debug_seed_statuses = true
+	start_match()
+	_check(not status_list(SIDE_YOU).is_empty() and not status_list(SIDE_OPP).is_empty(),
+		"status-HUD фикстуру можно явно включить, система статусов сохранена")
+	debug_seed_statuses = false
 
 	start_match()
 	_check(int(emotion_state(SIDE_YOU).strain) == 0 and

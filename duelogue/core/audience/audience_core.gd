@@ -141,7 +141,9 @@ func _resolve_content_plus_conduct(content_side: String, content_strength: int,
 	var direction := signi(total)
 	var votes_aligned := content_delta != 0 and conduct_applied != 0 \
 		and signi(content_delta) == signi(conduct_applied)
-	var surged := heat_before >= surge_threshold and votes_aligned \
+	# Surge — фича азарта: нет азарта (heat_max=0) → нет всплеска. Явный гейт, чтобы
+	# отключённая механика не всплыла случайно при surge_threshold<=0.
+	var surged := heat_max > 0 and heat_before >= surge_threshold and votes_aligned \
 		and absi(total) >= surge_alignment_min
 	var amplitude := surge_amplitude if surged else 1
 	if surged:

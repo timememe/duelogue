@@ -106,6 +106,13 @@ var _audience_log_closed_y := 0.0
 var _audience_log_tween: Tween
 var _emotion_histories := {C.SIDE_YOU: [], C.SIDE_OPP: []}
 var _emotion_event_indices := {C.SIDE_YOU: -1, C.SIDE_OPP: -1}
+## Весь клинч сворачивается в ОДНУ строку эмоц. лога на сторону: пока клинч открыт,
+## отдельные импульсы (нажим/исход/облегчение) копятся сюда, а не пишутся построчно.
+var _clinch_emotion_active := false
+var _clinch_emotion_buf := {}
+## Последний известный порог шатания (frame_capture_reach) по сторонам — чтобы залогировать
+## переход «рамки зашатались / снова держатся» ровно один раз на изменение.
+var _reach_seen := {C.SIDE_YOU: 1, C.SIDE_OPP: 1}
 var _emotion_log_side := ""
 var _emotion_log_open := false
 var _emotion_log_open_x := 0.0
@@ -130,7 +137,7 @@ var _target_land_pending := false
 @onready var _zal_label: Label = %ZalLabel
 @onready var _hint_label: Label = %HintLabel
 @onready var _marker: ColorRect = %BarMarker
-@onready var _fill: ColorRect = %BarFill
+@onready var _fill: NinePatchRect = %BarFill
 @onready var _opp_row: Control = %OppRow
 @onready var _you_row: Control = %YouRow
 @onready var _hand_row: Control = %HandRow
@@ -141,7 +148,7 @@ var _target_land_pending := false
 @onready var _clinch_btn: Button = %ClinchBtn
 @onready var _drawer: Control = %TranscriptDrawer
 @onready var _zal_bar: Control = $ZalBar
-@onready var _bar_bg: ColorRect = %BarBg  ## геометрия бара ЗАЛа читается отсюда, не дублируется числами
+@onready var _bar_bg: Control = %BarBg  ## геометрия бара ЗАЛа читается отсюда, не дублируется числами
 @onready var _audience_log_panel: PanelContainer = %AudienceLogPanel
 @onready var _audience_log_rt: RichTextLabel = %AudienceReactionLog
 @onready var _reaction: Control = $ReactionScene  ## мини-сцена реакции (Ace Attorney-стиль)
@@ -149,12 +156,12 @@ var _target_land_pending := false
 @onready var _card_bubble: Panel = %CardInfoBubble
 @onready var _card_bubble_title: Label = %CardInfoTitle
 @onready var _card_bubble_body: Label = %CardInfoBody
-@onready var _you_strain_bg: ColorRect = %YouStrainBg
-@onready var _you_strain_fill: ColorRect = %YouStrainFill
+@onready var _you_strain_bg: Control = %YouStrainBg
+@onready var _you_strain_fill: NinePatchRect = %YouStrainFill
 @onready var _you_strain_label: Label = %YouStrainLabel
 @onready var _you_strain: Control = $EmotionHud/YouStrain
-@onready var _opp_strain_bg: ColorRect = %OppStrainBg
-@onready var _opp_strain_fill: ColorRect = %OppStrainFill
+@onready var _opp_strain_bg: Control = %OppStrainBg
+@onready var _opp_strain_fill: NinePatchRect = %OppStrainFill
 @onready var _opp_strain_label: Label = %OppStrainLabel
 @onready var _opp_strain: Control = $EmotionHud/OppStrain
 @onready var _snap_button: Button = %SnapButton
@@ -226,6 +233,10 @@ func _ready() -> void:
 	EventBus.audience_changed.connect(_on_audience_changed)
 	EventBus.emotion_observed.connect(_on_emotion_observed)
 	EventBus.emotion_linked.connect(_on_emotion_linked)
+	EventBus.emotion_relieved.connect(_on_emotion_relieved)
+	EventBus.situational_drawn.connect(_on_situational_drawn)
+	EventBus.clinch_started.connect(_on_clinch_emotion_open)
+	EventBus.clinch_resolved.connect(_on_clinch_emotion_flush)
 	EventBus.board_changed.connect(_on_board_changed)
 	EventBus.match_reported.connect(_on_match_reported)
 	controller.start_match()
@@ -281,6 +292,9 @@ func _on_match_started(_info: Dictionary) -> void:
 	_audience_log_rt.text = ""
 	_emotion_histories = {C.SIDE_YOU: [], C.SIDE_OPP: []}
 	_emotion_event_indices = {C.SIDE_YOU: -1, C.SIDE_OPP: -1}
+	_clinch_emotion_active = false
+	_clinch_emotion_buf = {}
+	_reach_seen = {C.SIDE_YOU: 1, C.SIDE_OPP: 1}
 	_emotion_log_rt.text = ""
 	for side in [C.SIDE_YOU, C.SIDE_OPP]:
 		var emotion_state: Dictionary = controller.emotion_state(side)
@@ -341,14 +355,13 @@ func _on_audience_changed(state: Dictionary) -> void:
 	var scene: Dictionary = snapshot.get("last_scene", {})
 	var scene_committed := not scene.is_empty() \
 		and int(snapshot.get("scenes", 0)) > int(previous.get("scenes", 0))
-	var public_state_changed := int(snapshot.get("lean", 0)) != int(previous.get("lean", 0)) \
-		or int(snapshot.get("heat", 0)) != int(previous.get("heat", 0)) \
-		or int(snapshot.get("moves", 0)) != int(previous.get("moves", 0)) \
-		or int(snapshot.get("reversals", 0)) != int(previous.get("reversals", 0))
+	# Пишем ТОЛЬКО закоммиченные сцены. Тихое охлаждение больше не отдельная строка
+	# (с выключенным азартом ему и двигать нечего) — чистый список «что произошло → куда
+	# качнулся зал».
 	if scene_committed:
-		_append_audience_history(_format_audience_scene(previous, snapshot))
-	elif public_state_changed:
-		_append_audience_history(_format_audience_cooldown(previous, snapshot))
+		var line := _format_audience_scene(previous, snapshot)
+		if line != "":
+			_append_audience_history(line)
 	_audience_last_state = snapshot
 
 
@@ -361,56 +374,63 @@ func _append_audience_history(body: String) -> void:
 
 
 func _format_audience_start(state: Dictionary) -> String:
-	var lean := int(state.get("lean", 0))
-	var heat := int(state.get("heat", 0))
-	return "[color=#%s]● СТАРТ[/color]  крен %s · азарт %d/%d\n[color=#%s]Зал слушает обе стороны.[/color]" % [
-		COL_GOLD, _signed(lean), heat, int(state.get("heat_max", 0)), COL_DIM]
+	return "[color=#%s]● Зал слушает · крен %s[/color]" % [
+		COL_GOLD, _signed(int(state.get("lean", 0)))]
 
 
+## Одна закоммиченная сцена = одна строка: что произошло → куда качнулся зал.
+## Азарта больше нет — зал двигается ровно на зарубку за сцену в сторону победителя.
 func _format_audience_scene(previous: Dictionary, state: Dictionary) -> String:
 	var scene: Dictionary = state.get("last_scene", {})
 	var before_lean := int(previous.get("lean", 0))
 	var after_lean := int(state.get("lean", 0))
 	var content := int(scene.get("content_delta", 0))
 	var conduct := int(scene.get("conduct_applied", 0))
-	var reaction_seen := bool(scene.get("reaction_seen", false))
-	var surged := bool(scene.get("surged", false))
-	var direction := int(scene.get("direction", 0))
-	var heading := "ЗАЛ РАЗДЕЛИЛСЯ"
-	if surged:
-		heading = "ВСПЛЕСК ЗАЛА"
-	elif direction > 0:
-		heading = "ЗАЛ КАЧНУЛСЯ К ВАМ"
-	elif direction < 0:
-		heading = "ЗАЛ КАЧНУЛСЯ К ОППОНЕНТУ"
-	elif before_lean == after_lean:
-		heading = "ЗАЛ УДЕРЖАЛ ПОЗИЦИЮ"
-	var accent := COL_GOLD if surged or direction == 0 else (COL_YOU if direction > 0 else COL_OPP)
+	var moved := after_lean - before_lean
+	var direction := int(scene.get("direction", signi(moved)))
 	var cause: Dictionary = state.get("cause", {})
 	var story := _audience_cause_sentence(cause)
-	var reactions: Array = cause.get("reactions", [])
-	for raw_reaction in reactions:
-		var reaction_note: Dictionary = raw_reaction
-		var who := "Вы вскипели" if String(reaction_note.get("side", "")) == C.SIDE_YOU \
-			else "Оппонент вскипел"
-		story += " %s: «%s»." % [who, String(reaction_note.get("title", "реакция"))]
-	if story == "":
-		story = "Довод и впечатление погасили друг друга." if direction == 0 else \
-			("Публика купилась на ваш момент." if direction > 0 else \
-			"Публика купилась на момент оппонента.")
-	var votes: Array[String] = []
-	if content != 0:
-		votes.append("довод %s" % _signed(content))
-	if conduct != 0:
-		votes.append("впечатление %s" % _signed(conduct))
-	elif reaction_seen:
-		votes.append("реакция без голоса")
-	var vote_note := "" if votes.is_empty() else " Голоса: %s." % " · ".join(votes)
-	var surge_note := " · АЗАРТ ПРОРВАЛСЯ" if surged else ""
-	return "[color=#%s]◆ %s[/color]  крен %s → %s%s\n[color=#%s]%s%s Азарт %d → %d.[/color]" % [
-		accent, heading, _signed(before_lean), _signed(after_lean), surge_note, COL_DIM,
-		story, vote_note, int(scene.get("heat_before", previous.get("heat", 0))),
-		int(state.get("heat", 0))]
+
+	var heading: String
+	var accent: String
+	if moved > 0:
+		heading = "ЗАЛ К ВАМ"
+		accent = COL_YOU
+	elif moved < 0:
+		heading = "ЗАЛ К ОППОНЕНТУ"
+		accent = COL_OPP
+	elif direction > 0:
+		heading = "ЗАЛ УЖЕ НА ВАШЕЙ СТОРОНЕ"  # крен упёрся в край
+		accent = COL_YOU
+	elif direction < 0:
+		heading = "ЗАЛ УЖЕ ЗА ОППОНЕНТА"
+		accent = COL_OPP
+	else:
+		heading = "ЗАЛ НЕ ДВИНУЛСЯ"
+		accent = COL_DIM
+
+	var extras: Array[String] = []
+	# Почему зал качнулся именно так — только когда это неочевидно.
+	if content != 0 and conduct != 0 and signi(content) != signi(conduct):
+		extras.append("довод в одну сторону, впечатление в другую")
+	elif content == 0 and conduct != 0:
+		extras.append("решило поведение, не довод")
+	# Эмоциональные реакции сцены.
+	for raw_reaction in (cause.get("reactions", []) as Array):
+		var rn: Dictionary = raw_reaction
+		var who := "вы вскипели" if String(rn.get("side", "")) == C.SIDE_YOU \
+			else "оппонент вскипел"
+		extras.append("%s: «%s»" % [who, String(rn.get("title", "реакция"))])
+
+	var detail := story
+	if not extras.is_empty():
+		detail += (" " if detail != "" else "") + "(" + " · ".join(extras) + ")"
+	if detail.strip_edges() == "":
+		detail = "Сцена прошла — зал остался при своём."
+
+	return "[color=#%s]◆ %s · крен %s → %s[/color]\n[color=#%s]%s[/color]" % [
+		accent, heading, _signed(before_lean), _signed(after_lean), COL_DIM,
+		detail.strip_edges()]
 
 
 static func _audience_cause_sentence(cause: Dictionary) -> String:
@@ -426,14 +446,8 @@ static func _audience_cause_sentence(cause: Dictionary) -> String:
 		"frame_lost": return "%s развалил рамку %s." % [owner, quoted]
 		"argument_lost": return "%s продавил аргумент вокруг %s." % [owner, quoted]
 		"attack_stalled": return "%s упёрся в %s и захлебнулся." % [owner, quoted]
-		"dirty_hit": return "%s ударил ниже пояса." % owner
-		_: return "%s изменил настроение сцены вокруг %s." % [owner, quoted]
-
-
-func _format_audience_cooldown(previous: Dictionary, state: Dictionary) -> String:
-	return "[color=#%s]◇ ЗАЛ ВЫДЫХАЕТ[/color]  крен %s → %s\n[color=#%s]спокойная пауза · азарт %d → %d[/color]" % [
-		COL_DIM, _signed(int(previous.get("lean", 0))), _signed(int(state.get("lean", 0))),
-		COL_DIM, int(previous.get("heat", 0)), int(state.get("heat", 0))]
+		"dirty_hit": return "%s ударил ниже пояса — осадок у зала остаётся." % owner
+		_: return "%s качнул настроение сцены вокруг %s." % [owner, quoted]
 
 
 static func _signed(value: int) -> String:
@@ -504,36 +518,206 @@ func _on_snap_pressed() -> void:
 	controller.press_snap()
 
 
+## Эмоц. лог говорит на языке СТОЛБА, который видит игрок: полный столб = самообладание
+## 12/12 (ледяное спокойствие), пустой = 0/12 (срыв, уход из боя). События — это УРОН (−N)
+## и ВОССТАНОВЛЕНИЕ (+N) по столбу, а не растущее «давление». Один удар — одна строка;
+## весь клинч сворачивается в одну строку на сторону с множителем трения (КЛИНЧ ×N).
+
+func _composure(strain: int, maximum: int) -> int:
+	return maxi(0, maximum - strain)
+
+
+func _composure_tier(c: int) -> String:
+	if c <= 0:
+		return "срыв"
+	if c <= 2:
+		return "на грани"
+	if c <= 5:
+		return "раздражён"
+	if c <= 9:
+		return "задело"
+	return "спокоен"
+
+
+func _emotion_subject(side: String) -> String:
+	return "Вы" if side == C.SIDE_YOU else "Оппонент"
+
+
+func _emotion_max(side: String) -> int:
+	return int(controller.emotion_state(side).get("max", 12))
+
+
 func _on_emotion_observed(side: String, result: Dictionary) -> void:
 	if not side in [C.SIDE_YOU, C.SIDE_OPP]:
 		return
-	_append_emotion_history(side, _format_emotion_event(side, result))
+	if _clinch_emotion_active:
+		_buffer_clinch_emotion(side, result)
+		return
+	var line := _format_emotion_event(side, result)
+	if line != "":
+		_append_emotion_history(side, line)
+	_check_reach_change(side)
 	if _emotion_log_side == side:
 		_update_emotion_summary(side)
+
+
+## Раньше облегчение было немым — двигало только столб. Теперь у восстановления есть строка.
+func _on_emotion_relieved(side: String, info: Dictionary) -> void:
+	if not side in [C.SIDE_YOU, C.SIDE_OPP]:
+		return
+	var amount := int(info.get("amount", 0))
+	if _clinch_emotion_active:
+		var buf: Dictionary = _clinch_emotion_buf.get(side, {})
+		buf["back"] = int(buf.get("back", 0)) + maxi(0, amount)
+		_clinch_emotion_buf[side] = buf
+		return
+	if amount <= 0:
+		return
+	var state: Dictionary = info.get("state", controller.emotion_state(side))
+	var maximum := int(state.get("max", 12))
+	var c := _composure(int(state.get("strain", 0)), maximum)
+	_append_emotion_history(side, "[color=#%s]+%d · %s[/color]\n[color=#%s]%s — самообладание %d/%d · %s[/color]" % [
+		COL_YOU if side == C.SIDE_YOU else COL_OPP, amount, _relief_cause(String(info.get("stimulus", ""))),
+		COL_DIM, _emotion_subject(side), c, maximum, _composure_tier(c)])
+	if _emotion_log_side == side:
+		_update_emotion_summary(side)
+
+
+static func _relief_cause(stimulus: String) -> String:
+	match stimulus:
+		"clinch_won", "clinch_won_frame", "clinch_won_capture", "clinch_held":
+			return "отстояли позицию"
+		"combo_confirmed":
+			return "комбо в вашу пользу"
+		"frame_redeemed":
+			return "вернули свою рамку"
+		_:
+			return "отпустило"
+
+
+## Осознанно придержанная карта — этот заряд уже не выпадет непроизвольным срывом в матче.
+func _on_situational_drawn(side: String, info: Dictionary) -> void:
+	if not side in [C.SIDE_YOU, C.SIDE_OPP]:
+		return
+	var body := "Взяли в руку осознанно — непроизвольным срывом в этом матче уже не выйдет." \
+		if side == C.SIDE_YOU else "Придержал карту в руке — на срыв этот заряд уже не уйдёт."
+	_append_emotion_history(side, "[color=#%s]● «%s» — карта придержана[/color]\n[color=#%s]%s[/color]" % [
+		COL_GOLD, String(info.get("name", "карта")), COL_DIM, body])
+
+
+# --- клинч: одна строка на сторону вместо потока «Давление N→M» ---
+
+func _on_clinch_emotion_open(_attacker: String, _defender: String, _idx: int) -> void:
+	_clinch_emotion_active = true
+	_clinch_emotion_buf = {}
+	for s in [C.SIDE_YOU, C.SIDE_OPP]:
+		var st: Dictionary = controller.emotion_state(s)
+		var maximum := int(st.get("max", 12))
+		_clinch_emotion_buf[s] = {"got": 0, "back": 0, "reacted": false, "title": "",
+			"breakdown": false, "c0": _composure(int(st.get("strain", 0)), maximum)}
+
+
+func _buffer_clinch_emotion(side: String, result: Dictionary) -> void:
+	var buf: Dictionary = _clinch_emotion_buf.get(side, {"got": 0, "back": 0,
+		"reacted": false, "title": "", "breakdown": false, "c0": 0})
+	var before := int(result.get("before", 0))
+	var peak := int(result.get("peak", before))
+	var after := int(result.get("after", peak))
+	buf["got"] = int(buf.get("got", 0)) + maxi(0, peak - before)
+	buf["back"] = int(buf.get("back", 0)) + maxi(0, peak - after)
+	var reaction: Dictionary = result.get("reaction", {})
+	if not reaction.is_empty():
+		buf["reacted"] = true
+		buf["title"] = String(reaction.get("title", "срыв"))
+		buf["breakdown"] = bool(result.get("breakdown", false))
+	_clinch_emotion_buf[side] = buf
+
+
+func _on_clinch_emotion_flush(ev: Dictionary) -> void:
+	if not _clinch_emotion_active:
+		return
+	_clinch_emotion_active = false
+	var t := int(ev.get("t", 0))
+	var r := int(ev.get("r", 1))
+	var stake := maxi(1, int((r + t) / 2.0))  ## зеркалит rules/controller: (r+t)/2, пол 1
+	var target := String(ev.get("target", ""))
+	var head_topic := " · «%s»" % target if target != "" else ""
+	var outcome := "рамку отстояли"
+	if bool(ev.get("captured", false)):
+		outcome = "рамку увели целиком"
+	elif bool(ev.get("removed", false)):
+		outcome = "рамка пробита"
+	elif bool(ev.get("landed", false)):
+		outcome = "аргумент продавлен"
+	for side in [C.SIDE_YOU, C.SIDE_OPP]:
+		var buf: Dictionary = _clinch_emotion_buf.get(side, {})
+		var got := int(buf.get("got", 0))
+		var back := int(buf.get("back", 0))
+		if got == 0 and back == 0 and not bool(buf.get("reacted", false)):
+			continue
+		var st: Dictionary = controller.emotion_state(side)
+		var maximum := int(st.get("max", 12))
+		var c := _composure(int(st.get("strain", 0)), maximum)
+		var accent := COL_YOU if side == C.SIDE_YOU else COL_OPP
+		var mult := "" if stake <= 1 else " ×%d" % stake
+		var subj := _emotion_subject(side)
+		var tail: String
+		if bool(buf.get("breakdown", false)):
+			tail = "%s: −%d и психанул — вышел из боя (0/%d)" % [subj, got, maximum]
+		else:
+			tail = "%s: −%d самообладания, +%d назад → %d/%d · %s" % [
+				subj, got, back, c, maximum, _composure_tier(c)]
+			if bool(buf.get("reacted", false)):
+				tail += " · сорвался: «%s»" % String(buf.get("title", "срыв"))
+			if int(buf.get("c0", c)) > 5 and c <= 5:
+				tail += " · порог раздражения пройден"
+		_append_emotion_history(side, "[color=#%s]КЛИНЧ%s%s[/color]\n[color=#%s]%s. %s[/color]" % [
+			accent, mult, head_topic, COL_DIM, outcome.capitalize(), tail])
+		_check_reach_change(side)
+	if _emotion_log_side != "":
+		_update_emotion_summary(_emotion_log_side)
+
+
+## Один раз на изменение порога шатания владельца: strain открыл/закрыл захват его рамок.
+func _check_reach_change(side: String) -> void:
+	if model == null:
+		return
+	var reach := int(model.frame_capture_reach(side))
+	if reach == int(_reach_seen.get(side, 1)):
+		return
+	_reach_seen[side] = reach
+	var subj := _emotion_subject(side)
+	if reach >= 2:
+		_append_emotion_history(side, "[color=#%s]⚠ РАМКИ ЗАШАТАЛИСЬ[/color]\n[color=#%s]%s теряет хватку: рамки с %d тезисами и тоньше Кража заберёт целиком.[/color]" % [
+			COL_GOLD, COL_DIM, subj, reach])
+	else:
+		_append_emotion_history(side, "[color=#%s]Рамки снова держатся[/color]\n[color=#%s]%s собрался — захват откатился к последнему тезису.[/color]" % [
+			COL_DIM, COL_DIM, subj])
 
 
 func _on_emotion_linked(_source_side: String, responder_side: String,
 	result: Dictionary) -> void:
 	if not responder_side in [C.SIDE_YOU, C.SIDE_OPP]:
 		return
+	if _clinch_emotion_active:
+		return  # свёрнуто в итоговую строку клинча
 	var kind := String(result.get("kind", "none"))
 	if kind == "trigger":
 		return  # полноценный ответ следом придёт через emotion_observed
-	var subject := "ВЫ" if responder_side == C.SIDE_YOU else "ОППОНЕНТ"
 	var accent := COL_YOU if responder_side == C.SIDE_YOU else COL_OPP
+	var subj := _emotion_subject(responder_side)
 	if kind == "parry":
 		var parry: Dictionary = result.get("parry", {})
-		var source := "срыв оппонента" if responder_side == C.SIDE_YOU else "ваш срыв"
 		_append_emotion_history(responder_side,
-			"[color=#%s]↩ %s ПАРИРОВАЛ%s · «%s»[/color]\n[color=#%s]%s отбит без роста давления.[/color]" % [
-				accent, subject, "И" if responder_side == C.SIDE_YOU else "",
-				String(parry.get("title", "холодный ответ")), COL_DIM, source.capitalize()])
+			"[color=#%s]↩ %s парировал холодно · «%s»[/color]\n[color=#%s]Чужой срыв отбит — самообладание не тронуто.[/color]" % [
+				accent, subj, String(parry.get("title", "холодный ответ")), COL_DIM])
 	elif kind == "absorb":
-		var held := "ВЫ ВЫДЕРЖАЛИ" if responder_side == C.SIDE_YOU else "ОППОНЕНТ ВЫДЕРЖАЛ"
+		var st: Dictionary = controller.emotion_state(responder_side)
+		var maximum := int(st.get("max", 12))
+		var c := _composure(int(st.get("strain", 0)), maximum)
 		_append_emotion_history(responder_side,
-			"[color=#%s]○ %s ЧУЖОЙ СРЫВ[/color]\n[color=#%s]Без ответа · давление осталось %d/%d.[/color]" % [
-				COL_DIM, held, COL_DIM, int(result.get("after", 0)),
-				int(controller.emotion_state(responder_side).get("max", 6))])
+			"[color=#%s]○ %s выдержал чужой срыв[/color]\n[color=#%s]Без ответа · самообладание %d/%d.[/color]" % [
+				COL_DIM, subj, COL_DIM, c, maximum])
 	else:
 		return
 	if _emotion_log_side == responder_side:
@@ -551,38 +735,48 @@ func _append_emotion_history(side: String, body: String) -> void:
 
 
 func _format_emotion_start(side: String, state: Dictionary) -> String:
-	var subject := "ВЫ СПОКОЙНЫ" if side == C.SIDE_YOU else "ОППОНЕНТ СПОКОЕН"
-	return "[color=#%s]● %s[/color]  давление %d/%d · риск %d%%\n[color=#%s]Манера: %s[/color]" % [
-		COL_GOLD, subject, int(state.get("strain", 0)), int(state.get("max", 6)),
-		roundi(float(state.get("chance", 0.0)) * 100.0), COL_DIM,
-		String(state.get("deck_label", "Эмоциональная колода"))]
+	var maximum := int(state.get("max", 12))
+	var c := _composure(int(state.get("strain", 0)), maximum)
+	var subject := "ВЫ" if side == C.SIDE_YOU else "ОППОНЕНТ"
+	return "[color=#%s]● %s · самообладание %d/%d · %s[/color]\n[color=#%s]Манера: %s.[/color]" % [
+		COL_GOLD, subject, c, maximum, _composure_tier(c), COL_DIM,
+		String(state.get("deck_label", "эмоциональная колода"))]
 
 
+## Одиночный импульс вне клинча (грязный приём, ситуативный выпад, чужой срыв в нерв).
+## Возврат "" — микро-удар без последствий: столб дрогнул, но лог не засоряем.
 func _format_emotion_event(side: String, result: Dictionary) -> String:
+	var maximum := _emotion_max(side)
 	var before := int(result.get("before", 0))
 	var peak := int(result.get("peak", before))
 	var after := int(result.get("after", peak))
+	var got := maxi(0, peak - before)
+	var back := maxi(0, peak - after)
 	var chance := roundi(float(result.get("chance", 0.0)) * 100.0)
-	var stimulus_id := String(result.get("stimulus", ""))
-	var stimulus := _emotion_stimulus_label(stimulus_id)
-	var reaction: Dictionary = result.get("reaction", {})
 	var context: Dictionary = result.get("context", {})
+	var reaction: Dictionary = result.get("reaction", {})
 	var cause := _emotion_cause_phrase(context)
-	var outcome := _emotion_outcome_sentence(stimulus_id, String(context.get("target", "")))
+	if cause == "":
+		cause = _emotion_stimulus_label(String(result.get("stimulus", "")))
+	var c_after := _composure(after, maximum)
 	var accent := COL_YOU if side == C.SIDE_YOU else COL_OPP
+	var subj := _emotion_subject(side)
+	if bool(result.get("breakdown", false)):
+		return "[color=#%s]СРЫВ · %s психанул и вышел из боя[/color]\n[color=#%s]%s. Самообладание 0/%d. «%s»[/color]" % [
+			accent, subj, COL_DIM, cause.capitalize(), maximum,
+			String(reaction.get("text", reaction.get("title", "с меня хватит")))]
 	if not reaction.is_empty():
-		var boiled := "ВЫ ВСКИПЕЛИ" if side == C.SIDE_YOU else "ОППОНЕНТ ВСКИПЕЛ"
-		var chain_note := " в ответ" if int(result.get("chain_depth", 0)) > 0 else ""
-		return "[color=#%s]⚡ %s%s %s[/color]\n[color=#%s]%s Давление %d → %d → %d · «%s» · разрядка −%d.[/color]" % [
-			accent, boiled, chain_note, cause, COL_DIM, outcome, before, peak, after,
-			String(reaction.get("title", "эмоциональный срыв")), maxi(0, peak - after)]
-	var heading := "ВЫ НАПРЯГЛИСЬ" if side == C.SIDE_YOU else "ОППОНЕНТ НАПРЯГСЯ"
-	accent = COL_GOLD if peak >= 4 else COL_DIM
-	if chance > 0:
-		heading = "ВЫ УДЕРЖАЛИСЬ" if side == C.SIDE_YOU else "ОППОНЕНТ УДЕРЖАЛСЯ"
-	return "[color=#%s]◆ %s %s[/color]\n[color=#%s]%s Давление %d → %d · следующий риск %d%%.[/color]" % [
-		accent, heading, cause, COL_DIM, outcome if outcome != "" else stimulus.capitalize(),
-		before, after, chance]
+		var vent := " вернул +%d," % back if back > 0 else ""
+		return "[color=#%s]⚡ −%d · %s сорвался: «%s»[/color]\n[color=#%s]%s.%s самообладание %d/%d · %s[/color]" % [
+			accent, got, subj, String(reaction.get("title", "срыв")), COL_DIM,
+			cause.capitalize(), vent, c_after, maximum, _composure_tier(c_after)]
+	# Спокойный микро-удар без риска — не пишем.
+	if got <= 1 and back == 0 and c_after >= 10:
+		return ""
+	var risk := " · срыв %d%%" % chance if chance > 0 else ""
+	return "[color=#%s]−%d · %s[/color]\n[color=#%s]%s — самообладание %d/%d · %s%s[/color]" % [
+		accent if got > 0 else COL_DIM, got, cause.capitalize(),
+		COL_DIM, subj, c_after, maximum, _composure_tier(c_after), risk]
 
 
 static func _emotion_cause_phrase(context: Dictionary) -> String:
@@ -590,32 +784,21 @@ static func _emotion_cause_phrase(context: Dictionary) -> String:
 	if action == "":
 		return ""
 	if String(context.get("cause_side", "")) == C.SIDE_YOU:
-		return "после вашего приёма «%s»" % action
-	return "после приёма оппонента «%s»" % action
-
-
-static func _emotion_outcome_sentence(stimulus: String, target: String) -> String:
-	var quoted := "«%s»" % target if target != "" else "позиция"
-	match stimulus:
-		"attack_stalled": return "Нажим на %s захлебнулся." % quoted
-		"argument_lost": return "Аргумент вокруг %s продавлен." % quoted
-		"frame_lost": return "Рамка %s развалилась." % quoted
-		"captured": return "Рамку %s увели целиком." % quoted
-		"dirty_hit": return "Прилетел грязный приём."
-		"reaction_received": return "Чужая вспышка попала в нерв."
-		"clinch_pressure": return "Клинч вокруг %s не отпускает ни одного из вас." % quoted
-		_: return ""
+		return "ваш приём «%s»" % action
+	return "приём оппонента «%s»" % action
 
 
 static func _emotion_stimulus_label(stimulus: String) -> String:
 	match stimulus:
 		"attack_stalled": return "атака захлебнулась"
-		"argument_lost": return "проигран обмен аргументами"
-		"frame_lost": return "потеряна рамка"
-		"captured": return "рамка захвачена"
+		"argument_lost": return "проигранный обмен"
+		"frame_lost": return "потеря рамки"
+		"captured": return "рамку забрали"
 		"dirty_hit": return "грязный приём"
-		"reaction_received": return "чужой эмоциональный срыв"
-		"clinch_pressure": return "клинч затянулся"
+		"reaction_received": return "чужой срыв в нерв"
+		"clinch_pressure": return "затяжной клинч"
+		"situational_hit", "situational_card", "situational_card_clinch":
+			return "эмоциональный выпад"
 		_: return "эмоциональный импульс" if stimulus == "" else stimulus.replace("_", " ")
 
 
@@ -623,8 +806,10 @@ func _update_emotion_summary(side: String) -> void:
 	if _emotion_summary == null:
 		return
 	var state: Dictionary = controller.emotion_state(side)
-	_emotion_summary.text = "ДАВЛЕНИЕ %d/%d  ·  РИСК %d%%\nСРЫВЫ %d  ·  ПАРИРОВКИ %d" % [
-		int(state.get("strain", 0)), int(state.get("max", 6)),
+	var maximum := int(state.get("max", 12))
+	var c := _composure(int(state.get("strain", 0)), maximum)
+	_emotion_summary.text = "САМООБЛАДАНИЕ %d/%d  ·  %s\nСРЫВ %d%%  ·  срывов %d  ·  парировок %d" % [
+		c, maximum, _composure_tier(c).to_upper(),
 		roundi(float(state.get("chance", 0.0)) * 100.0),
 		int(state.get("reactions", 0)), int(state.get("parries", 0))]
 
@@ -734,8 +919,11 @@ func _on_match_reported(report: Dictionary) -> void:
 		lean_text = "зал выбрал вас"
 	elif crowd_winner == C.SIDE_OPP:
 		lean_text = "зал выбрал оппонента"
-	_final_audience_detail.text = "АЗАРТ %d/%d\n%s" % [
-		heat, int(audience.get("heat_max", 0)), lean_text]
+	if int(audience.get("heat_max", 0)) > 0:
+		_final_audience_detail.text = "АЗАРТ %d/%d\n%s" % [
+			heat, int(audience.get("heat_max", 0)), lean_text]
+	else:
+		_final_audience_detail.text = lean_text
 	var you_strain := int(you_emotion.get("strain", 0))
 	var opp_strain := int(opp_emotion.get("strain", 0))
 	var you_reactions := int(you_emotion.get("reactions", 0))
@@ -803,9 +991,11 @@ func _refresh() -> void:
 			crowd_note = "  ·  ЗАЛ СКАНДИРУЕТ: %d/%d — ВЕРНИТЕ ЗАЛ!" % [so, int(model.zal_hold)]
 	if String(audience.get("mode", "derived")) == "derived":
 		_zal_label.text = "ЗАЛ: КРЕН %+d  (legacy: рамки + сила)%s" % [z, crowd_note]
-	else:
+	elif int(audience.get("heat_max", 0)) > 0:
 		_zal_label.text = "ЗАЛ: КРЕН %+d  ·  АЗАРТ %d/%d%s" % [z,
 			int(audience.get("heat", 0)), int(audience.get("heat_max", 0)), crowd_note]
+	else:
+		_zal_label.text = "ЗАЛ: КРЕН %+d%s" % [z, crowd_note]
 	_update_bar(z)
 	_update_emotion_hud()
 	_update_status_hud()
@@ -828,10 +1018,10 @@ static func board_lines_for_mode(lines: Array, input_mode: String) -> Array:
 func _update_emotion_hud() -> void:
 	var player_state: Dictionary = controller.emotion_state(C.SIDE_YOU)
 	_render_strain(player_state, _you_strain_bg,
-		_you_strain_fill, _you_strain_label, "ВЫ", C.SIDE_YOU)
+		_you_strain_fill, _you_strain_label, C.SIDE_YOU)
 	var opponent_state: Dictionary = controller.emotion_state(C.SIDE_OPP)
 	_render_strain(opponent_state, _opp_strain_bg,
-		_opp_strain_fill, _opp_strain_label, "ОПП", C.SIDE_OPP)
+		_opp_strain_fill, _opp_strain_label, C.SIDE_OPP)
 	if _emotion_log_side != "":
 		_update_emotion_summary(_emotion_log_side)
 	# Агентная кнопка (situational_cards_v0.1 §2, §6 шаг 1): видна только пока легальна —
@@ -839,8 +1029,8 @@ func _update_emotion_hud() -> void:
 	_snap_button.visible = controller.can_snap(C.SIDE_YOU)
 
 
-func _render_strain(state: Dictionary, bg: ColorRect, fill: ColorRect, label: Label,
-	who: String, side: String) -> void:
+func _render_strain(state: Dictionary, bg: Control, fill: NinePatchRect, label: Label,
+	side: String) -> void:
 	var maximum := maxi(1, int(state.get("max", 12)))
 	var strain := clampi(int(state.get("strain", 0)), 0, maximum)
 	# ХП-бар, не счётчик урона: полный при strain=0 (полное самообладание), пустой при
@@ -851,7 +1041,8 @@ func _render_strain(state: Dictionary, bg: ColorRect, fill: ColorRect, label: La
 	var height := bg.size.y * hp
 	fill.size = Vector2(bg.size.x, height)
 	fill.position = Vector2(bg.position.x, bg.position.y + bg.size.y - height)
-	var zone_width := maxi(1, maximum / 2)
+	# 9-slice заливка: у пустого столба (эмоц. КО) прячем — иначе капы патча дают обрубок.
+	fill.visible = height > 1.5
 	# Классический ХП-градиент зелёный→жёлтый→красный по hp (не по сырому strain — тогда
 	# жёлтая середина сама совпадает со швом самообладание/раздражение на hp=0.5, отдельно
 	# размечать шов цветом не нужно).
@@ -859,9 +1050,9 @@ func _render_strain(state: Dictionary, bg: ColorRect, fill: ColorRect, label: La
 	var col_yellow := Color.html("#f2c94c")
 	var col_red := Color.html("#ef4b4b")
 	if hp >= 0.5:
-		fill.color = col_yellow.lerp(col_green, (hp - 0.5) * 2.0)
+		fill.self_modulate = col_yellow.lerp(col_green, (hp - 0.5) * 2.0)
 	else:
-		fill.color = col_red.lerp(col_yellow, hp * 2.0)
+		fill.self_modulate = col_red.lerp(col_yellow, hp * 2.0)
 	var status := "СРЫВ %d%%" % roundi(float(state.get("chance", 0.0)) * 100.0)
 	if int(state.get("draw_left", 0)) <= 0:
 		status = "ПУСТО"
@@ -870,10 +1061,9 @@ func _render_strain(state: Dictionary, bg: ColorRect, fill: ColorRect, label: La
 	var reach := int(model.frame_capture_reach(side))
 	if reach >= 2:
 		status += " · ШАТ.≤%d" % reach
-	var irritation := int(state.get("irritation", 0))
-	var zone_line := "РАЗДРАЖЕНИЕ %d/%d" % [irritation, zone_width] if irritation > 0 else \
-		"САМООБЛАДАНИЕ %d/%d" % [int(state.get("composure", zone_width)), zone_width]
-	label.text = "%s\n%s\n%s" % [who, zone_line, status]
+	# Над шкалой держим только строку риска срыва — сторона и зона самообладания читаются
+	# по цвету/высоте столба, дублировать текстом ни к чему.
+	label.text = status
 
 
 func _update_status_hud() -> void:
@@ -946,16 +1136,11 @@ func _update_controls() -> void:
 	_hint_label.text = String(controller.hint_text)
 	_cancel_btn.visible = mode == "target"
 	if mode == "clinch_defend":
-		var opener: bool = not model.clinch.is_empty() and \
-			(model.clinch.get("sequence", []) as Array).size() == 1
-		var sequence: Array = model.clinch.get("sequence", [])
-		var incoming: Dictionary = sequence.back() if not sequence.is_empty() else {}
-		var outcome := "украдёт" if bool(incoming.get("steals", false)) else "снимет"
-		_clinch_btn.text = "Пропустить (исходная атака ударит в рамку)" if opener else \
-			"Пропустить (эта карта %s тезис; цепь дойдёт до рамки)" % outcome
+		# Пояснение к последствиям живёт в _hint_label — на кнопке только глагол.
+		_clinch_btn.text = "Пропустить"
 		_clinch_btn.visible = true
 	elif mode == "clinch_attack":
-		_clinch_btn.text = "Остановиться (ответный тезис закроет всю цепь)"
+		_clinch_btn.text = "Остановиться"
 		_clinch_btn.visible = true
 	else:
 		_clinch_btn.visible = false
@@ -976,14 +1161,17 @@ func _update_bar(z: int) -> void:
 	var center := bar_x + bar_w / 2.0
 	var mx := center + t * (bar_w / 2.0)
 	_marker.position = Vector2(mx - 3.5, bar_y - 4.0)
+	# Заливка — текстурный 9-slice (sci-fi HUD): цвет стороны идёт через self_modulate,
+	# у нулевого перевеса прячем совсем, иначе капы 9-патча слепятся в 12-px обрубок по центру.
 	if z >= 0:
 		_fill.position = Vector2(center, bar_y)
 		_fill.size = Vector2(mx - center, bar_h)
-		_fill.color = Color.html("#" + COL_YOU)
+		_fill.self_modulate = Color.html("#" + COL_YOU)
 	else:
 		_fill.position = Vector2(mx, bar_y)
 		_fill.size = Vector2(center - mx, bar_h)
-		_fill.color = Color.html("#" + COL_OPP)
+		_fill.self_modulate = Color.html("#" + COL_OPP)
+	_fill.visible = absf(mx - center) > 1.5
 
 
 ## Ширина зоны доски ФИКСИРОВАНА (row.size.x — внутренняя область видимой рамки Board). Если
@@ -1492,13 +1680,17 @@ func _rebuild_hand() -> void:
 		# потому что содержание зависит от цели.
 		# Сам дизайн карты (слои/шрифты/размер) — шаблон ui/card/card.tscn, правится в редакторе.
 		var is_named: bool = card.has("named")
+		var is_situational := bool(card.get("situational_emotion", false))
 		# Установки имеют собственные названия (Рамка / Тезис дня / Позиция), поэтому не
 		# схлопываем их все в одинаковый заголовок «Установка».
-		var title: String = String(card.get("name", "")) if is_named or \
+		var title: String = String(card.get("name", "")) if is_named or is_situational or \
 			card.type == C.TYPE_USTANOVKA else nar.device_label(card)
+		if is_situational:
+			title = "⚡ " + title
 		if bool(card.get("opening_reserve", false)):
 			title = "Резервная рамка"
-		var body: String = String(card.get("text", "")) if is_named else controller.hand_preview(i)
+		var body: String = String(card.get("text", "")) if is_named or is_situational \
+			else controller.hand_preview(i)
 		if bool(card.get("opening_reserve", false)) and String(card.get("claim", "")) != "":
 			body = "«%s»\n\nПУБЛИЧНЫЙ РЕЗЕРВ" % String(card.claim)
 		var btn: Button = CardScene.instantiate()
@@ -1508,6 +1700,10 @@ func _rebuild_hand() -> void:
 		var bubble_body := String(card.get("text", "")) if is_named else "СКАЖЕТЕ:\n%s" % body
 		if is_named:
 			bubble_body = "Именной приём\n\n" + bubble_body
+		elif is_situational:
+			bubble_title = "Ситуативная эмоция · " + String(card.get("name", ""))
+			bubble_body = "Эмоциональная колода · осознанная реакция\n\nСКАЖЕТЕ:\n%s\n\nЭмоциональный удар: %d" % [
+				body, int(card.get("emotion_damage", 0))]
 		if mode == "reframe" and not enabled and card.type == C.TYPE_USTANOVKA:
 			bubble_body += "\n\nЭта рамка пришла после падения и сейчас не может спасти позицию."
 		# Комбо §12: правильный ответ на открытый LINK светится золотом, но НЕ автоплей —
