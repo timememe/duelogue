@@ -34,6 +34,12 @@ signal impact(side: String, kind: String)       ## яркий исход по с
 ## instant_verdict()'ом, а не физикой unwind. side — владелец (кто сорвал куш), topology —
 ## pure_guard/pure_trap/fork_guard/fork_trap (character_core решает stamp/поза по суффиксу).
 signal combo_verdict(side: String, combo_name: String, topology: String)
+## «Выпад» §3 (context/situational_cards_v0.1.md): защитник-игрок получил ⚡-карту и вошёл
+## в суженный выбор перед срабатыванием комбо. lunge_started — открытие окна (кинематограф:
+## слоумо + долли к защитнику); lunge_resolved — закрытие (pick: "guard"/"yield"/"counter"/
+## "abort"). AI-защитник «Выпада» не получает — сигналы бьют только для игрока.
+signal lunge_started(defender: String, route_name: String)
+signal lunge_resolved(pick: String)
 signal board_changed()                          ## доска/рука/режим изменились → перерисовать
 signal match_ended(winner: String, reason: String, verdict: String)
 signal match_reported(report: Dictionary)       ## полный векторный итог; match_ended сохранён для совместимости

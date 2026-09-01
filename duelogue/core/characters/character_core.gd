@@ -158,6 +158,8 @@ func _ready() -> void:
 	EventBus.impact.connect(_on_impact)
 	EventBus.combo_verdict.connect(_on_combo_verdict)
 	EventBus.turn_changed.connect(_on_turn_changed)
+	EventBus.lunge_started.connect(_on_lunge_started)
+	EventBus.lunge_resolved.connect(_on_lunge_resolved)
 	# Возврат камеры теперь ВИДИМЫЙ (по запросу игрока) — играет уже ПОСЛЕ того, как крупный
 	# план полностью отыграл и погас, а не молча под фейд-ином, как раньше (см. _reset_dolly).
 	if _reaction != null:
@@ -316,11 +318,25 @@ func _face_zone_global(side: String, sprite: Sprite2D) -> Vector2:
 	return Vector2(x, y)
 
 
+## «Выпад» §3: средний план на защитника — тот же долли-приём, но мягче наезда реплики
+## (DOLLY_SCALE=2.5 — крупно; тут «камера перед защитником, не так близко»). var — крутится
+## живьём, как остальные DOLLY_*.
+static var LUNGE_DOLLY_SCALE := 1.55
+static var LUNGE_DOLLY_IN := 0.5   ## сек engine-time; при слоумо debate_screen выходит ~реальные
+
+
 ## Наезд (scale вокруг пивота-лица) и выезд вбок (position:x) идут ОДНОВРЕМЕННО, одной
 ## BOARD_BEAT-длительностью, каждый своей кривой — по запросу игрока (были отдельными
 ## последовательными фазами, слиты в одну). "you" тянет влево, "opp" вправо — тот же принцип
 ## направления, что везде в проекте.
 func _dolly_to_speaker(side: String) -> void:
+	_dolly_stage_to(side, DOLLY_SCALE, ReadingPace.BOARD_BEAT)
+
+
+## Общий долли-примитив: scale вокруг пивота-лица side + выезд вбок, за duration. Наезд
+## реплики (_dolly_to_speaker) и средний план «Выпада» (_on_lunge_started) зовут его с разным
+## масштабом/временем; кривые/слайд-дистанция — общие DOLLY_*.
+func _dolly_stage_to(side: String, scale_to: float, duration: float) -> void:
 	if _stage == null or not _sprites.has(side):
 		return
 	var sprite: Sprite2D = _sprites[side]
@@ -333,10 +349,18 @@ func _dolly_to_speaker(side: String) -> void:
 	var dir := 1.0 if side == "opp" else -1.0
 	_dolly_tween = _stage.create_tween()
 	_dolly_tween.set_parallel(true)
-	_dolly_tween.tween_property(_stage, "scale", Vector2.ONE * DOLLY_SCALE, ReadingPace.BOARD_BEAT) \
+	_dolly_tween.tween_property(_stage, "scale", Vector2.ONE * scale_to, duration) \
 		.set_trans(DOLLY_TRANS_IN).set_ease(DOLLY_EASE_IN)
-	_dolly_tween.tween_property(_stage, "position:x", dir * DOLLY_SLIDE_DISTANCE, ReadingPace.BOARD_BEAT) \
+	_dolly_tween.tween_property(_stage, "position:x", dir * DOLLY_SLIDE_DISTANCE, duration) \
 		.set_trans(DOLLY_SLIDE_TRANS).set_ease(DOLLY_SLIDE_EASE)
+
+
+func _on_lunge_started(defender: String, _route_name: String) -> void:
+	_dolly_stage_to(defender, LUNGE_DOLLY_SCALE, LUNGE_DOLLY_IN)
+
+
+func _on_lunge_resolved(_pick: String) -> void:
+	_reset_dolly()
 
 
 ## ВИДИМО возвращает общий план к покою (масштаб И позицию — слайд тоже надо откатить) — по

@@ -39,6 +39,14 @@ const STATUS_ICON_GAP := 5.0
 const CARD_W := 42.0
 const CARD_H := 56.0
 const CARD_G := 4.0
+## «Выпад» (context/situational_cards_v0.1.md §3): окно выбора перед срабатыванием комбо.
+## Кинематограф — слоумо (Engine.time_scale) + средний план на защитника (character_core
+## слушает EventBus.lunge_started). Таймер модалки идёт по СТЕННЫМ часам (Time.get_ticks_msec),
+## не по delta — иначе слоумо растянул бы QTE-окно. Таймаут → controller.lunge_pick("yield").
+## Числа — грубые отправные, крутятся по плейтесту.
+const LUNGE_SECONDS := 5.0
+const LUNGE_TIME_SCALE := 0.16   ## слоумо, пока модалка открыта; восстанавливается на закрытии
+const LUNGE_FADE := 0.16         ## сек engine-time; при слоумо выходит ~секунда реального въезда
 ## Первый тезис не должен заезжать под золотую рамку. Сжимаются только интервалы МЕЖДУ
 ## зелёными тезисами; этот стык всегда остаётся обычным положительным отступом.
 const FRAME_TO_THESIS_GAP := CARD_G
@@ -79,6 +87,11 @@ const DRAG_TARGET_MARK_COLOR := Color(1.45, 1.3, 0.85)
 ## Драйв-полигон комбо (цифровая «бумага A0», §9): обе обоймы заряжаются маршрутом №1.
 ## Включается сценой tools/combo_drill.tscn, обычная катка не трогается.
 @export var combo_drill := false
+## Полигон «Выпада» (context/situational_cards_v0.1.md §3): та же комбо-плотная обойма
+## (`combo_drill`), но открыт как отдельная демо-сцена tools/lunge_drill.tscn — AI регулярно
+## бьёт ⚡-опенером по рамкам игрока → модалка «Выпада» с кинематографом (слоумо + средний
+## план). Числа кинематографа — консты `LUNGE_*` тут и `LUNGE_DOLLY_*` в character_core.gd.
+@export var lunge_drill := false
 
 var _drawer_closed_x := 0.0  ## закрытое (за правым краем) положение ящика — из ширины экрана
 var _drawer_open_x := 0.0    ## открытое положение — из ширины экрана И ширины самого ящика
@@ -90,6 +103,16 @@ var nar: RefCounted     ## ссылка на нарратив (превью/ст
 var log_lines: Array = []
 var _drawer_open := false
 var _menu_overlay: Control
+## «Выпад» §3: модальный оверлей выбора (строится кодом, как _menu_overlay). Показ/скрытие —
+## по EventBus.lunge_started/resolved (кинематограф). Таймер — стенные часы, не delta (слоумо).
+var _lunge_overlay: Control
+var _lunge_title: Label
+var _lunge_cards: Control
+var _lunge_ring: ColorRect
+var _lunge_ring_w := 0.0
+var _lunge_active := false
+var _lunge_deadline_msec := 0
+var _lunge_fade_tween: Tween
 ## Дефолтный (несжатый) отступ между рамками — читается из сцены ОДИН раз в _ready, ДО того
 ## как _rebuild_frames впервые применит компрессию (иначе каждый рефреш ужимал бы уже сжатое
 ## значение всё сильнее — компрессия накапливалась бы, а не считалась от истинного дефолта).
@@ -191,7 +214,7 @@ func _ready() -> void:
 	controller = BattleController.new()
 	add_child(controller)  # _ready контроллера создаёт model/nar/ai
 	controller.logging_enabled = playtest_logging_enabled
-	controller.combo_drill = combo_drill
+	controller.combo_drill = combo_drill or lunge_drill
 	model = controller.model
 	nar = controller.nar
 	# Ядро персонажей кладёт актёров в слой сцены и режиссирует мини-сцену реакции.
@@ -205,6 +228,7 @@ func _ready() -> void:
 	_opp_sep0 = FRAME_SEP_DEFAULT
 	_you_sep0 = FRAME_SEP_DEFAULT
 	_build_menu()  # оверлей паузы (модальный, строится кодом)
+	_build_lunge_overlay()  # «Выпад» §3 — модальный выбор перед срабатыванием комбо
 	# Закрытое/открытое положение ящика — из реальной ширины экрана и самого ящика, не числами.
 	_drawer_closed_x = size.x
 	_drawer_open_x = size.x - _drawer.size.x
@@ -239,6 +263,8 @@ func _ready() -> void:
 	EventBus.clinch_resolved.connect(_on_clinch_emotion_flush)
 	EventBus.board_changed.connect(_on_board_changed)
 	EventBus.match_reported.connect(_on_match_reported)
+	EventBus.lunge_started.connect(_on_lunge_started)
+	EventBus.lunge_resolved.connect(_on_lunge_resolved)
 	controller.start_match()
 
 
@@ -285,6 +311,7 @@ func _toggle_drawer() -> void:
 # ------------------------------------------------- сигналы шины → обновление UI
 
 func _on_match_started(_info: Dictionary) -> void:
+	_hide_lunge()  # страховка: новая партия не должна унаследовать слоумо/модалку «Выпада»
 	log_lines = []
 	_audience_history = []
 	_audience_last_state = {}
@@ -1134,6 +1161,11 @@ func _status_tooltip_text(entry: Dictionary, perk: bool) -> String:
 func _update_controls() -> void:
 	var mode := String(controller.input_mode())
 	_hint_label.text = String(controller.hint_text)
+	# «Выпад» §3: показ/скрытие модалки и слоумо — по EventBus.lunge_started/resolved
+	# (_on_lunge_started/_on_lunge_resolved). Здесь только страховка: если контроллер уже вышел
+	# из режима, а оверлей почему-то ещё висит — снять.
+	if mode != "lunge" and _lunge_overlay != null and _lunge_overlay.visible:
+		_hide_lunge()
 	_cancel_btn.visible = mode == "target"
 	if mode == "clinch_defend":
 		# Пояснение к последствиям живёт в _hint_label — на кнопке только глагол.
@@ -2104,6 +2136,153 @@ func _card_style(bg: Color, border: Color, w: int) -> StyleBoxFlat:
 # ------------------------------------------------------ меню паузы (оверлей, код)
 
 ## Оверлей паузы: продолжить / новая партия / выбор колоды. Перекрывает доску (блокирует клики).
+## --- «Выпад» §3: модальный выбор перед срабатыванием комбо -----------------------------
+## Строится кодом по образцу _menu_overlay (без .tscn — визуальную выверку раскладки делать
+## в редакторе/на плейтесте, как с %SnapButton). Слоумо и средний ярус камеры отложены
+## (§3.5): здесь только затемнение доски + 2–3 крупные карты + сжимающаяся полоса-таймер.
+func _build_lunge_overlay() -> void:
+	_lunge_overlay = Control.new()
+	_lunge_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_lunge_overlay.z_index = 150
+	_lunge_overlay.mouse_filter = Control.MOUSE_FILTER_STOP  # глушит клики по доске под модалкой
+	_lunge_overlay.visible = false
+	add_child(_lunge_overlay)
+
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0.03, 0.04, 0.06, 0.82)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_lunge_overlay.add_child(dim)
+
+	_lunge_title = Label.new()
+	_lunge_title.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_lunge_title.offset_top = size.y * 0.16
+	_lunge_title.offset_bottom = _lunge_title.offset_top + 64.0
+	_lunge_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lunge_title.add_theme_font_size_override("font_size", 34)
+	_lunge_title.add_theme_color_override("font_color", Color.html("#" + COL_GOLD))
+	_lunge_title.add_theme_font_override("font", TAG_FONT)
+	_lunge_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_lunge_overlay.add_child(_lunge_title)
+
+	_lunge_cards = Control.new()
+	_lunge_cards.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_lunge_cards.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_lunge_overlay.add_child(_lunge_cards)
+
+	_lunge_ring = ColorRect.new()
+	_lunge_ring.color = Color.html("#" + COL_GOLD)
+	_lunge_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_lunge_ring_w = size.x * 0.5
+	_lunge_ring.position = Vector2((size.x - _lunge_ring_w) * 0.5, size.y * 0.72)
+	_lunge_ring.size = Vector2(_lunge_ring_w, 6.0)
+	_lunge_overlay.add_child(_lunge_ring)
+
+
+## Наполнить модалку по офферу контроллера. Порядок слотов слева направо: закрыть маршрут →
+## принять удар → контратака (пропуская отсутствующие). route_override — имя маршрута из
+## сигнала lunge_started (надёжнее, чем повторный lunge_offer()); пусто → берём из оффера.
+func _populate_lunge(offer: Dictionary, route_override: String = "") -> void:
+	for child in _lunge_cards.get_children():
+		child.queue_free()
+	var route_name := route_override if route_override != "" \
+		else String(offer.get("route_name", "комбо"))
+	_lunge_title.text = "ВЫПАД · «%s»" % route_name.to_upper()
+	var hand: Array = model.sides[C.SIDE_YOU].hand
+	var slots: Array = []
+	for spec in [
+		{"idx": int(offer.get("answer_index", -1)), "kind": "guard", "cap": "ЗАКРЫТЬ МАРШРУТ"},
+		{"idx": int(offer.get("decoy_index", -1)), "kind": "yield", "cap": "ПРИНЯТЬ УДАР"},
+		{"idx": int(offer.get("steal_index", -1)), "kind": "counter", "cap": "КОНТРАТАКА"},
+	]:
+		var idx: int = spec.idx
+		if idx >= 0 and idx < hand.size():
+			slots.append(spec)
+	if slots.is_empty():
+		return
+	var card_w := 141.0
+	var card_h := 188.0
+	var gap := 30.0
+	var total_w := card_w * slots.size() + gap * (slots.size() - 1)
+	var left := (size.x - total_w) * 0.5
+	var top := size.y * 0.30
+	for i in slots.size():
+		var spec: Dictionary = slots[i]
+		var card: Dictionary = hand[int(spec.idx)]
+		var x := left + float(i) * (card_w + gap)
+		var cap := Label.new()
+		cap.text = String(spec.cap)
+		cap.position = Vector2(x, top - 30.0)
+		cap.size = Vector2(card_w, 24.0)
+		cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cap.add_theme_font_size_override("font_size", 15)
+		cap.add_theme_color_override("font_color", Color.html("#" +
+			(COL_GOLD if spec.kind == "guard" else COL_OPP if spec.kind == "counter" else COL_DIM)))
+		cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_lunge_cards.add_child(cap)
+		var btn: Button = CardScene.instantiate()
+		_lunge_cards.add_child(btn)
+		var body := String(card.get("scheme", card.get("device", card.get("text", ""))))
+		btn.setup(card, String(card.get("name", "Карта")), body, true)
+		btn.position = Vector2(x, top)
+		btn.custom_minimum_size = Vector2(card_w, card_h)
+		btn.size = Vector2(card_w, card_h)
+		btn.pressed.connect(_on_lunge_pick.bind(String(spec.kind)))
+
+	_lunge_ring.size.x = _lunge_ring_w
+	_lunge_ring.position.x = (size.x - _lunge_ring_w) * 0.5
+
+
+## Кинематограф «Выпада» открылся: слоумо + модалка (долли к защитнику — на character_core).
+func _on_lunge_started(_defender: String, route_name: String) -> void:
+	_populate_lunge(controller.lunge_offer(), route_name)
+	_lunge_overlay.visible = true
+	_lunge_overlay.modulate.a = 0.0
+	if _lunge_fade_tween != null:
+		_lunge_fade_tween.kill()
+	_lunge_fade_tween = create_tween()
+	_lunge_fade_tween.tween_property(_lunge_overlay, "modulate:a", 1.0, LUNGE_FADE)
+	_lunge_deadline_msec = Time.get_ticks_msec() + int(LUNGE_SECONDS * 1000.0)
+	_lunge_active = true
+	Engine.time_scale = LUNGE_TIME_SCALE
+
+
+func _on_lunge_resolved(_pick: String) -> void:
+	_lunge_active = false
+	Engine.time_scale = 1.0
+	if _lunge_fade_tween != null:
+		_lunge_fade_tween.kill()
+		_lunge_fade_tween = null
+	_hide_lunge()
+
+
+## Стенные часы, не delta: слоумо не должен растягивать QTE-окно. Полоса тает к центру.
+func _process(_delta: float) -> void:
+	if not _lunge_active:
+		return
+	var remaining := float(_lunge_deadline_msec - Time.get_ticks_msec()) / 1000.0
+	if remaining <= 0.0:
+		_lunge_active = false
+		controller.lunge_pick("yield")
+		return
+	var frac := clampf(remaining / LUNGE_SECONDS, 0.0, 1.0)
+	var w := _lunge_ring_w * frac
+	_lunge_ring.size.x = w
+	_lunge_ring.position.x = (size.x - w) * 0.5
+
+
+func _on_lunge_pick(kind: String) -> void:
+	_lunge_active = false
+	controller.lunge_pick(kind)
+
+
+func _hide_lunge() -> void:
+	_lunge_active = false
+	Engine.time_scale = 1.0
+	if _lunge_overlay != null:
+		_lunge_overlay.visible = false
+
+
 func _build_menu() -> void:
 	_menu_overlay = Control.new()
 	_menu_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)

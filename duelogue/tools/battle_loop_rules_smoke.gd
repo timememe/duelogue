@@ -41,6 +41,7 @@ func _run() -> void:
 	_check_clinch_context_snapshot()
 	_check_stall_reasons()
 	_check_snap_vulnerability()
+	_check_lunge_resolutions()
 	print("=== BATTLE LOOP RULES: %s ===\n" % ("OK" if failures == 0 else "FAIL (%d)" % failures))
 	get_tree().call_deferred("quit", 0 if failures == 0 else 1)
 
@@ -1071,6 +1072,49 @@ func _check_snap_vulnerability() -> void:
 		"беззащитность снимается к началу следующего хода владельца")
 	_check(bool(model.sides[side].lines[permanent_index].get("no_defend", false)),
 		"постоянный no_defend (Аксиома) очисткой не трогается — снимается только no_defend_temp")
+
+
+## «Выпад» §3.4 (context/situational_cards_v0.1.md): две форс-развязки clinch_submit.
+## Гейт оффера («link» + сборка 2–3 карт) живёт в lunge_choice_smoke.gd — здесь только
+## ядровые ветки резолва.
+func _check_lunge_resolutions() -> void:
+	# counter: защитник тратит Кражу из руки → «защитник выстоял», рамка цела, Кража в сбросе.
+	var counter := _fresh(true)
+	counter.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Attacker")]
+	counter.sides[RulesCore.SIDE_OPP].lines = [_object_line(2, "Counter target", "counter_tgt")]
+	counter.sides[RulesCore.SIDE_YOU].hand = [_card(RulesCore.TYPE_RAZBOR, "Opener R", false)]
+	counter.sides[RulesCore.SIDE_YOU].draw = []
+	counter.sides[RulesCore.SIDE_OPP].hand = [
+		_card(RulesCore.TYPE_TEZIS, "Def T"),
+		_card(RulesCore.TYPE_RAZBOR, "Counter K", true)]
+	counter.sides[RulesCore.SIDE_OPP].draw = []
+	counter.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
+	var counter_res: Dictionary = counter.clinch_submit("lunge_counter", true, 1)
+	_check(String(counter_res.get("event", "")) == "resolved"
+		and not bool(counter_res.get("landed", true))
+		and String(counter_res.get("stop_reason", "")) == "lunge_counter"
+		and int(counter.sides[RulesCore.SIDE_OPP].lines[0].theses) == 2
+		and _count_hand_type(counter.sides[RulesCore.SIDE_OPP], RulesCore.TYPE_RAZBOR) == 0
+		and not _discard_card(counter.sides[RulesCore.SIDE_OPP], "Counter K").is_empty()
+		and counter.clinch.is_empty(),
+		"lunge_counter: Кража тратится, атака не проходит, рамка цела, клинч закрыт")
+
+	# yield: пас на открытом окне → атакующий landed по r>t, опенер добивает рамку 2→1.
+	var yielded := _fresh(true)
+	yielded.sides[RulesCore.SIDE_YOU].lines = [_line(1, "Attacker")]
+	yielded.sides[RulesCore.SIDE_OPP].lines = [_object_line(2, "Yield target", "yield_tgt")]
+	yielded.sides[RulesCore.SIDE_YOU].hand = [_card(RulesCore.TYPE_RAZBOR, "Opener R", false)]
+	yielded.sides[RulesCore.SIDE_YOU].draw = []
+	yielded.sides[RulesCore.SIDE_OPP].hand = [_card(RulesCore.TYPE_TEZIS, "Def T")]
+	yielded.sides[RulesCore.SIDE_OPP].draw = []
+	yielded.begin_clinch(RulesCore.SIDE_YOU, RulesCore.SIDE_OPP, 0, false, 0)
+	var yield_res: Dictionary = yielded.clinch_submit("pass", false, -1, "lunge_yield")
+	_check(String(yield_res.get("event", "")) == "resolved"
+		and bool(yield_res.get("landed", false))
+		and String(yield_res.get("stop_reason", "")) == "lunge_yield"
+		and int(yielded.sides[RulesCore.SIDE_OPP].lines[0].theses) == 1
+		and yielded.clinch.is_empty(),
+		"lunge_yield: атакующий landed по r>t, опенер снимает тезис 2→1, клинч закрыт")
 
 
 func _check(ok: bool, label: String) -> void:

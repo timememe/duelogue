@@ -1318,6 +1318,24 @@ func clinch_submit(decision: String, prefer_steal: bool = true, hand_index: int 
 		stop_reason: String = "voluntary") -> Dictionary:
 	if clinch.is_empty():
 		return {}
+	# «Выпад» §3.4 (context/situational_cards_v0.1.md): контратака Кражей — защитник
+	# разворачивает открытый комбо-маршрут на атакующего. Не переписывает await_defend-волю:
+	# тратит Кражу из руки и форсирует исход «защитник выстоял» (opener спарирован, доска не
+	# тронута). Активная добыча у атакующего — расширение на потом (§3.7 п.4). Ветка "рядом с"
+	# stop_reason-швами, как обещано в §4 п.2.
+	if decision == "lunge_counter":
+		if clinch.phase != "await_defend":
+			return {"event": "invalid"}
+		var d_hand: Array = sides[clinch.defender].hand
+		if hand_index < 0 or hand_index >= d_hand.size():
+			return {"event": "invalid"}
+		var kc: Dictionary = d_hand[hand_index]
+		if String(kc.get("type", "")) != TYPE_RAZBOR or not bool(kc.get("steals", false)):
+			return {"event": "invalid"}
+		d_hand.remove_at(hand_index)
+		_discard(clinch.defender, kc)
+		clinch.r_count = 0   # opener спарирован контратакой: r==t → clinch_finalize withstand
+		return _finish_clinch("lunge_counter", "", clinch.defender)
 	if decision != "play":
 		var stopped_side := clinch_pending_side()
 		if not clinch_can_act(clinch_pending_side()):

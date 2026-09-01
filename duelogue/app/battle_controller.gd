@@ -21,6 +21,7 @@ const ReadingPace := preload("res://duelogue/core/narrative/reading_pace.gd")
 const EmotionCore := preload("res://duelogue/core/emotion/emotion_core.gd")
 const DefaultReactions := preload("res://duelogue/core/emotion/reaction_decks/volatile_default.gd")
 const SituationalCards := preload("res://duelogue/core/cards/situational_cards.gd")
+const LungeChoice := preload("res://duelogue/core/cards/lunge_choice.gd")
 const StatusRules := preload("res://duelogue/core/status/status_rules.gd")
 const ZalStatusBridge := preload("res://duelogue/core/status/zal_status_bridge.gd")
 const AudienceCore := preload("res://duelogue/core/audience/audience_core.gd")
@@ -109,7 +110,8 @@ var logging_enabled := true:
 		_log.enabled = v
 var _epoch := 0          ## поколение матча; протухшие await прошлой партии выходят по нему
 var _theme_data: Dictionary
-var _mode := "locked"    ## ввод: locked | opening | move | reframe | target | clinch_defend | clinch_attack
+var _mode := "locked"    ## ввод: locked | opening | move | reframe | target | clinch_defend | clinch_attack | lunge
+var _lunge_offer: Dictionary = {}  ## «Выпад» §3: активный оффер выбора (пока _mode=="lunge")
 var _opening_stage := ""  ## active | ""
 var _opening_choices: Array = []
 var _opening_active: Dictionary = {}
@@ -1072,7 +1074,17 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 			await _wait_pace(CLINCH_STEP_DELAY)
 			if my_epoch != _epoch:
 				return
-		var res: Dictionary = model.clinch_submit(decision, pref, chosen_hand_index)
+		# «Выпад» §3.4: выбор в модалке приходит как act "lunge_yield"/"lunge_counter".
+		# yield = защитник ест комбо (пас на открытом LINK → attacker landed по r>t, тег для
+		# логов); counter = контратака Кражей (новая ветка clinch_submit).
+		var res: Dictionary
+		match decision:
+			"lunge_yield":
+				res = model.clinch_submit("pass", false, -1, "lunge_yield")
+			"lunge_counter":
+				res = model.clinch_submit("lunge_counter", true, chosen_hand_index)
+			_:
+				res = model.clinch_submit(decision, pref, chosen_hand_index)
 		# Телеметрия руки снимается ПОСЛЕ точного объекта press: значение больше не
 		# включает только что разыгранную карту и не создаёт ложное ощущение автостопа.
 		if not is_defend:
@@ -1406,6 +1418,13 @@ func _run_clinch(attacker: String, defender: String, idx: int, prefer_steal: boo
 
 func _ask_clinch(mode: String) -> Dictionary:
 	var my_epoch := _epoch
+	# «Выпад» §3: до обычной воли клинча — суженный выбор перед срабатыванием комбо, если
+	# по игроку сыграна ⚡-карта и оффер собирается (≥2 карт). Иначе обычный путь ниже.
+	if mode == "defend":
+		var lunge: Dictionary = LungeChoice.offer(
+			model.clinch, model.sides[SIDE_YOU].hand)
+		if bool(lunge.get("active", false)):
+			return await _ask_lunge(lunge, my_epoch)
 	_mode = "clinch_" + mode
 	var sequence: Array = model.clinch.get("sequence", [])
 	if mode == "defend":
@@ -1436,6 +1455,63 @@ func _ask_clinch(mode: String) -> Dictionary:
 	hint_text = ""
 	_changed()
 	return d
+
+
+## «Выпад» §3.3–3.4: 2–3 карты руки, слоумо/камера отложены (§3.5). Модалку рисует
+## debate_screen по _mode=="lunge" + lunge_offer(); резолв — тот же _clinch_decided, что
+## обычная воля клинча, через act "play"/"lunge_yield"/"lunge_counter" (см. _run_clinch).
+func _ask_lunge(offer: Dictionary, my_epoch: int) -> Dictionary:
+	_lunge_offer = offer
+	_mode = "lunge"
+	hint_text = "ВЫПАД · маршрут «%s» — закрыть, принять удар или контратаковать" % \
+		String(offer.get("route_name", "комбо"))
+	# Кинематограф «Выпада» (слоумо + долли к защитнику) — на подписчиках EventBus
+	# (debate_screen, character_core). Ядро только объявляет окно и его конец.
+	EventBus.lunge_started.emit(SIDE_YOU, String(offer.get("route_name", "")))
+	_changed()
+	var d: Dictionary = await _clinch_decided
+	_lunge_offer = {}
+	if my_epoch != _epoch:
+		EventBus.lunge_resolved.emit("abort")
+		return {"act": "pass"}
+	EventBus.lunge_resolved.emit(_lunge_pick_of(d))
+	_mode = "locked"
+	hint_text = ""
+	_changed()
+	return d
+
+
+## Ярлык выбора для сигнала lunge_resolved (кинематограф читает его для разных выходов сцены).
+func _lunge_pick_of(d: Dictionary) -> String:
+	match String(d.get("act", "")):
+		"lunge_counter":
+			return "counter"
+		"lunge_yield":
+			return "yield"
+		"play":
+			return "guard"
+	return "abort"
+
+
+## Оффер «Выпада» для view (пусто вне режима). Копия — UI не мутирует внутренний стейт.
+func lunge_offer() -> Dictionary:
+	return _lunge_offer.duplicate(true) if _mode == "lunge" else {}
+
+
+## Кнопка/таймаут модалки «Выпада» → решение в _clinch_decided. kind: guard | yield | counter.
+## Недоступный слот (нет карты) мягко падает в yield — модалка такую кнопку не показывает,
+## это страховка от гонок.
+func lunge_pick(kind: String) -> void:
+	if _mode != "lunge":
+		return
+	var answer_index := int(_lunge_offer.get("answer_index", -1))
+	var steal_index := int(_lunge_offer.get("steal_index", -1))
+	if kind == "guard" and answer_index >= 0:
+		_clinch_decided.emit({"act": "play", "steals": false, "hand_index": answer_index})
+	elif kind == "counter" and steal_index >= 0:
+		_clinch_decided.emit({"act": "lunge_counter", "steals": true, "hand_index": steal_index})
+	else:
+		_clinch_decided.emit({"act": "lunge_yield", "hand_index": -1})
 
 
 # --------------------------------------------------------------- end ----------
